@@ -30,7 +30,9 @@ public sealed record TrackInfo(
     double? Pan = null, string? ChannelRole = null);
 
 public sealed record RoutingEdge(string FromChannelId, string ToChannelId, string Kind,
-    double? Level = null, bool? Enabled = null, string? Tap = null);
+    double? Level = null, bool? Enabled = null, string? Tap = null,
+    EvidenceLevel Evidence = EvidenceLevel.Confirmed, long? SourceOffset = null, string? SourcePath = null,
+    string? TargetLabel = null);
 
 /// <summary>Declared DAWproject media reference; no local path resolution or content loading.</summary>
 public sealed record ProjectMediaReference(string Path, bool? External,

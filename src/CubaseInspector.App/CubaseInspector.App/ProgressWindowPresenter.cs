@@ -14,23 +14,26 @@ internal static class ProgressWindowPresenter
     private static TextBlock? _status;
     private static ProgressBar? _progress;
     private static Button? _cancel;
+    private static TextBlock? _heading;
     private static Action? _cancelAction;
     private static bool _dismissed;
     private static bool _closingForCompletion;
 
     public static void ShowOrUpdate(string title, string status, double? progress,
-        Action? cancel, ElementTheme theme)
+        Action? cancel, ElementTheme theme, string cancelLabel = "Cancel operation")
     {
         if (_dismissed) return;
         if (_window is null) CreateWindow(title, theme);
 
         _window!.Title = "Cubase Project Explorer — " + title;
+        _heading!.Text = title;
         _status!.Text = status;
         _progress!.IsIndeterminate = progress is null;
         if (progress is double value) _progress.Value = Math.Clamp(value, 0, 100);
         _cancelAction = cancel;
         _cancel!.Visibility = cancel is null ? Visibility.Collapsed : Visibility.Visible;
         _cancel.IsEnabled = cancel is not null;
+        _cancel.Content = cancelLabel;
     }
 
     public static void Close()
@@ -48,7 +51,7 @@ internal static class ProgressWindowPresenter
         AutomationProperties.SetName(_status, "Background task status");
         _progress = new ProgressBar { Minimum = 0, Maximum = 100, IsIndeterminate = true,
             Height = 6, Margin = new Thickness(0, 4, 0, 0) };
-        _cancel = new Button { Content = "Cancel scan", HorizontalAlignment = HorizontalAlignment.Left,
+        _cancel = new Button { Content = "Cancel operation", HorizontalAlignment = HorizontalAlignment.Left,
             Visibility = Visibility.Collapsed };
         _cancel.Click += (_, _) =>
         {
@@ -58,8 +61,9 @@ internal static class ProgressWindowPresenter
         };
 
         var content = new StackPanel { Spacing = 16, Padding = new Thickness(24), MinWidth = 420 };
-        content.Children.Add(new TextBlock { Text = title, FontSize = 18, FontWeight = FontWeights.SemiBold,
-            TextWrapping = TextWrapping.Wrap });
+        _heading = new TextBlock { Text = title, FontSize = 18, FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap };
+        content.Children.Add(_heading);
         content.Children.Add(_status);
         content.Children.Add(_progress);
         content.Children.Add(new TextBlock

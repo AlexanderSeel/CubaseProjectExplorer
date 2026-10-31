@@ -72,85 +72,6 @@ public sealed partial class MediaLibraryViewModel(
     partial void OnSampleProjectPathChanged(string value) => RefreshSamples();
     partial void OnPreviewUriChanged(Uri? value) => OnPropertyChanged(nameof(HasPreview));
 
-    [RelayCommand]
-    public async Task LoadAsync()
-    {
-        if (IsBusy) return;
-        IsBusy = true;
-        Status = "Loading indexed media and MIDI tracks…";
-        await Task.Yield();
-        try
-        {
-            await LoadIndexContentsAsync();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Data.Common.DbException)
-        { Status = "Could not load the media/MIDI index: " + ex.Message; }
-        finally { IsBusy = false; }
-    }
-
-    private async Task LoadIndexContentsAsync()
-    {
-        var indexes = await store.GetProjectAssetIndexesAsync();
-        _allSamples = indexes.Where(document => document.Index is not null && document.Index.Evidence == EvidenceLevel.Confirmed)
-            .SelectMany(document => document.Index!.MediaUses.Select(media => new SampleUseRow(
-                document.Id, document.Index.ProjectName, document.ProjectPath, media.ReferenceIndex,
-                media.DeclaredPath, ResolveFolder(document.ProjectPath, media), media.FileType,
-                media.External switch { true => "External reference", false => "Embedded archive entry", _ => "Location unknown" },
-                media.TrackName ?? "Track unknown", media.Channels, media.SampleRate, media.Duration)))
-            .ToArray();
-        var useCounts = _allSamples.GroupBy(row => row.ProjectPath + "\0" + row.DeclaredPath, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
-        _allSamples = _allSamples.Select(row => row with
-            { UseCount = useCounts[row.ProjectPath + "\0" + row.DeclaredPath] }).ToArray();
-        _allMidiTracks = indexes.Where(document => document.Index is not null && document.Index.Evidence == EvidenceLevel.Confirmed)
-            .SelectMany(document => document.Index!.MidiTracks.Select(track => new MidiTrackLibraryRow(
-                document.Id, document.Index.ProjectName, document.ProjectPath, track.TrackId,
-                track.Name, track.Kind, track.NoteCount,
-                track.LowestKey is int low && track.HighestKey is int high ? $"{low}–{high}" : "Unknown",
-                track.ChannelCount, track.TimeUnit ?? "Unknown", track.CanExportStandardMidi, track.ExportLimitation)))
-            .ToArray();
-        _allMidiCandidates = indexes.SelectMany(document => document.Index?.NativeMidiNoteCandidates ?? [])
-            .Where(candidate => candidate.Evidence == EvidenceLevel.Candidate).ToArray();
-        _allNativeSampleCandidates = indexes.SelectMany(document => (document.Index?.NativeMediaReferenceCandidates ?? [])
-            .Select(candidate => new NativeSampleCandidateRow(document.Id, candidate.ProjectName,
-                candidate.ProjectPath, candidate.Observation, candidate.DeclaredPath,
-                candidate.CandidateTrackName, candidate.CandidateTrackOffset, candidate.FileOffset,
-                candidate.Evidence, candidate.EvidenceSource, candidate.Warning))).ToArray();
-        SampleTypes = ["All", .. _allSamples.Select(row => row.FileType)
-            .Concat(_allNativeSampleCandidates.Select(row => row.FileType)).Where(type => type.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(type => type, StringComparer.OrdinalIgnoreCase)];
-        SampleProjects = _allSamples.Select(row => (row.ProjectPath, row.ProjectName))
-            .Concat(_allNativeSampleCandidates.Select(row => (row.ProjectPath, row.ProjectName)))
-            .GroupBy(row => row.ProjectPath, StringComparer.OrdinalIgnoreCase)
-            .Select(group => new SampleProjectScopeOption(group.Key,
-                group.Select(row => row.ProjectName).First() + " · " + Path.GetFileName(group.Key)))
-            .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray();
-        OnPropertyChanged(nameof(SampleTypes));
-        OnPropertyChanged(nameof(SampleProjects));
-        RefreshSamples();
-        RefreshMidiTracks();
-        Status = $"Indexed {_allSamples.Length:N0} confirmed media uses and {_allNativeSampleCandidates.Length:N0} native CPR audio-path observations across {indexes.Count:N0} projects · {_allMidiTracks.Length:N0} MIDI tracks · {_allMidiCandidates.Length:N0} CPR note observations.";
-        if (indexes.Count == 0) Status = "No asset indexes exist yet. Build the index from the Library database page.";
-    }
-
-    [RelayCommand]
-    private async Task RebuildIndexAsync()
-    {
-        if (IsBusy) return;
-        IsBusy = true;
-        Status = "Rebuilding asset indexes from saved project snapshots…";
-        try
-        {
-            var count = await store.RebuildProjectAssetIndexesAsync();
-            Status = $"Rebuilt indexes for {count:N0} stored projects · refreshing browser…";
-            await LoadIndexContentsAsync();
-            Status = $"Rebuilt indexes for {count:N0} stored projects. " + Status;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Data.Common.DbException)
-        { Status = "Asset index rebuild failed: " + ex.Message; }
-        finally { IsBusy = false; }
-    }
-
     public async Task PreviewSampleAsync(SampleUseRow row)
     {
         StopPreview();
@@ -161,7 +82,7 @@ public sealed partial class MediaLibraryViewModel(
         Status = $"Preparing preview: {row.DeclaredPath}";
         try
         {
-            var document = await store.GetProjectAsync(row.ProjectId);
+            var document = await GetIndexedProjectAsync(row.ProjectId);
             if (document?.Snapshot is not { } project || row.ReferenceIndex < 0 ||
                 project.MediaReferences is not { } media || row.ReferenceIndex >= media.Count ||
                 !string.Equals(media[row.ReferenceIndex].Path, row.DeclaredPath, StringComparison.Ordinal))
@@ -219,7 +140,7 @@ public sealed partial class MediaLibraryViewModel(
         Status = $"Checking candidate audio path from {row.ProjectName}…";
         try
         {
-            var document = await store.GetProjectAsync(row.ProjectId);
+            var document = await GetIndexedProjectAsync(row.ProjectId);
             if (document?.Snapshot is not { Evidence: EvidenceLevel.Candidate } project ||
                 !string.Equals(project.FilePath, row.ProjectPath, StringComparison.OrdinalIgnoreCase) ||
                 !(project.NativeAudioMediaCandidates ?? []).Any(candidate =>
@@ -285,7 +206,7 @@ public sealed partial class MediaLibraryViewModel(
         PreparedMediaPreview? prepared = null;
         try
         {
-            var document = await store.GetProjectAsync(row.ProjectId);
+            var document = await GetIndexedProjectAsync(row.ProjectId);
             if (document?.Snapshot is not { } project || row.ReferenceIndex < 0 ||
                 project.MediaReferences is not { } media || row.ReferenceIndex >= media.Count ||
                 !string.Equals(media[row.ReferenceIndex].Path, row.DeclaredPath, StringComparison.Ordinal))
@@ -324,7 +245,7 @@ public sealed partial class MediaLibraryViewModel(
         Status = $"Preparing used-media handoff for {row.ProjectName}…";
         try
         {
-            var document = await store.GetProjectAsync(row.ProjectId);
+            var document = await GetIndexedProjectAsync(row.ProjectId);
             if (document?.Snapshot is not { } project)
             {
                 Status = "The saved project snapshot is unavailable; no handoff package was created.";
@@ -354,7 +275,7 @@ public sealed partial class MediaLibraryViewModel(
         MidiPianoRollStatus = "Loading exported MIDI note events…";
         try
         {
-            var document = await store.GetProjectAsync(row.ProjectId);
+            var document = await GetIndexedProjectAsync(row.ProjectId);
             if (request != Volatile.Read(ref _midiPreviewRequest)) return;
             if (document?.Snapshot is not { } project)
             {
@@ -453,7 +374,7 @@ public sealed partial class MediaLibraryViewModel(
         Status = $"Preparing MIDI export: {row.Name}";
         try
         {
-            var document = await store.GetProjectAsync(row.ProjectId);
+            var document = await GetIndexedProjectAsync(row.ProjectId);
             if (document?.Snapshot is not { } project)
             {
                 Status = "The saved project snapshot is unavailable; MIDI was not exported.";
@@ -470,60 +391,10 @@ public sealed partial class MediaLibraryViewModel(
         finally { IsBusy = false; }
     }
 
-    private void RefreshSamples()
-    {
-        var query = Search.Trim();
-        var filtered = _allSamples.Where(row => (string.IsNullOrWhiteSpace(SampleProjectPath) ||
-                string.Equals(row.ProjectPath, SampleProjectPath, StringComparison.OrdinalIgnoreCase)) &&
-            (SampleType == "All" || row.FileType.Equals(SampleType, StringComparison.OrdinalIgnoreCase)) &&
-            (query.Length == 0 || row.DeclaredPath.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-             row.Folder.Contains(query, StringComparison.OrdinalIgnoreCase) || row.ProjectName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-             row.TrackName.Contains(query, StringComparison.OrdinalIgnoreCase) || row.Source.Contains(query, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(row => row.FileType, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(row => row.DeclaredPath, StringComparer.OrdinalIgnoreCase).ToArray();
-        Samples.ReplaceAll(filtered);
-        var candidateQuery = Search.Trim();
-        var candidates = _allNativeSampleCandidates.Where(row =>
-                (string.IsNullOrWhiteSpace(SampleProjectPath) ||
-                    string.Equals(row.ProjectPath, SampleProjectPath, StringComparison.OrdinalIgnoreCase)) &&
-                (SampleType == "All" || row.FileType.Equals(SampleType, StringComparison.OrdinalIgnoreCase)) &&
-                (candidateQuery.Length == 0 || row.DeclaredPath.Contains(candidateQuery, StringComparison.OrdinalIgnoreCase) ||
-                 row.ProjectName.Contains(candidateQuery, StringComparison.OrdinalIgnoreCase) ||
-                 row.TrackName.Contains(candidateQuery, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(row => row.ProjectName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(row => row.TrackName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(row => row.DeclaredPath, StringComparer.OrdinalIgnoreCase).ToArray();
-        NativeSampleCandidates.ReplaceAll(candidates);
-        OnPropertyChanged(nameof(SampleSummary));
-    }
-
-    private void RefreshMidiTracks()
-    {
-        var query = MidiSearch.Trim();
-        var filtered = _allMidiTracks.Where(row => query.Length == 0 || row.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-            row.ProjectName.Contains(query, StringComparison.OrdinalIgnoreCase) || row.ProjectPath.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-            row.Kind.Contains(query, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(row => row.ProjectName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(row => row.Name, StringComparer.OrdinalIgnoreCase).ToArray();
-        MidiTracks.ReplaceAll(filtered);
-        var candidates = _allMidiCandidates.Where(row => query.Length == 0 ||
-                row.ProjectName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                row.ProjectPath.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                (row.CandidateTrackName?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (row.CandidatePartName?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                row.SourceLayout.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                row.Pitch.ToString().Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                $"Unassigned note {row.Observation}".Contains(query, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(row => row.ProjectName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(row => row.Observation).ToArray();
-        NativeMidiCandidates.ReplaceAll(candidates);
-        NativeMidiGroups.ReplaceAll(NativeMidiBrowser.Group(candidates));
-        OnPropertyChanged(nameof(MidiSummary));
-    }
-
-    public string SampleSummary => $"{Samples.Count:N0} confirmed uses · {NativeSampleCandidates.Count:N0} CPR path observations shown of {_allNativeSampleCandidates.Length:N0}";
-    public string MidiSummary => $"{MidiTracks.Count:N0} exported tracks · {NativeMidiGroups.Count:N0} native note groups · {NativeMidiCandidates.Count:N0} of {_allMidiCandidates.Length:N0} notes read";
-
+    private void RefreshSamples() => QueueBrowserRefresh();
+    private void RefreshMidiTracks() => QueueBrowserRefresh();
+    public string SampleSummary => $"{Samples.Count:N0} exported uses shown of {_allSamples.Length:N0} · {NativeSampleCandidates.Count:N0} CPR paths shown of {_allNativeSampleCandidates.Length:N0}";
+    public string MidiSummary => $"{MidiTracks.Count:N0} exported tracks shown of {_allMidiTracks.Length:N0} · {NativeMidiGroups.Count:N0} note groups · {_allMidiCandidates.Length:N0} notes loaded";
     public void SetSampleProjectScope(string? projectPath)
     {
         SampleProjectPath = projectPath ?? string.Empty;

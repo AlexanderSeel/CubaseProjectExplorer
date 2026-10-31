@@ -13,6 +13,8 @@ internal sealed partial class WorkspacePageFactory
     {
         var library = shell.Library;
         var root = Page("Studio overview", "A quick view of your local Cubase project library and the next useful actions.");
+        if (shell.DatabasePathWarning is { Length: > 0 } databaseWarning)
+            root.Children.Add(Note(databaseWarning));
         var scan = Button("Scan a project folder…", async () =>
         {
             await shell.ScanFolderCommand.ExecuteAsync(null);

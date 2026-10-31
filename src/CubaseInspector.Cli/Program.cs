@@ -135,12 +135,13 @@ switch (args[0].ToLowerInvariant())
     {
         var inspected = await inspector.InspectAsync(args[1]);
         if (!inspected.IsSuccess || inspected.Value is null) return Error(inspected.Error);
-        var trace = new RoutingGraphService().Trace(inspected.Value, args[2],
+        var trace = new RoutingGraphService().Trace(CprSignalFlowPresentation.Create(inspected.Value), args[2],
             upstream: args.Skip(3).Any(a => a.Equals("--upstream", StringComparison.OrdinalIgnoreCase)));
         if (!trace.IsSuccess || trace.Value is null) return Error(trace.Error);
         Console.WriteLine($"{(trace.Value.Upstream ? "Upstream" : "Downstream")} routes for {trace.Value.SelectedChannelId}:");
         foreach (var edge in trace.Value.Edges)
-            Console.WriteLine($"  {edge.FromChannelId} --{edge.Kind}--> {edge.ToChannelId}");
+            Console.WriteLine($"  {edge.FromChannelId} --{edge.Kind}--> {edge.TargetLabel ?? edge.ToChannelId}" +
+                (edge.SourceOffset is long offset ? $" · {edge.SourcePath} · 0x{offset:X}" : ""));
         if (trace.Value.UnresolvedEndpoints.Count > 0)
             Console.WriteLine("Unresolved endpoints: " + string.Join(", ", trace.Value.UnresolvedEndpoints));
         Console.WriteLine($"Contains cycle: {trace.Value.ContainsCycle}");

@@ -21,30 +21,12 @@ internal sealed partial class WorkspacePageFactory
         var vm = shell.Tools;
         vm.ResetMediaAuditForDifferentProject();
         var root = Page("Audio / MIDI I/O", shell.Workspace.IoSummary);
-        root.Children.Add(Note("External media status means only that a file path exists. This check does not read audio, inspect embedded archive entries, prove loadability, or infer native CPR/BAK links."));
-        if (shell.Workspace.Project is { Evidence: EvidenceLevel.Candidate } nativeProject)
-        {
-            root.Children.Add(Note("The native project was re-read when opened. Values below are shown as read from the CPR file with their byte offsets. Their Cubase meaning and ownership are not yet verified; physical ports and signal connections are not inferred."));
-            var observations = CprIoObservationPresentation.Build(nativeProject);
-            var totalNativeObservations = (nativeProject.NativeAudioMediaCandidates?.Count ?? 0) +
-                (nativeProject.NativeMixerObservations?.Count ?? 0) + (nativeProject.NativeMetadataCandidates?.Count ?? 0);
-            if (observations.Count == 0)
-                root.Children.Add(Empty("No supported native audio, mixer, or typed-field observations were found in this read. This does not prove those fields are absent from the project."));
-            else
-            {
-                root.Children.Add(Note($"{observations.Count:N0} of {totalNativeObservations:N0} CPR values shown · source offsets included · interpretation and signal routing unverified."));
-                AddObservationSection("Audio paths", "Audio path ·", observations);
-                AddObservationSection("Mixer values", "Mixer values ·", observations);
-                AddObservationSection("Project fields", "Project field ·", observations);
-            }
-
-            void AddObservationSection(string title, string prefix, IReadOnlyList<string> rows)
-            {
-                var matching = rows.Where(row => row.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
-                if (matching.Length > 0) root.Children.Add(Section($"{title} · {matching.Length:N0}", matching));
-            }
-        }
-
+        if (shell.Workspace.Project is { } selectedProject)
+            root.Children.Add(StudioIoView(selectedProject));
+        else root.Children.Add(Empty("Open a project to inspect saved ports, audio references and MIDI streams."));
+        root.Children.Add(new TextBlock { Text = "EXTERNAL MEDIA CHECKLIST", Margin = new Thickness(0, 20, 0, 8),
+            Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] });
+        root.Children.Add(Note("Choose Check declared external media to inspect referenced-file presence and prepare a handoff checklist."));
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 8) };
         var check = Button("Check declared external media", async () => await vm.CheckMediaCommand.ExecuteAsync(null));
         var export = Button("Export handoff checklist…", async () => await vm.ExportMediaAuditCommand.ExecuteAsync(null));
@@ -52,7 +34,7 @@ internal sealed partial class WorkspacePageFactory
         export.IsEnabled = vm.HasCurrentMediaAudit && !vm.IsBusy;
         actions.Children.Add(check);
         actions.Children.Add(export);
-        AddPageActions(root, actions);
+        root.Children.Add(actions);
 
         var summary = new TextBlock { Text = vm.MediaAuditSummary, Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"],
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 4) };

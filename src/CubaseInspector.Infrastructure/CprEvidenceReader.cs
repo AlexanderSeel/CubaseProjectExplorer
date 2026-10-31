@@ -185,7 +185,10 @@ public sealed class CprEvidenceReader : IProjectReader
             var mute = ReadFlag("Mute");
             var solo = ReadFlag("Solo");
             var candidateFields = record.Values.Where(value => IsMixerCandidatePath(value.Path))
-                .Take(32).ToArray();
+                .OrderBy(value => value.Path.StartsWith("OwnInputBus/", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("OutputBus/", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .Take(512).ToArray();
             // Include named records even when mixer fields are absent so the view can
             // show what the reader found without implying that a channel was omitted.
             result.Add(new CprMixerObservation(names[0], volume, null, mute, solo,
@@ -218,9 +221,9 @@ public sealed class CprEvidenceReader : IProjectReader
             path.StartsWith("Pan/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("Panner/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("EQ/", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("SendFolder/Slot[", StringComparison.OrdinalIgnoreCase) &&
-            (path.Contains("/Volume/", StringComparison.OrdinalIgnoreCase) ||
-             path.Contains("/Panner/", StringComparison.OrdinalIgnoreCase));
+            path.StartsWith("OwnInputBus/", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("OutputBus/", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<CprMetadataCandidate> ReadNamedRecordMixerObservations(

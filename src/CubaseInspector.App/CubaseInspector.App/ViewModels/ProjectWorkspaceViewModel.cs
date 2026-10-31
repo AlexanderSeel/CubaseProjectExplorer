@@ -47,29 +47,22 @@ public sealed partial class ProjectWorkspaceViewModel : ObservableObject
             ? "some references have unverified identities or locations"
             : Project?.Plugins.Any(p => p.Evidence == EvidenceLevel.Unknown) == true
             ? "some references are not available in the source" : "plug-ins listed by the project export";
-    public string RouteCount => Project is null ? "—" : Project.Evidence == EvidenceLevel.Candidate
-        ? "Unknown" : Project.Routing.Count.ToString("N0");
+    public string RouteCount => Project is null ? "—" : CprSignalFlowPresentation.Create(Project).Routing.Count.ToString("N0");
     public string RouteEvidence => Project?.Routing.Count > 0 && Project.Evidence == EvidenceLevel.Confirmed
         ? "exported connections" : Project?.Evidence == EvidenceLevel.Candidate
-            ? "verified CPR routes are unavailable" : "no exported connections";
+            ? "CPR bus-field interpretation" : "no exported connections";
     public string WarningCount => Project is null ? "0" : Project.Warnings.Count.ToString("N0");
     public string OverviewSummary => Project is null
         ? "Choose a project from the Library to inspect its available evidence."
         : Project.Evidence == EvidenceLevel.Candidate
-        ? "This native CPR/BAK file contains track and plug-in record data. It does not establish Cubase track ownership, active plug-in instances, or routing."
+        ? "Showing native CPR/BAK record observations. Open a workspace to inspect decoded values, interpreted connections and source details."
             : "Showing fields declared in the project export. Missing values remain unknown.";
     public string RoutingSummary => Project?.Evidence == EvidenceLevel.Candidate
-        ? $"{Project.NativeMixerObservations?.Count ?? 0:N0} mixer records decoded; signal connections are unavailable."
+        ? $"{CprSignalFlowPresentation.Create(Project).Tracks.Count:N0} records · {CprSignalFlowPresentation.Create(Project).Routing.Count:N0} bus/send links read from CPR fields. Select a record to explore its signal path and source details."
         : Project?.Routing.Count > 0
             ? "Connections shown below come from exported project data. Hardware device mappings are not established."
             : "No routing connections were supplied by this project format.";
-    public string IoSummary => Project?.Evidence == EvidenceLevel.Candidate
-        ? CprIoObservationPresentation.Build(Project, 1).Count > 0
-            ? $"{(Project.NativeAudioMediaCandidates?.Count ?? 0):N0} audio-path, {(Project.NativeMixerObservations?.Count ?? 0):N0} mixer, and {(Project.NativeMetadataCandidates?.Count ?? 0):N0} typed-field observations found; all remain unverified. Physical audio/MIDI hardware assignments are unknown."
-            : "The file was re-read on open, but this reader found no supported audio/I/O observations. Physical audio and MIDI hardware assignments remain unknown."
-        : Project?.MediaReferences?.Count > 0
-            ? "Declared media references are listed. This does not confirm that source media is present or usable."
-            : "This project did not provide audio or MIDI port assignments.";
+    public string IoSummary => "Explore saved ports, channels, audio references and MIDI streams. Select a studio node to view its relationships and source values.";
 
     private string? CandidateValue(params string[] fields)
     {

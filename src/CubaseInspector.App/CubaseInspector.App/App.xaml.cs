@@ -29,6 +29,8 @@ public partial class App : Application
     {
         var preferences = new AppPreferencesService();
         preferences.Load();
+        var databasePath = LibraryDatabasePathResolver.Resolve(preferences.DatabasePath,
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
         var builder = this.CreateBuilder(args)
             .Configure(host => host
 #if DEBUG
@@ -38,7 +40,8 @@ public partial class App : Application
                 .ConfigureServices((context, services) =>
                 {
                     services.AddSingleton(preferences);
-                    services.AddCubaseInspector(preferences.DatabasePath);
+                    services.AddSingleton(databasePath);
+                    services.AddCubaseInspector(databasePath.DatabasePath);
                     services.AddSingleton<IProjectPathPicker, ProjectPathPicker>();
                     services.AddSingleton<ProjectSessionState>();
                     services.AddSingleton<ProjectLibraryViewModel>();
@@ -59,6 +62,8 @@ public partial class App : Application
                 })
             );
         MainWindow = builder.Window;
+        // Make the window visible before host construction or dependency resolution can fail.
+        MainWindow.Activate();
 
         #if DEBUG
         MainWindow.UseStudio();
@@ -76,32 +81,25 @@ public partial class App : Application
             Trace.TraceWarning("Could not apply the CPE window and taskbar icon: {0}", exception.Message);
         }
 
-        Host = builder.Build();
-        // Do not repeat app initialization when the Window already has content,
-        // just ensure that the window is active
-        if (MainWindow.Content is not Frame rootFrame)
+        try
         {
-            // Create a Frame to act as the navigation context and navigate to the first page
-            rootFrame = new Frame();
+            Host = builder.Build();
+            // Do not repeat app initialization when the Window already has content.
+            if (MainWindow.Content is not Frame rootFrame)
+            {
+                rootFrame = new Frame();
+                MainWindow.Content = rootFrame;
+            }
 
-            // Place the frame in the current Window
-            MainWindow.Content = rootFrame;
-        }
-
-        // Show the native window before constructing the first workspace page. Page creation can
-        // synchronously hydrate view models and must not leave a live process with a hidden window.
-        MainWindow.Activate();
-        if (rootFrame.Content == null)
-        {
-            try
+            if (rootFrame.Content == null)
             {
                 rootFrame.Navigate(typeof(MainPage), Host.Services.GetRequiredService<AppShellViewModel>());
             }
-            catch (Exception exception)
-            {
-                Trace.TraceError("CPE first-page startup failed: {0}", exception);
-                MainWindow.Content = CreateStartupError(exception);
-            }
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError("CPE startup failed: {0}", exception);
+            MainWindow.Content = CreateStartupError(exception);
         }
     }
 

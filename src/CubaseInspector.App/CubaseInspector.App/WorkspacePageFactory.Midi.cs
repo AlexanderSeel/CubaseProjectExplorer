@@ -29,7 +29,7 @@ internal sealed partial class WorkspacePageFactory
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
         var context = new TextBlock { Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap };
         var plot = new MidiNotePlot();
-        var timing = new TextBlock { Text = "Raw stored positions · timing units and clip placement unverified",
+        var timing = new TextBlock { Text = "Stored note positions · source details explain timing and part context",
             Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap };
         var evidence = new TextBlock { Foreground = Muted, TextWrapping = TextWrapping.Wrap, FontSize = 12 };
         var evidencePanel = new StackPanel { Spacing = 8 };
@@ -58,7 +58,6 @@ internal sealed partial class WorkspacePageFactory
         AutomationProperties.SetName(notes, "CPR note observations. Stored timing units and track ownership are unverified.");
         var detail = new StackPanel { Spacing = 10 };
         detail.Children.Add(title); detail.Children.Add(context);
-        detail.Children.Add(new TextBlock { Text = "CPR note data · timing and track assignment are not verified", FontSize = 11, Foreground = Muted });
         detail.Children.Add(new Border { CornerRadius = new CornerRadius(6), BorderBrush = Divider,
             BorderThickness = new Thickness(1), Child = plot });
         detail.Children.Add(timing); detail.Children.Add(notes); detail.Children.Add(selectedNote);
@@ -71,11 +70,11 @@ internal sealed partial class WorkspacePageFactory
             title.Text = group.Name;
             var projectContext = group.Name == group.ProjectName ? group.Context : group.ProjectName + " · " + group.Context;
             context.Text = $"{projectContext}\n{group.NoteCount:N0} notes read · MIDI pitches {group.PitchRange}";
-            noteRows.ReplaceAll(group.Notes);
+            noteRows.ReplaceAll(group.Notes.Take(2000));
             plot.SetPreview(NativeMidiBrowser.Preview(group));
             evidence.Text = group.SourceLayout + "\n\n" + (group.Notes.FirstOrDefault()?.Warning ?? "No source evidence available.");
-            timing.Text = "Raw stored positions · timing units and clip placement unverified" +
-                (group.NoteCount > 2000 ? " · plot shows the first 2,000 notes" : "");
+            timing.Text = "Stored note positions · source details explain timing and part context" +
+                (group.NoteCount > 2000 ? " · plot and table show the first 2,000 notes; narrow the project/part search to inspect another group" : "");
             selectedNote.Text = "Select a note to inspect its source offset.";
             return Task.CompletedTask;
         }
@@ -96,17 +95,17 @@ internal sealed partial class WorkspacePageFactory
             if (compactPicker.SelectedItem is NativeMidiNoteGroup group && !ReferenceEquals(group, selected))
             { groups.SelectItem(group); _ = ShowGroup(group); }
         };
-        var empty = Empty("No native MIDI notes are indexed. Re-scan CPR/BAK projects in Project Library, then refresh this index.");
+        var empty = Empty("Choose Load saved index or Use open project above to inspect MIDI notes.");
         host.Children.Add(empty); host.Children.Add(layout);
         void Refresh()
         {
             var hasRows = mediaLibrary.NativeMidiGroups.Count > 0;
             layout.Visibility = hasRows ? Visibility.Visible : Visibility.Collapsed;
             empty.Visibility = hasRows ? Visibility.Collapsed : Visibility.Visible;
-            if (empty.Child is TextBlock text) text.Text = mediaLibrary.IsBusy ? "Loading native MIDI observations…"
+            if (empty.Child is TextBlock text) text.Text = mediaLibrary.IsIndexLoading ? "Follow the index activity above. Cancel to browse records read so far."
                 : mediaLibrary.MidiSearch.Length > 0
                 ? "No native notes match this search. Try a project, possible track or part name, or MIDI pitch."
-                : "No native MIDI notes are indexed. Re-scan CPR/BAK projects in Project Library, then refresh this index.";
+                : "No native note groups in this view. Load a saved scope, use the open project, or rebuild its index above.";
             var next = mediaLibrary.NativeMidiGroups.FirstOrDefault(group => group.Key == selected?.Key)
                 ?? mediaLibrary.NativeMidiGroups.FirstOrDefault();
             if (next is not null) { groups.SelectItem(next); _ = ShowGroup(next); }

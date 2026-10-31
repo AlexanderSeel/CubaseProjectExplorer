@@ -7,13 +7,12 @@ public sealed record RoutingFocus(RoutingFocusChannel Selected, IReadOnlyList<Ro
     IReadOnlyList<RoutingFocusConnection> Outgoing, IReadOnlyList<RoutingFocusChannel> OutputPath,
     bool ContainsCycle, IReadOnlyList<string> Warnings);
 
-/// <summary>Direct declared connections around a selected channel. No inferred bus or hardware links.</summary>
+/// <summary>Direct source connections around a selected channel, retaining their evidence and identifiers.</summary>
 public static class RoutingFocusBuilder
 {
     public static IReadOnlyList<RoutingFocusChannel> Channels(ProjectSnapshot project)
     {
-        if (project.Evidence != EvidenceLevel.Confirmed) return [];
-        var tracks = project.Tracks.Where(track => track.Evidence == EvidenceLevel.Confirmed && !string.IsNullOrWhiteSpace(track.ChannelId))
+        var tracks = project.Tracks.Where(track => !string.IsNullOrWhiteSpace(track.ChannelId))
             .GroupBy(track => track.ChannelId!, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.ToArray());
         var uniqueTrackIds = project.Tracks.GroupBy(track => track.Id, StringComparer.Ordinal)
             .Where(group => group.Count() == 1).Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
@@ -21,11 +20,16 @@ public static class RoutingFocusBuilder
             .GroupBy(plugin => plugin.TrackId!, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.OrderBy(plugin => plugin.Slot).ToArray());
         var ids = tracks.Keys.Concat(project.Routing.SelectMany(edge => new[] { edge.FromChannelId, edge.ToChannelId }))
             .Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal);
+        var endpointLabels = project.Routing.Where(edge => !string.IsNullOrWhiteSpace(edge.TargetLabel))
+            .GroupBy(edge => edge.ToChannelId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Select(edge => edge.TargetLabel!).Distinct(StringComparer.Ordinal).ToArray(), StringComparer.Ordinal);
         return ids.Select(id =>
         {
             var matches = tracks.GetValueOrDefault(id) ?? [];
             var track = matches.Length == 1 ? matches[0] : null;
-            return new RoutingFocusChannel(id, track?.Name ?? id + (matches.Length > 1 ? " (ambiguous)" : " (unresolved)"),
+            var labels = endpointLabels.GetValueOrDefault(id) ?? [];
+            var endpointName = labels.Length == 1 ? labels[0] + " · " + id : id;
+            return new RoutingFocusChannel(id, track?.Name ?? endpointName + (matches.Length > 1 ? " (ambiguous)" : " (unresolved)"),
                 track?.ChannelRole ?? track?.Kind ?? "Unresolved", track,
                 track is not null && uniqueTrackIds.Contains(track.Id) ? devices.GetValueOrDefault(track.Id) ?? [] : []);
         }).OrderBy(channel => channel.Name, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -33,11 +37,9 @@ public static class RoutingFocusBuilder
 
     public static Result<RoutingFocus> Build(ProjectSnapshot project, string channelId)
     {
-        if (project.Evidence != EvidenceLevel.Confirmed)
-            return Result<RoutingFocus>.Fail("UNVERIFIED_ROUTING", "Native CPR records do not establish verified bus connections.");
         var channels = Channels(project).ToDictionary(channel => channel.Id, StringComparer.Ordinal);
         if (!channels.TryGetValue(channelId, out var selected))
-            return Result<RoutingFocus>.Fail("UNKNOWN_CHANNEL", "Choose a channel declared by this export.");
+            return Result<RoutingFocus>.Fail("UNKNOWN_CHANNEL", "Choose a channel or routing endpoint read from this project.");
         var incoming = project.Routing.Where(edge => edge.ToChannelId == channelId && channels.ContainsKey(edge.FromChannelId))
             .Select(edge => new RoutingFocusConnection(channels[edge.FromChannelId], edge)).ToArray();
         var outgoing = project.Routing.Where(edge => edge.FromChannelId == channelId && channels.ContainsKey(edge.ToChannelId))

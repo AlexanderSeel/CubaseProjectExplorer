@@ -15,7 +15,6 @@ internal sealed partial class WorkspacePageFactory
 {
     private UIElement SamplesPage()
     {
-        _ = mediaLibrary.LoadCommand.ExecuteAsync(null);
         var root = Page("Sample finder", "Find audio references across projects. CPR path observations appear with their source offset; preview checks whether the referenced file can be read.");
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var search = FilterTextBox("Search filename, folder, project, track…", 300);
@@ -25,9 +24,9 @@ internal sealed partial class WorkspacePageFactory
             Style = (Style)Application.Current.Resources["InspectorFilterComboBoxStyle"] };
         type.SelectedItem = mediaLibrary.SampleType;
         type.SelectionChanged += (_, _) => mediaLibrary.SampleType = type.SelectedItem?.ToString() ?? "All";
-        var refresh = Button("Refresh index", async () => await mediaLibrary.RebuildIndexCommand.ExecuteAsync(null));
-        actions.Children.Add(search); actions.Children.Add(type); actions.Children.Add(refresh);
+        actions.Children.Add(search); actions.Children.Add(type);
         AddPageActions(root, actions);
+        root.Children.Add(MediaIndexActivityPanel());
         var projectScope = new ComboBox { Width = 290, DisplayMemberPath = nameof(SampleProjectScopeOption.DisplayName),
             SelectedValuePath = nameof(SampleProjectScopeOption.Path),
             Style = (Style)Application.Current.Resources["InspectorFilterComboBoxStyle"] };
@@ -72,7 +71,6 @@ internal sealed partial class WorkspacePageFactory
             {
                 loadRing.IsActive = mediaLibrary.IsBusy;
                 loadRing.Visibility = mediaLibrary.IsBusy ? Visibility.Visible : Visibility.Collapsed;
-                refresh.IsEnabled = !mediaLibrary.IsBusy;
                 duplicateScan.IsEnabled = !mediaLibrary.IsBusy && !mediaLibrary.IsDuplicateScanBusy;
             }
             if (args.PropertyName is nameof(mediaLibrary.DuplicateScanStatus) or nameof(mediaLibrary.IsDuplicateScanBusy))
@@ -287,22 +285,17 @@ internal sealed partial class WorkspacePageFactory
 
     private UIElement MidiTracksPage()
     {
-        _ = mediaLibrary.LoadCommand.ExecuteAsync(null);
         var root = Page("MIDI tracks", "Inspect CPR note observations and exported MIDI tracks. Select a project or part to preview its notes.");
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var search = FilterTextBox("Search project, part or pitch…", 300);
         search.Text = mediaLibrary.MidiSearch;
         search.TextChanged += (_, _) => mediaLibrary.MidiSearch = search.Text;
-        var refresh = Button("Refresh index", async () => await mediaLibrary.RebuildIndexCommand.ExecuteAsync(null));
-        refresh.IsEnabled = !mediaLibrary.IsBusy;
-        actions.Children.Add(search); actions.Children.Add(refresh); AddPageActions(root, actions);
+        actions.Children.Add(search); AddPageActions(root, actions);
+        root.Children.Add(MediaIndexActivityPanel());
         var summary = new TextBlock { Margin = new Thickness(0, 8, 0, 6), Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] };
         var loadRing = new ProgressRing { Width = 18, Height = 18, IsActive = mediaLibrary.IsBusy,
             Visibility = mediaLibrary.IsBusy ? Visibility.Visible : Visibility.Collapsed };
-        void UpdateSummary() => summary.Text = mediaLibrary.IsBusy ? "Loading MIDI index…"
-            : mediaLibrary.Status.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
-              mediaLibrary.Status.StartsWith("Could not", StringComparison.OrdinalIgnoreCase)
-                ? mediaLibrary.Status : mediaLibrary.MidiSummary;
+        void UpdateSummary() => summary.Text = mediaLibrary.MidiSummary;
         UpdateSummary();
         PropertyChangedEventHandler statusChanged = (_, args) =>
         {
@@ -312,7 +305,6 @@ internal sealed partial class WorkspacePageFactory
                 UpdateSummary();
                 loadRing.IsActive = mediaLibrary.IsBusy;
                 loadRing.Visibility = mediaLibrary.IsBusy ? Visibility.Visible : Visibility.Collapsed;
-                refresh.IsEnabled = !mediaLibrary.IsBusy;
             }
         };
         mediaLibrary.PropertyChanged += statusChanged;
@@ -390,11 +382,12 @@ internal sealed partial class WorkspacePageFactory
         {
             selectedTrack = row;
             info.Text = $"{row.Name} · {row.ProjectName}\n{row.Kind} · {row.NoteCount:N0} notes · {row.PitchRange} pitch range · {row.ChannelCount} channels · {row.TimeUnit}\n{(row.CanExport ? "Safe export available from verified track timing." : row.ExportLimitation)}";
-            export.IsEnabled = row.CanExport;
+            export.IsEnabled = row.CanExport && !mediaLibrary.IsBusy;
             await mediaLibrary.LoadMidiPianoRollAsync(row);
         }
         PropertyChangedEventHandler rollChanged = (_, args) =>
         {
+            if (args.PropertyName == nameof(mediaLibrary.IsBusy)) export.IsEnabled = selectedTrack?.CanExport == true && !mediaLibrary.IsBusy;
             if (args.PropertyName == nameof(mediaLibrary.MidiPianoRoll)) DrawRoll();
             if (args.PropertyName == nameof(mediaLibrary.MidiPianoRollStatus)) rollStatus.Text = mediaLibrary.MidiPianoRollStatus;
             if (args.PropertyName == nameof(mediaLibrary.IsMidiPreviewBusy))

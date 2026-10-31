@@ -47,14 +47,14 @@ public sealed class RoutingFocusTests
     }
 
     [Fact]
-    public void OutputAndSendCyclesAreExplicitAndNativeCprIsRejected()
+    public void OutputAndSendCyclesStayVisibleForInterpretedProjectData()
     {
         var project = Project([Channel("a", "regular"), Channel("b", "submix")],
             [new("a", "b", "Output"), new("b", "a", "Send")]);
         var focus = RoutingFocusBuilder.Build(project, "a").Value!;
         Assert.True(focus.ContainsCycle);
         Assert.NotEmpty(focus.Warnings);
-        Assert.Empty(RoutingFocusBuilder.Channels(project with { Evidence = EvidenceLevel.Candidate }));
-        Assert.Equal("UNVERIFIED_ROUTING", RoutingFocusBuilder.Build(project with { Evidence = EvidenceLevel.Candidate }, "a").Error?.Code);
+        Assert.Equal(2, RoutingFocusBuilder.Channels(project with { Evidence = EvidenceLevel.Candidate }).Count);
+        Assert.True(RoutingFocusBuilder.Build(project with { Evidence = EvidenceLevel.Candidate }, "a").Value!.ContainsCycle);
     }
 }

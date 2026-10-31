@@ -353,9 +353,14 @@ public sealed partial class LibraryDocumentStore : IDisposable
         Task.Run(() => _store.Query<LibraryProjectAssetIndexDocument>().OrderBy(document => document.ProjectPath).ToList(ct), ct);
 
     /// <summary>Rebuilds search indexes in bounded batches, re-reading source files for compact scan snapshots.</summary>
-    public async Task<int> RebuildProjectAssetIndexesAsync(CancellationToken ct = default)
+    public async Task<int> RebuildProjectAssetIndexesAsync(CancellationToken ct = default,
+        IProgress<LibraryAssetIndexProgress>? progress = null, string? projectPath = null)
     {
-        const int batchSize = 64;
+        const int batchSize = 8;
+        var total = await Task.Run(() => CountAssetDocuments(nameof(LibraryProjectDocument), projectPath), ct);
+        if (total == 0) return 0;
+        var processed = 0;
+        var skipped = 0;
         var inspector = new ProjectInspector([new CprEvidenceReader(), new DawprojectReader()]);
         long lastRowId = 0;
         var indexedCount = 0;
@@ -367,10 +372,13 @@ public sealed partial class LibraryDocumentStore : IDisposable
                 if (!File.Exists(DatabasePath)) return (LastRowId: cursor, Projects: new List<LibraryProjectDocument>());
                 using var connection = OpenReadOnlyDatabase();
                 using var command = connection.CreateCommand();
-                command.CommandText = "SELECT rowid, Data FROM documents WHERE TypeName=$type AND rowid>$after ORDER BY rowid LIMIT $limit";
+                command.CommandText = "SELECT rowid, Data FROM documents WHERE TypeName=$type AND rowid>$after " +
+                    (string.IsNullOrWhiteSpace(projectPath) ? "" : "AND Id=$id ") +
+                    "ORDER BY rowid LIMIT $limit";
                 command.Parameters.AddWithValue("$type", nameof(LibraryProjectDocument));
                 command.Parameters.AddWithValue("$after", cursor);
                 command.Parameters.AddWithValue("$limit", batchSize);
+                if (!string.IsNullOrWhiteSpace(projectPath)) command.Parameters.AddWithValue("$id", StableId(projectPath));
                 using var reader = command.ExecuteReader();
                 var projects = new List<LibraryProjectDocument>(batchSize);
                 var nextRowId = cursor;
@@ -391,18 +399,31 @@ public sealed partial class LibraryDocumentStore : IDisposable
             foreach (var document in batch.Projects)
             {
                 ct.ThrowIfCancellationRequested();
+                processed++;
+                if (!string.IsNullOrWhiteSpace(projectPath) && !string.Equals(document.FilePath, projectPath, StringComparison.OrdinalIgnoreCase)) continue;
+                progress?.Report(new("Rebuilding project asset index", processed - 1, total, document.FilePath, skipped));
                 var snapshot = document.Snapshot!;
                 if (document.IsCompactSnapshot)
                 {
                     var reread = await inspector.InspectAsync(document.FilePath, ct);
-                    if (!reread.IsSuccess || reread.Value is null) continue;
+                    if (!reread.IsSuccess || reread.Value is null)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        skipped++;
+                        progress?.Report(new("Source unavailable; keeping previous saved index", processed, total, document.FilePath, skipped,
+                            reread.Error is { } error ? error.Code + ": " + error.Message : "The source project could not be read."));
+                        continue;
+                    }
                     snapshot = reread.Value;
                 }
-                indexes.Add(BuildAssetIndexDocument(snapshot));
+                indexes.Add(await Task.Run(() => BuildAssetIndexDocument(snapshot), ct));
+                progress?.Report(new("Project asset index prepared", processed, total, document.FilePath, skipped));
             }
             if (indexes.Count == 0) continue;
+            progress?.Report(new("Saving rebuilt asset indexes", processed, total, batch.Projects.LastOrDefault()?.FilePath, skipped));
             await BatchUpsertInChunksAsync(indexes, ct);
             indexedCount += indexes.Count;
+            progress?.Report(new("Rebuilt asset indexes saved", processed, total, batch.Projects.LastOrDefault()?.FilePath, skipped));
         }
         return indexedCount;
     }

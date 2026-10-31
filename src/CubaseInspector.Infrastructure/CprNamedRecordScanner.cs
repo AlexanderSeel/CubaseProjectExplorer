@@ -13,7 +13,7 @@ namespace CubaseInspector.Infrastructure;
 internal static class CprNamedRecordScanner
 {
     private const int MaxRecordBytes = 256 * 1024;
-    private const int MaxValuesPerAnchor = 128;
+    private const int MaxValuesPerAnchor = 1024;
     private const int MaxNodesPerAnchor = 4096;
     private const int MaxDepth = 24;
     private const int MaxArrayItems = 4096;
@@ -40,6 +40,9 @@ internal static class CprNamedRecordScanner
                 var next = anchor;
                 while (next < parser.End && values.Count < MaxValuesPerAnchor && parsed < MaxNodesPerAnchor)
                 {
+                    // Each channel-like named record starts a new top-level Name/String object.
+                    // Do not merge the following record after reading past its insert/strip fields.
+                    if (parsed > 0 && data.AsSpan(next).StartsWith(ChannelNameAnchor)) break;
                     var recordStart = next;
                     if (!parser.TryRecord(ref next, 0, out var record)) break;
                     parsed++;

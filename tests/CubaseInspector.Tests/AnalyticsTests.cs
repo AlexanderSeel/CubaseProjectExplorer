@@ -141,10 +141,10 @@ public sealed class AnalyticsTests
     }
 
     [Fact]
-    public void Routing_RejectsUnverifiedAndUnknownChannels()
+    public void Routing_TraversesInterpretedDataAndRejectsUnknownChannels()
     {
         var service = new RoutingGraphService();
-        Assert.Equal("UNVERIFIED_ROUTING", service.Trace(Snapshot("x.cpr", EvidenceLevel.Candidate), "a").Error?.Code);
+        Assert.True(service.Trace(Snapshot("x.cpr", EvidenceLevel.Candidate), "a").IsSuccess);
         Assert.Equal("CHANNEL_NOT_FOUND", service.Trace(Snapshot("x"), "missing").Error?.Code);
         Assert.Equal("INVALID_LIMIT", service.Trace(Snapshot("x"), "a", maxChannels: 0).Error?.Code);
     }

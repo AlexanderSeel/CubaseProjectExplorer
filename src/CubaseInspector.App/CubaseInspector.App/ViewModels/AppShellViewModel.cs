@@ -12,6 +12,7 @@ public sealed partial class AppShellViewModel : ObservableObject
     private readonly IProjectPathPicker _picker;
     private readonly ProjectSessionState _session;
     private readonly AppPreferencesService _preferences;
+    private readonly LibraryDatabasePathResolution _databasePathResolution;
 
     [ObservableProperty] private string _currentPage = "Overview";
     [ObservableProperty] private string _status = "Read-only project inspection";
@@ -29,9 +30,10 @@ public sealed partial class AppShellViewModel : ObservableObject
     public PluginCatalogViewModel PluginCatalog { get; }
     public ProjectPreflightViewModel Preflight { get; }
     public bool HasProject => _session.SelectedProject is not null;
+    public string? DatabasePathWarning => _databasePathResolution.Warning;
     public bool IsAnyBusy => IsBusy || Library.IsBusy || Library.IsFiltering || PluginInventory.IsBusy || Comparison.IsBusy ||
         Tools.IsBusy || LibraryAdmin.IsBusy || PluginCatalog.IsBusy || Preflight.IsBusy || LibrarySearch.IsBusy ||
-        Statistics.IsLibraryUsageBusy || MediaLibrary.IsBusy || MediaLibrary.IsMidiPreviewBusy || LibrarySearch.IsSearching ||
+        Statistics.IsLibraryUsageBusy || MediaLibrary.IsBusy || MediaLibrary.IsIndexFiltering || MediaLibrary.IsMidiPreviewBusy || LibrarySearch.IsSearching ||
         LibraryAdmin.IsRecordBrowserBusy || LibraryAdmin.IsQueryBusy;
     public string BusyStatus => Library.IsBusy
         ? (string.IsNullOrWhiteSpace(Library.ProgressText) ? Library.Status : Library.ProgressText)
@@ -43,6 +45,7 @@ public sealed partial class AppShellViewModel : ObservableObject
         : LibrarySearch.IsBusy ? LibrarySearch.Status
         : LibrarySearch.IsSearching ? LibrarySearch.Status
         : MediaLibrary.IsBusy ? MediaLibrary.Status
+        : MediaLibrary.IsIndexFiltering ? "Filtering media and MIDI browser results…"
         : MediaLibrary.IsMidiPreviewBusy ? MediaLibrary.MidiPianoRollStatus
         : Statistics.IsLibraryUsageBusy ? Statistics.LibraryUsageStatus
         : Tools.IsBusy ? Tools.Status
@@ -52,6 +55,7 @@ public sealed partial class AppShellViewModel : ObservableObject
         : Status;
 
     public AppShellViewModel(IProjectPathPicker picker, ProjectSessionState session, AppPreferencesService preferences,
+        LibraryDatabasePathResolution databasePathResolution,
         ProjectLibraryViewModel library, ProjectWorkspaceViewModel workspace,
         ProjectComparisonViewModel comparison, PluginInventoryViewModel pluginInventory,
         ProjectToolsViewModel tools, ProjectStatisticsViewModel statistics, LibraryAdminViewModel libraryAdmin,
@@ -61,6 +65,7 @@ public sealed partial class AppShellViewModel : ObservableObject
         _picker = picker;
         _session = session;
         _preferences = preferences;
+        _databasePathResolution = databasePathResolution;
         Library = library;
         Workspace = workspace;
         Comparison = comparison;
@@ -93,7 +98,7 @@ public sealed partial class AppShellViewModel : ObservableObject
     {
         if (args.PropertyName is "IsBusy" or "IsSearching" or "IsMidiPreviewBusy" or "IsLibraryUsageBusy" or "LibraryUsageStatus" or
             "IsRecordBrowserBusy" or "IsQueryBusy" or "RecordEditorStatus" or "DatabaseQueryStatus" or
-            "IsFiltering" or "Status" or "MidiPianoRollStatus" or "ProgressText")
+            "IsFiltering" or "IsIndexFiltering" or "Status" or "MidiPianoRollStatus" or "ProgressText")
         {
             OnPropertyChanged(nameof(IsAnyBusy));
             OnPropertyChanged(nameof(BusyStatus));

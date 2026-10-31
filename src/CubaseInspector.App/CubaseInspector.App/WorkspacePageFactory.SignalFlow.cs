@@ -16,9 +16,11 @@ internal sealed partial class WorkspacePageFactory
 {
     private UIElement FocusedRoutingView(ProjectSnapshot project)
     {
+        var native = project.Evidence != EvidenceLevel.Confirmed;
         var channels = RoutingFocusBuilder.Channels(project);
-        if (channels.Count == 0) return Empty("This export supplied no channel records or routing endpoints.");
-        var selectedId = channels.FirstOrDefault(channel => Category(channel) == "Output")?.Id ?? channels[0].Id;
+        if (channels.Count == 0) return Empty("No channel records or routing endpoints were decoded from this file.");
+        var selectedId = channels.FirstOrDefault(channel => Category(channel) == "Output")?.Id ??
+            project.Routing.FirstOrDefault()?.FromChannelId ?? channels[0].Id;
         var root = new StackPanel { Spacing = 10, Margin = new Thickness(0, 12, 0, 0) };
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var showChannels = new ToggleButton { Content = "Channels", IsChecked = true };
@@ -62,7 +64,7 @@ internal sealed partial class WorkspacePageFactory
         workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var sidebar = new StackPanel { Spacing = 8 };
         var search = FilterTextBox("Find a channel", 184);
-        var category = Combo("Channel kind", ["All", "Audio", "Instrument/MIDI", "Group", "FX", "Output", "Other", "Unresolved"], 184);
+        var category = Combo("Channel kind", ["All", "Audio", "Instrument/MIDI", "Group", "FX", "Output", "Mixer", "Other", "Unresolved"], 184);
         var channelCount = new TextBlock { FontSize = 11, Foreground = Muted };
         var rows = new ObservableCollection<SignalFlowChannelRow>();
         var list = new ListView { ItemsSource = rows, SelectionMode = ListViewSelectionMode.Single,
@@ -163,11 +165,11 @@ internal sealed partial class WorkspacePageFactory
                 var centerHeight = Math.Max(230, 150 + Math.Min(focus.Selected.Devices.Count, 8) * 24);
                 Panel("FEEDS IN", focus.Incoming.Count, 12, 300, incoming.Length);
                 Panel("GOES TO", focus.Outgoing.Count, 704, 284, outgoing.Length);
-                if (incoming.Length == 0) Put(new TextBlock { Text = "No incoming connections exported.", Foreground = Muted, FontSize = 12,
+                if (incoming.Length == 0) Put(new TextBlock { Text = native ? "No incoming bus references decoded." : "No incoming connections exported.", Foreground = Muted, FontSize = 12,
                     Width = 268, TextWrapping = TextWrapping.Wrap }, 28, centerY - 8);
                 if (outgoing.Length == 0) Put(new TextBlock { Text = Category(focus.Selected) == "Output"
                     ? "Exported output channel.\nNo further destination supplied."
-                    : "No outgoing connection exported.", Foreground = Muted, FontSize = 12, Width = 250,
+                    : native ? "No output or send destination decoded.\nStored mixer values are shown in the centre." : "No outgoing connection exported.", Foreground = Muted, FontSize = 12, Width = 250,
                     TextWrapping = TextWrapping.Wrap }, 720, centerY - 16);
                 for (var i = 0; i < incoming.Length; i++)
                 {
@@ -186,14 +188,45 @@ internal sealed partial class WorkspacePageFactory
                     TextWrapping = TextWrapping.Wrap });
                 body.Children.Add(new TextBlock { Text = Category(focus.Selected) + " · " + focus.Selected.Id, Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap });
                 var track = focus.Selected.Track;
-                body.Children.Add(new TextBlock { Text = $"Saved volume {track?.Volume?.ToString("0.###") ?? "unknown"}\nPan {track?.Pan?.ToString("0.###") ?? "unknown"} · Mute {Flag(track?.Mute)} · Solo {Flag(track?.Solo)}",
+                var observation = native ? project.NativeMixerObservations?.FirstOrDefault(item => item.ArchiveOffset == track?.SourceOffset) : null;
+                var volume = observation is not null ? observation.VolumeDb is double db ? db.ToString("0.###") + " dB" : null : track?.Volume?.ToString("0.###");
+                body.Children.Add(new TextBlock { Text = $"Saved volume {volume ?? "not decoded"}\nPan {track?.Pan?.ToString("0.###") ?? "not decoded"} · Mute {Flag(track?.Mute)} · Solo {Flag(track?.Solo)}",
                     Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap });
+                if (native)
+                    body.Children.Add(Button("Source details…", () =>
+                    {
+                        var source = new StackPanel { Spacing = 10 };
+                        source.Children.Add(Note("CPR field interpretation. Connections match saved bus IDs within the same source stream. Duplicate IDs remain unresolved; record names are not used to join channels."));
+                        source.Children.Add(DetailCard("RECORD", ("Name", focus.Selected.Name),
+                            ("Source", observation?.SourceStream ?? track?.SourceRecordClass ?? "Routing endpoint"),
+                            ("File offset", track?.SourceOffset is long recordOffset ? $"0x{recordOffset:X}" : "No record matched")));
+                        if (observation is not null)
+                            source.Children.Add(Section("Stored fields", (observation.CandidateFields ?? []).Select(field =>
+                                $"{field.Path} = {field.Value} [{field.Type}] · 0x{field.ArchiveOffset:X}")));
+                        else
+                        {
+                            var offsets = focus.Incoming.Concat(focus.Outgoing).Select(connection => connection.Edge.SourceOffset)
+                                .Where(offset => offset.HasValue).Select(offset => offset!.Value).ToHashSet();
+                            foreach (var origin in project.NativeMixerObservations ?? [])
+                            {
+                                var fields = origin.CandidateFields ?? [];
+                                var prefixes = fields.Where(field => offsets.Contains(field.ArchiveOffset) && field.Path.Contains('/'))
+                                    .Select(field => field.Path[..(field.Path.LastIndexOf('/') + 1)]).Distinct(StringComparer.OrdinalIgnoreCase);
+                                foreach (var prefix in prefixes)
+                                    source.Children.Add(Section("Saved bus fields · " + origin.Name,
+                                        fields.Where(field => field.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                                            .Select(field => $"{field.Path} = {field.Value} [{field.Type}] · 0x{field.ArchiveOffset:X}")));
+                            }
+                        }
+                        source.Children.Add(Section("Connections", focus.Incoming.Concat(focus.Outgoing).Select(connection => EdgeLabel(connection.Edge))));
+                        ShowInformationWindow("CPR record · " + focus.Selected.Name, source, 920, 700);
+                    }));
                 body.Children.Add(new Border { Height = 1, Background = Divider });
                 body.Children.Add(new TextBlock { Text = $"DEVICES · {focus.Selected.Devices.Count}", FontSize = 10, Foreground = Muted });
                 var devices = new ListView { ItemsSource = focus.Selected.Devices.Select(device =>
                     $"{(device.Slot is int slot ? (slot + 1).ToString() : "?")}  {device.Name}" + (device.Enabled == false ? " · disabled" : "")).ToArray(),
                     SelectionMode = ListViewSelectionMode.None, MaxHeight = Math.Max(48, centerHeight - 150), FontSize = 11 };
-                if (focus.Selected.Devices.Count == 0) body.Children.Add(new TextBlock { Text = "No devices exported for this channel.", FontSize = 11, Foreground = Muted, TextWrapping = TextWrapping.Wrap });
+                if (focus.Selected.Devices.Count == 0) body.Children.Add(new TextBlock { Text = native ? "No device ownership decoded for this record." : "No devices exported for this channel.", FontSize = 11, Foreground = Muted, TextWrapping = TextWrapping.Wrap });
                 else body.Children.Add(devices);
                 var selectedCard = new Border { Width = 240, MinHeight = centerHeight, Padding = new Thickness(14),
                     Background = Surface, BorderBrush = ChannelBrush(focus.Selected), BorderThickness = new Thickness(2),
@@ -202,7 +235,7 @@ internal sealed partial class WorkspacePageFactory
                 Put(selectedCard, 398, centerY - centerHeight / 2);
                 foreach (var connection in focus.Incoming) edgeRows.Add($"{connection.Channel.Name} → {focus.Selected.Name} · {EdgeLabel(connection.Edge)}");
                 foreach (var connection in focus.Outgoing) edgeRows.Add($"{focus.Selected.Name} → {connection.Channel.Name} · {EdgeLabel(connection.Edge)}");
-                status.Text = $"{focus.Incoming.Count} incoming · {focus.Outgoing.Count} outgoing · exported connections only" +
+                status.Text = $"{focus.Incoming.Count} incoming · {focus.Outgoing.Count} outgoing · " + (native ? "CPR bus-field interpretation" : "exported connections") +
                     (incomingCount > pageSize ? $" · inputs {incomingPage * pageSize + 1}–{incomingPage * pageSize + incoming.Length}" : "") +
                     (outgoingCount > pageSize ? $" · destinations {outgoingPage * pageSize + 1}–{outgoingPage * pageSize + outgoing.Length}" : "") +
                     (focus.Warnings.Count > 0 ? "\n" + string.Join("\n", focus.Warnings) : "");
@@ -261,7 +294,8 @@ internal sealed partial class WorkspacePageFactory
     private static string Category(RoutingFocusChannel channel) => (channel.Kind.ToLowerInvariant()) switch
     {
         "master" => "Output", "submix" or "group" => "Group", "effect" or "fx" => "FX",
-        "audio" => "Audio", "instrument/midi" => "Instrument/MIDI", "unresolved" => "Unresolved",
+        "audio" => "Audio", "instrument/midi" or "midi" or "instrument" => "Instrument/MIDI", "unresolved" => "Unresolved",
+        "mixer record" => "Mixer",
         "regular" when channel.Track?.Kind == "Audio" => "Audio",
         "regular" when channel.Track?.Kind == "Instrument/MIDI" => "Instrument/MIDI", _ => "Other"
     };
@@ -275,7 +309,9 @@ internal sealed partial class WorkspacePageFactory
 
     private static string EdgeLabel(RoutingEdge edge) => edge.Kind +
         (edge.Kind.Equals("Send", StringComparison.OrdinalIgnoreCase)
-            ? $" · enabled {edge.Enabled?.ToString() ?? "unknown"} · level {edge.Level?.ToString("0.###") ?? "unknown"} · tap {edge.Tap ?? "unknown"}" : "");
+            ? $" · enabled {edge.Enabled?.ToString() ?? "unknown"} · level {edge.Level?.ToString("0.###") ?? "unknown"} · tap {edge.Tap ?? "unknown"}" : "") +
+        (edge.SourcePath is { } source ? " · " + source : "") +
+        (edge.SourceOffset is long offset ? $" · 0x{offset:X}" : "");
 
     private sealed record SignalFlowChannelRow(RoutingFocusChannel Channel, SolidColorBrush Brush)
     {

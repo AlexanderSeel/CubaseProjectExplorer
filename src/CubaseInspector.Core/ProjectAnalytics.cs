@@ -119,8 +119,6 @@ public sealed class RoutingGraphService
     public Result<RoutingTrace> Trace(ProjectSnapshot project, string channelId, bool upstream = false,
         int maxChannels = 10000)
     {
-        if (project.Evidence != EvidenceLevel.Confirmed)
-            return Result<RoutingTrace>.Fail("UNVERIFIED_ROUTING", "Routing is unavailable for candidate-only project evidence.");
         if (string.IsNullOrWhiteSpace(channelId))
             return Result<RoutingTrace>.Fail("CHANNEL_REQUIRED", "Select a channel ID.");
         if (maxChannels <= 0)

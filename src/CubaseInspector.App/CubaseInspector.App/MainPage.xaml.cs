@@ -191,7 +191,7 @@ public sealed partial class MainPage : Page
         UpdateNavigationControls();
         UpdateBusyIndicator();
         StatusText.Text = page == "Projects" ? _shell.Library.Status
-            : _shell.HasProject ? $"{_shell.Workspace.Evidence} evidence" : "No project selected";
+            : _shell.HasProject ? $"{_shell.Workspace.ProjectName} · {_shell.Workspace.TrackCount} track records · {_shell.Workspace.SavedBy}" : "No project selected";
     }
 
     private void Back_Click(object sender, RoutedEventArgs e)
@@ -267,11 +267,15 @@ public sealed partial class MainPage : Page
             _ => ElementTheme.Dark
         };
         ProgressWindowPresenter.ShowOrUpdate(
-            _shell.Library.IsScanning ? "Scanning project library" : "Working in background",
-            _shell.BusyStatus,
-            _shell.Library.IsScanning && _shell.Library.Progress > 0 ? _shell.Library.Progress : null,
-            _shell.Library.IsScanning ? () => _shell.Library.CancelScanCommand.Execute(null) : null,
-            theme);
+            _shell.Library.IsScanning ? "Scanning project library" : _shell.MediaLibrary.IsIndexLoading ? "Media / MIDI index activity" : "Working in background",
+            _shell.MediaLibrary.IsIndexLoading && !_shell.Library.IsScanning
+                ? $"{_shell.MediaLibrary.IndexStage}\n{_shell.MediaLibrary.IndexProcessed:N0}/{_shell.MediaLibrary.IndexTotal:N0} projects · {_shell.MediaLibrary.IndexElapsed} elapsed\n{_shell.MediaLibrary.IndexCurrentProject}\n{_shell.MediaLibrary.IndexOutcome}"
+                : _shell.BusyStatus,
+            _shell.Library.IsScanning && _shell.Library.Progress > 0 ? _shell.Library.Progress :
+                _shell.MediaLibrary.IsIndexLoading && _shell.MediaLibrary.IndexTotal > 0 ? _shell.MediaLibrary.IndexProgress : null,
+            _shell.Library.IsScanning ? () => _shell.Library.CancelScanCommand.Execute(null) :
+                _shell.MediaLibrary.IsIndexLoading && !_shell.MediaLibrary.IsIndexCancelling ? () => _shell.MediaLibrary.CancelIndexLoadCommand.Execute(null) : null,
+            theme, _shell.Library.IsScanning ? "Cancel scan" : "Cancel index load");
     }
 }
 

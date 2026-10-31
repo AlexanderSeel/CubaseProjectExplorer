@@ -211,6 +211,32 @@ public sealed class DawprojectExtendedFieldsTests
         finally { if (File.Exists(path)) File.Delete(path); }
     }
 
+    [Fact]
+    public async Task ReadsLargeBoundedProjectXmlWithoutRepeatedWholeTreeScans()
+    {
+        const int noteCount = 25_000;
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".dawproject");
+        try
+        {
+            var xml = new StringBuilder(2_500_000);
+            xml.Append("<Project><Transport/><Structure><Track id=\"track\"/></Structure>")
+                .Append("<Arrangement><Lanes track=\"track\"><Notes track=\"track\">");
+            for (var index = 0; index < noteCount; index++)
+                xml.Append("<Note time=\"").Append(index).Append("\" duration=\"1\" channel=\"0\" key=\"60\"/>");
+            xml.Append("</Notes></Lanes></Arrangement></Project>");
+            await using (var output = File.Create(path))
+            using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+                await AddEntry(archive, "project.xml", xml.ToString());
+
+            var result = await new DawprojectReader().ReadAsync(path);
+
+            Assert.True(result.IsSuccess, result.Error?.Message);
+            Assert.Equal(noteCount, result.Value!.MidiNotes!.Count);
+            Assert.Equal(noteCount - 1, result.Value.MidiNotes[^1].Time);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
     private static async Task AddEntry(ZipArchive archive, string name, string xml)
     {
         await using var stream = archive.CreateEntry(name, CompressionLevel.Optimal).Open();

@@ -80,7 +80,11 @@ internal sealed partial class WorkspacePageFactory
         return root;
     }
 
-    private UIElement OverviewPage()
+    private UIElement OverviewPage() => shell.Workspace.Project is null
+        ? DashboardPage()
+        : SelectedProjectOverviewPage();
+
+    private UIElement SelectedProjectOverviewPage()
     {
         var vm = shell.Workspace;
         var root = Page(vm.ProjectName, vm.ProjectPath);
@@ -122,7 +126,7 @@ internal sealed partial class WorkspacePageFactory
         coveragePanel.Child = DetailCard("FIELD AVAILABILITY", coverageRows);
         var coverageButton = new Button { Content = "Field availability…",
             Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
-        coverageButton.Flyout = Popup(coveragePanel, 720, 600);
+        coverageButton.Click += (_, _) => ShowInformationWindow("Field availability", coveragePanel, 920, 720);
         root.Children.Add(coverageButton);
         if (vm.Project?.NativeMidiNoteCandidates is { Count: > 0 } noteCandidates)
         {

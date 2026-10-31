@@ -66,6 +66,17 @@ internal sealed partial class WorkspacePageFactory
         };
     }
 
+    private void ShowInformationWindow(string title, UIElement content, int width = 840, int height = 640)
+    {
+        var theme = shell.Theme switch
+        {
+            "Light" => ElementTheme.Light,
+            "System" => ElementTheme.Default,
+            _ => ElementTheme.Dark
+        };
+        InfoWindowPresenter.Show(title, content, theme, width, height);
+    }
+
     private Border Metric(string label, string value) => new()
     {
         Background = Surface, CornerRadius = new CornerRadius(6), Padding = SectionInset,

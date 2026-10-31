@@ -123,40 +123,9 @@
                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
       <Button HorizontalAlignment="Right" VerticalAlignment="Center" Width="28" Height="24" Padding="0"
               Background="Transparent" BorderThickness="0" AutomationProperties.Name="Evidence and limitations"
-              ToolTipService.ToolTip="Evidence and limitations">
+              ToolTipService.ToolTip="Evidence and limitations" Click="Evidence_Click">
         <FontIcon Glyph="&#xE946;" FontSize="14" />
-        <Button.Flyout>
-          <Flyout Placement="Top">
-            <StackPanel MaxWidth="380" Spacing="8" Padding="16">
-              <TextBlock Text="Evidence and limitations" Style="{StaticResource InspectorSectionTitleStyle}" />
-              <TextBlock Text="CPR/BAK track and plug-in markers remain candidates until verified against Cubase. Unknown values do not mean zero or absent." TextWrapping="Wrap" Style="{StaticResource InspectorBodyTextStyle}" />
-              <TextBlock Text="Project files are inspection sources. Originals are never modified." TextWrapping="Wrap" Style="{StaticResource InspectorMetadataTextStyle}" />
-            </StackPanel>
-          </Flyout>
-        </Button.Flyout>
       </Button>
-    </Grid>
-    <Grid x:Name="StartupOverlay" Grid.RowSpan="5" Background="#F50A1028" Visibility="Visible"
-          AutomationProperties.LiveSetting="Polite">
-      <Border MaxWidth="460" Margin="20" Padding="30" CornerRadius="14"
-              Background="#FF111A38" BorderBrush="#553F72CE" BorderThickness="1"
-              HorizontalAlignment="Center" VerticalAlignment="Center">
-        <StackPanel Spacing="14">
-          <Image Source="Assets/Icons/cpe_app_icon.png" Width="116" Height="116"
-                 HorizontalAlignment="Center" Stretch="Uniform" />
-          <TextBlock Text="Cubase Project Explorer" FontSize="24" FontWeight="SemiBold"
-                     HorizontalAlignment="Center" />
-          <TextBlock x:Name="StartupStatus" Text="Opening your local library…" FontSize="13"
-                     HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
-                     AutomationProperties.LiveSetting="Polite" />
-          <ProgressRing x:Name="StartupSpinner" Width="34" Height="34" IsActive="True"
-                        HorizontalAlignment="Center" AutomationProperties.Name="Loading local library" />
-          <ProgressBar x:Name="StartupProgress" Minimum="0" Maximum="100" Value="12" Height="5" />
-          <TextBlock x:Name="StartupLoadedSummary" Text="The application reads its local index. Project files remain untouched."
-                     FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                     HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" />
-        </StackPanel>
-      </Border>
     </Grid>
   </Grid>
 </Page>

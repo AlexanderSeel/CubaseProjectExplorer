@@ -75,9 +75,30 @@ public sealed class DawprojectReader : IProjectReader
         var midiNotes = new List<ProjectMidiNote>();
         var eqBands = new List<ProjectEqBand>();
         var warpPoints = new List<ProjectWarpPoint>();
+        var audioElements = new List<XElement>();
+        var timelineElements = new List<XElement>();
+        var notesLanes = new List<XElement>();
+        var warpsElements = new List<XElement>();
+        var tempoAutomationElements = new List<XElement>();
+        // XDocument is bounded to 16 MiB, but real projects can still contain many
+        // timeline elements. Classify them in one cancellable walk instead of five
+        // independent full-tree Descendants() traversals.
+        foreach (var element in root.Descendants())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            switch (element.Name.LocalName)
+            {
+                case "Audio": audioElements.Add(element); break;
+                case "Clip":
+                case "Marker": timelineElements.Add(element); break;
+                case "Notes": notesLanes.Add(element); break;
+                case "Warps": warpsElements.Add(element); break;
+                case "TempoAutomation": tempoAutomationElements.Add(element); break;
+            }
+        }
         // The published DAWproject schema places audio file references in the
         // arrangement timeline. Never open, extract or resolve these paths.
-        foreach (var audio in root.Descendants().Where(x => x.Name.LocalName == "Audio"))
+        foreach (var audio in audioElements)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (media.Count >= MaxMediaReferences)
@@ -99,8 +120,7 @@ public sealed class DawprojectReader : IProjectReader
                 channels, rate, duration is >= 0 ? duration : null, mediaTrackId));
         }
         var timeline = new List<ProjectTimelineItem>();
-        foreach (var element in root.Descendants().Where(x =>
-            x.Name.LocalName is "Clip" or "Marker"))
+        foreach (var element in timelineElements)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (timeline.Count >= MaxTimelineItems)
@@ -117,7 +137,7 @@ public sealed class DawprojectReader : IProjectReader
                 duration is >= 0 ? duration : null,
                 Attr(element, "reference"), Boolean(Attr(element, "enable"))));
         }
-        foreach (var notesElement in root.Descendants().Where(x => x.Name.LocalName == "Notes"))
+        foreach (var notesElement in notesLanes)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var trackId = Attr(notesElement, "track") ?? notesElement.Ancestors()
@@ -151,7 +171,7 @@ public sealed class DawprojectReader : IProjectReader
             }
         }
         var warpIndex = 0;
-        foreach (var warps in root.Descendants().Where(element => element.Name.LocalName == "Warps"))
+        foreach (var warps in warpsElements)
         {
             var trackId = warps.Ancestors().Where(element => element.Name.LocalName == "Lanes")
                 .Select(element => Attr(element, "track")).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
@@ -187,7 +207,7 @@ public sealed class DawprojectReader : IProjectReader
             "DAWproject (structured)", Attr(application, "name") + " " + Attr(application, "version"),
             bpm, EvidenceLevel.Confirmed, tracks, plugins, routing, warnings,
             numerator, denominator, media, timeline, metadata, midiNotes, EqBands: eqBands, WarpPoints: warpPoints,
-            HasTempoAutomation: root.Descendants().Any(element => element.Name.LocalName == "TempoAutomation" &&
+            HasTempoAutomation: tempoAutomationElements.Any(element =>
                 element.Descendants().Any(child => child.Name.LocalName is "Point" or "RealPoint"))));
 
         void Visit(XElement item, int nesting, string? parentTrackId)

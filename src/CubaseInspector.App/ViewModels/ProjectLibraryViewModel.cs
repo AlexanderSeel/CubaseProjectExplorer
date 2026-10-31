@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CubaseInspector.App.Services;
@@ -162,7 +163,14 @@ public sealed partial class ProjectLibraryViewModel(
             if (ProjectLibraryBrowser.NormalizeSha256(project.SourceSha256) is null)
             {
                 ProgressText = "Calculating file checksum…";
-                try { project = project with { SourceSha256 = await ProjectContentChecksum.ComputeAsync(path, cancellationToken) }; }
+                try
+                {
+                    project = project with
+                    {
+                        SourceSha256 = await Task.Run(() =>
+                            ProjectContentChecksum.ComputeAsync(path, cancellationToken), cancellationToken)
+                    };
+                }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
                     or ArgumentException or NotSupportedException or System.Security.SecurityException)
                 {
@@ -185,7 +193,8 @@ public sealed partial class ProjectLibraryViewModel(
         finally { IsBusy = false; ProgressText = string.Empty; Progress = 0; }
     }
 
-    public async Task ScanFolderAsync(string path, CancellationToken cancellationToken = default)
+    public async Task ScanFolderAsync(string path, CancellationToken cancellationToken = default,
+        ProjectScanTypes? projectScanTypes = null)
     {
         if (IsScanning) return;
         _scanCancellation?.Cancel();
@@ -198,35 +207,25 @@ public sealed partial class ProjectLibraryViewModel(
         ScanIssues.Clear();
         Status = "Scanning project folder…";
         ProgressText = "Preparing folder scan…";
-        var lastRefreshCount = 0;
-        var progress = new Progress<ScanProgress>(update =>
+        var uiProgress = new Progress<ScanProgress>(update =>
         {
-            ProgressText = update.Stage switch
+            ProgressText = update.BytesProcessed is long processed && update.TotalBytes is long total
+                ? $"Hashing {Path.GetFileName(update.CurrentPath)} · {FormatBytes(processed)} of {FormatBytes(total)}"
+                : update.Stage switch
             {
                 ScanStage.Discovering => "Finding project files · " + update.CurrentPath,
                 ScanStage.Hashing => $"Hashing {update.Completed:N0} of {update.Total:N0} · {Path.GetFileName(update.CurrentPath)}",
                 _ => $"Inspecting {update.Completed:N0} of {update.Total:N0} · {Path.GetFileName(update.CurrentPath)}"
             };
             if (update.Total > 0) Progress = Math.Clamp(update.Completed * 100d / update.Total, 0, 100);
-            if (update.ParsedProject is not null)
-            {
-                AddOrReplace(update.ParsedProject, refresh: false);
-                if (_allEntries.Count - lastRefreshCount >= 20)
-                {
-                    lastRefreshCount = _allEntries.Count;
-                    ScheduleProjectRefresh();
-                }
-            }
-            if (update.Failure is not null)
-            {
-                ScanIssues.Add(new(update.CurrentPath, update.Failure.Code, update.Failure.Message));
-                ScanIssueCount = ScanIssues.Count;
-            }
         });
+        // Progress<T> posts to the UI context. Coalesce worker reports so a scan of
+        // thousands of files does not queue thousands of UI callbacks and redraws.
+        var progress = new ThrottledScanProgress(uiProgress);
 
         try
         {
-            var result = await scanner.ScanAsync(path, progress, _scanCancellation.Token);
+            var result = await scanner.ScanAsync(path, progress, _scanCancellation.Token, projectScanTypes);
             if (!result.IsSuccess || result.Value is null)
             {
                 Status = result.Error?.Code == "CANCELLED" ? "Scan cancelled. Completed results are retained."
@@ -234,8 +233,9 @@ public sealed partial class ProjectLibraryViewModel(
                 return;
             }
 
-            var mergedEntries = ProjectLibraryBrowser.MergeScanResults(_allEntries,
-                result.Value.Projects.Select(project => ProjectLibraryBrowser.FromFile(project)));
+            var existingEntries = _allEntries.ToArray();
+            var scannedEntries = result.Value.Projects.Select(project => ProjectLibraryBrowser.FromFile(project)).ToArray();
+            var mergedEntries = await Task.Run(() => ProjectLibraryBrowser.MergeScanResults(existingEntries, scannedEntries));
             _allEntries.Clear();
             _allEntries.AddRange(mergedEntries);
             RebuildEntryIndexes();
@@ -437,6 +437,33 @@ public sealed partial class ProjectLibraryViewModel(
 
     private ProjectLibraryQuery CurrentQuery() => new(Search, FileType, Evidence, SortBy: SortBy,
         VersionContains: VersionContains, FolderContains: FolderContains, WarningsOnly: WarningsOnly);
+
+    private static string FormatBytes(long bytes) => bytes >= 1_073_741_824
+        ? (bytes / 1_073_741_824d).ToString("0.0") + " GB"
+        : bytes >= 1_048_576 ? (bytes / 1_048_576d).ToString("0") + " MB"
+        : (bytes / 1024d).ToString("0") + " KB";
+
+    private sealed class ThrottledScanProgress(IProgress<ScanProgress> target) : IProgress<ScanProgress>
+    {
+        private readonly object _sync = new();
+        private long _lastReportTimestamp;
+        private ScanStage? _lastStage;
+
+        public void Report(ScanProgress value)
+        {
+            lock (_sync)
+            {
+                var now = Stopwatch.GetTimestamp();
+                var stageChanged = _lastStage != value.Stage;
+                if (!stageChanged && _lastReportTimestamp != 0 &&
+                    Stopwatch.GetElapsedTime(_lastReportTimestamp, now) < TimeSpan.FromMilliseconds(100))
+                    return;
+                _lastStage = value.Stage;
+                _lastReportTimestamp = now;
+            }
+            target.Report(value);
+        }
+    }
 }
 
 public sealed record ScanIssueRow(string Path, string Code, string Message)

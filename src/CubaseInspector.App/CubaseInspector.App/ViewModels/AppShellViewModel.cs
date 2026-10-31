@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CubaseInspector.App.Services;
+using CubaseInspector.Core;
 using CubaseInspector.Infrastructure;
 using System.ComponentModel;
 
@@ -12,7 +13,7 @@ public sealed partial class AppShellViewModel : ObservableObject
     private readonly ProjectSessionState _session;
     private readonly AppPreferencesService _preferences;
 
-    [ObservableProperty] private string _currentPage = "Projects";
+    [ObservableProperty] private string _currentPage = "Overview";
     [ObservableProperty] private string _status = "Read-only project inspection";
     [ObservableProperty] private bool _isBusy;
 
@@ -109,7 +110,11 @@ public sealed partial class AppShellViewModel : ObservableObject
 
     public string Theme => _preferences.Theme;
 
+    public ProjectScanTypes ProjectScanTypes => _preferences.ProjectScanTypes;
+
     public void SetTheme(string theme) => _preferences.SetTheme(theme);
+
+    public void SetProjectScanTypes(ProjectScanTypes types) => _preferences.SetProjectScanTypes(types);
 
     [RelayCommand]
     private async Task OpenProjectAsync()
@@ -136,7 +141,7 @@ public sealed partial class AppShellViewModel : ObservableObject
             var path = await _picker.PickFolderAsync();
             if (path is null) return;
             NavigateTo("Projects");
-            await Library.ScanFolderAsync(path);
+            await Library.ScanFolderAsync(path, projectScanTypes: _preferences.ProjectScanTypes);
             Status = Library.Status;
         }
         finally { IsBusy = false; }
@@ -162,7 +167,7 @@ public sealed partial class AppShellViewModel : ObservableObject
             return;
         }
         IsBusy = true;
-        try { await Library.ScanFolderAsync(currentPath); Status = Library.Status; }
+        try { await Library.ScanFolderAsync(currentPath, projectScanTypes: _preferences.ProjectScanTypes); Status = Library.Status; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         { Status = "Project folder rescan failed: " + ex.Message; }
         finally { IsBusy = false; }

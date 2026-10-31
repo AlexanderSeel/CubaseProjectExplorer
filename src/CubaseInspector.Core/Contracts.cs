@@ -137,9 +137,15 @@ public sealed record InstalledPlugin(string Name, string Path, string Format,
 public sealed record PluginCheck(PluginReference Reference, PluginStatus Status, string? MatchedPath,
     InstalledPluginClass? MatchedClass = null);
 public enum ScanStage { Discovering, Inspecting, Hashing }
+public sealed record ProjectScanTypes(bool Cpr = true, bool Bak = true, bool Dawproject = true)
+{
+    public static ProjectScanTypes All { get; } = new();
+    public bool AnyEnabled => Cpr || Bak || Dawproject;
+}
+
 public sealed record ScanProgress(int Completed, int Total, string CurrentPath,
     ProjectSnapshot? ParsedProject = null, AppError? Failure = null,
-    ScanStage Stage = ScanStage.Inspecting);
+    ScanStage Stage = ScanStage.Inspecting, long? BytesProcessed = null, long? TotalBytes = null);
 public sealed record FolderReport(IReadOnlyList<ProjectSnapshot> Projects,
     IReadOnlyList<(string Path, string Error)> Failures,
     bool Partial = false, int Discovered = 0, int Completed = 0,
@@ -165,7 +171,8 @@ public interface IPluginScannerService
 
 public interface IFolderScanner
 {
-    Task<Result<FolderReport>> ScanAsync(string path, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default);
+    Task<Result<FolderReport>> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
+        CancellationToken cancellationToken = default, ProjectScanTypes? projectTypes = null);
 }
 
 public interface IProjectDiff

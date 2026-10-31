@@ -119,7 +119,7 @@ internal sealed partial class WorkspacePageFactory
             Children = { new TextBlock { Text = "Scan issues", Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] },
                 new TextBlock { Text = "Files that could not be indexed or were only partially read. Source files remain unchanged.",
                     TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] }, issuesList } };
-        issuesButton.Flyout = Popup(issuesContent, 640, 520);
+        issuesButton.Click += (_, _) => ShowInformationWindow("Scan issues", issuesContent, 880, 700);
         void UpdateIssues()
         {
             issuesButton.Content = $"Scan issues · {shell.Library.ScanIssueCount:N0}";

@@ -19,7 +19,8 @@ public sealed partial class MainPage : Page
     private Button? _openButton;
     private Button? _scanButton;
     private PluginInventoryViewModel? _progressInventory;
-    private readonly NavigationHistory _history = new("Projects");
+    private readonly NavigationHistory _history = new("Overview");
+    private bool _startupHydrating;
     private bool _rendering;
 
     public MainPage()
@@ -42,66 +43,35 @@ public sealed partial class MainPage : Page
         if (_progressInventory is not null) _progressInventory.PropertyChanged -= InventoryProgressChanged;
         _progressInventory = _shell.PluginInventory;
         _progressInventory.PropertyChanged += InventoryProgressChanged;
+        _startupHydrating = true;
         _progressLibrary.Status = "Loading indexed projects…";
         UpdateScanProgress();
         _shell.SetTheme(_shell.Theme);
         RequestedTheme = _shell.Theme switch { "Light" => ElementTheme.Light, "System" => ElementTheme.Default, _ => ElementTheme.Dark };
         StatusText.Text = _progressLibrary.Status;
-        StartupOverlay.Visibility = Visibility.Visible;
-        StartupSpinner.IsActive = true;
-        StartupProgress.IsIndeterminate = true;
-        StartupProgress.Value = 10;
-        StartupStatus.Text = "Preparing local project and plug-in indexes…";
-        StartupLoadedSummary.Text = "Your project files are not modified.";
-        Render("Projects", recordHistory: false);
+        Render(_shell.CurrentPage, recordHistory: false);
         _ = LoadStartupDataAsync(_shell, _progressLibrary);
     }
 
     private async Task LoadStartupDataAsync(AppShellViewModel shell, ProjectLibraryViewModel library)
     {
-        // Let the first startup frame render before loading the local database.
+        // Let the first dashboard frame render before hydrating the local database.
         await Task.Delay(60);
-        PropertyChangedEventHandler progressChanged = (_, args) =>
-        {
-            if (args.PropertyName == nameof(ProjectLibraryViewModel.ProgressText) &&
-                !string.IsNullOrWhiteSpace(library.ProgressText))
-                StartupStatus.Text = library.ProgressText;
-            if (args.PropertyName == nameof(ProjectLibraryViewModel.Progress))
-            {
-                StartupProgress.IsIndeterminate = library.Progress <= 0;
-                StartupProgress.Value = Math.Clamp(library.Progress * 0.65, 10, 65);
-            }
-        };
-        library.PropertyChanged += progressChanged;
         try
         {
-            StartupStatus.Text = "Loading saved project snapshots and scan folders…";
             await library.LoadSavedProjectsAsync();
-            StartupProgress.Value = 72;
-            StartupStatus.Text = "Loading plug-in, catalog, and scan-folder counts…";
-            StartupProgress.IsIndeterminate = false;
             await shell.LibraryAdmin.RefreshCommand.ExecuteAsync(null);
-            StartupProgress.Value = 100;
-            var hadDatabaseError = library.Status.StartsWith("Saved library could not be loaded", StringComparison.OrdinalIgnoreCase) ||
-                shell.LibraryAdmin.Status.StartsWith("Database could not be read", StringComparison.OrdinalIgnoreCase);
-            StartupStatus.Text = hadDatabaseError ? "Library opened with database warnings" : "Local library ready";
-            StartupLoadedSummary.Text = $"{library.AllEntries.Count:N0} projects · {shell.LibraryAdmin.Plugins} local plug-in declarations · " +
-                $"{shell.LibraryAdmin.CatalogProducts} catalog records · {shell.LibraryAdmin.Folders} scan folders" +
-                (hadDatabaseError ? Environment.NewLine + library.Status + " " + shell.LibraryAdmin.Status : string.Empty);
             StatusText.Text = library.Status;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            StartupStatus.Text = "The local database could not be fully loaded.";
-            StartupLoadedSummary.Text = ex.Message;
-            StatusText.Text = StartupStatus.Text;
+            library.Status = "The local database could not be fully loaded: " + ex.Message;
+            StatusText.Text = library.Status;
         }
         finally
         {
-            library.PropertyChanged -= progressChanged;
-            await Task.Delay(250);
-            StartupSpinner.IsActive = false;
-            StartupOverlay.Visibility = Visibility.Collapsed;
+            _startupHydrating = false;
+            UpdateBusyIndicator();
         }
     }
 
@@ -122,6 +92,35 @@ public sealed partial class MainPage : Page
     }
 
     private void CancelScan_Click(object sender, RoutedEventArgs e) => _shell?.Library.CancelScanCommand.Execute(null);
+
+    private void Evidence_Click(object sender, RoutedEventArgs e)
+    {
+        var content = new StackPanel { Spacing = 12, MaxWidth = 900 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "Evidence and limitations",
+            Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"]
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "CPR/BAK track and plug-in markers remain candidates until verified against Cubase. Unknown values do not mean zero or absent.",
+            TextWrapping = TextWrapping.Wrap,
+            Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"]
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "Project files are inspection sources. Originals are never modified.",
+            TextWrapping = TextWrapping.Wrap,
+            Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"]
+        });
+        var theme = _shell is null ? ElementTheme.Dark : _shell.Theme switch
+        {
+            "Light" => ElementTheme.Light,
+            "System" => ElementTheme.Default,
+            _ => ElementTheme.Dark
+        };
+        InfoWindowPresenter.Show("Evidence and limitations", content, theme, 760, 420);
+    }
 
     private void LibraryProgressChanged(object? sender, PropertyChangedEventArgs args)
     {
@@ -233,7 +232,7 @@ public sealed partial class MainPage : Page
     {
         "Projects" => "Project Library", "Search" => "Search everything", "Calendar" => "Project Calendar", "IO" => "Audio / MIDI I/O",
         "Inventory" => "Local plug-in inventory", "Catalog" => "Plug-in catalog", "Preflight" => "Dependency preflight",
-        "Tools" => "Reports & tools", "Database" => "Library database", "Compare" => "Compare projects",
+        "Overview" => "Studio overview", "Tools" => "Reports & tools", "Database" => "Library database", "Compare" => "Compare projects",
         "Samples" => "Sample finder", "Midi" => "MIDI tracks",
         _ => page
     };
@@ -246,6 +245,33 @@ public sealed partial class MainPage : Page
         BusySpinner.IsActive = busy;
         BusyText.Text = busy ? _shell.BusyStatus : string.Empty;
         ToolTipService.SetToolTip(BusyText, BusyText.Text);
+
+        // Startup has its own full-window loading overlay. The detached progress
+        // window is reserved for operations the user may continue working beside.
+        var hasLongOperation = !_startupHydrating && ((_shell.Library.IsBusy && !_shell.Library.IsLoading) || _shell.PluginInventory.IsBusy ||
+            _shell.Comparison.IsBusy || _shell.Tools.IsBusy || _shell.LibraryAdmin.IsBusy ||
+            _shell.LibraryAdmin.IsRecordBrowserBusy || _shell.LibraryAdmin.IsQueryBusy ||
+            _shell.PluginCatalog.IsBusy || _shell.Preflight.IsBusy || _shell.LibrarySearch.IsSearching ||
+            _shell.MediaLibrary.IsBusy || _shell.MediaLibrary.IsMidiPreviewBusy ||
+            _shell.Statistics.IsLibraryUsageBusy);
+        if (!hasLongOperation)
+        {
+            ProgressWindowPresenter.Close();
+            return;
+        }
+
+        var theme = _shell.Theme switch
+        {
+            "Light" => ElementTheme.Light,
+            "System" => ElementTheme.Default,
+            _ => ElementTheme.Dark
+        };
+        ProgressWindowPresenter.ShowOrUpdate(
+            _shell.Library.IsScanning ? "Scanning project library" : "Working in background",
+            _shell.BusyStatus,
+            _shell.Library.IsScanning && _shell.Library.Progress > 0 ? _shell.Library.Progress : null,
+            _shell.Library.IsScanning ? () => _shell.Library.CancelScanCommand.Execute(null) : null,
+            theme);
     }
 }
 

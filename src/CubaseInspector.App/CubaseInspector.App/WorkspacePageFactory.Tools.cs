@@ -272,22 +272,93 @@ internal sealed partial class WorkspacePageFactory
 
     private UIElement ToolsPage()
     {
-        var root = Page("Reports & project tools", shell.Tools.Status);
-        var status = Note(shell.Tools.Status);
-        root.Children.Add(Note("Export a report from the selected project's available fields. Source project files remain unchanged."));
+        var project = shell.Workspace.Project;
+        var root = Page("Project report", project is null
+            ? "Open a project or choose one from the Project Library to review its report."
+            : "Review the selected project's available fields, source evidence and limitations before exporting.");
         var export = Button("Export Markdown report…", async () => await shell.Tools.ExportMarkdownCommand.ExecuteAsync(null));
         var copy = Button("Create byte-identical copy…", async () => await shell.Tools.CreateUnmodifiedCopyCommand.ExecuteAsync(null));
         AddPageActions(root, export, copy);
-        root.Children.Add(Note("The copy action does not disable plug-ins or alter project state."));
+        if (project is null)
+        {
+            root.Children.Add(Empty("No project is selected. Open or select a project to build a report preview."));
+            root.Children.Add(Button("Browse project library", () => navigate("Projects")));
+            export.IsEnabled = copy.IsEnabled = false;
+            return root;
+        }
+
+        root.Children.Add(Note(project.Evidence == EvidenceLevel.Candidate
+            ? "Native CPR/BAK entries below are parser observations. Candidate fields are not confirmed Cubase tracks, plug-in instances, or signal connections."
+            : "This report describes fields declared by the structured project export. Missing fields remain unknown; the source project is unchanged."));
+        var summary = DetailCard("REPORT SUBJECT", ("Project", project.Name), ("Source", project.FilePath),
+            ("Format", project.Format), ("Saved by", project.CreatorVersion ?? "Unknown"),
+            ("Evidence", EvidencePresentation.Label(project.Evidence)),
+            ("Tempo", project.Bpm is double bpm ? bpm.ToString("0.##") + " BPM" : "Unknown"),
+            ("Time signature", project.TimeSignatureNumerator is int numerator && project.TimeSignatureDenominator is int denominator
+                ? $"{numerator}/{denominator}" : "Unknown"));
+        root.Children.Add(summary);
+
+        var metrics = new Grid { ColumnSpacing = 10, RowSpacing = 10, Margin = new Thickness(0, 4, 0, 10) };
+        for (var column = 0; column < 3; column++)
+            metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (var row = 0; row < 2; row++) metrics.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var metricRows = new[]
+        {
+            ("TRACK RECORDS", project.Tracks.Count.ToString("N0")),
+            ("PLUGIN REFERENCES", project.Plugins.Count.ToString("N0")),
+            ("ROUTING EDGES", project.Routing.Count.ToString("N0")),
+            ("MIDI NOTES", (project.MidiNotes?.Count ?? 0).ToString("N0")),
+            ("MEDIA REFERENCES", (project.MediaReferences?.Count ?? 0).ToString("N0")),
+            ("WARNINGS", project.Warnings.Count.ToString("N0"))
+        };
+        for (var index = 0; index < metricRows.Length; index++)
+        {
+            var card = Metric(metricRows[index].Item1, metricRows[index].Item2);
+            Grid.SetColumn(card, index % 3);
+            Grid.SetRow(card, index / 3);
+            metrics.Children.Add(card);
+        }
+        root.Children.Add(metrics);
+
+        var coverage = ProjectFieldCoverage.Evaluate(project)
+            .Select(field => $"{field.Key} · {field.Value}");
+        root.Children.Add(Section("Field availability", Bounded(coverage, ProjectFieldCoverage.Evaluate(project).Count)));
+        root.Children.Add(Section("Track and channel records", Bounded(project.Tracks.Select(track =>
+            $"{track.Name} · {track.Kind} · {track.Evidence} · source offset {track.SourceOffset?.ToString() ?? "unknown"}"), project.Tracks.Count)));
+        root.Children.Add(Section("Plug-in references", Bounded(project.Plugins.Select(plugin =>
+            $"{plugin.Name} · {plugin.Format} · {plugin.Evidence} · vendor {plugin.Manufacturer ?? "unknown"}"), project.Plugins.Count)));
+        root.Children.Add(Section("MIDI note events", Bounded((project.MidiNotes ?? []).Select(note =>
+            $"Track {note.TrackId} · time {note.Time:0.###} {note.TimeUnit ?? "unit unknown"} · duration {note.Duration:0.###} · key {note.Key} · velocity {note.Velocity?.ToString("0.###") ?? "unknown"}"), project.MidiNotes?.Count ?? 0)));
+        root.Children.Add(Section("Native MIDI candidates", Bounded((project.NativeMidiNoteCandidates ?? []).Select(note =>
+            $"Position {note.PositionTicks:0.###} · length {note.DurationTicks:0.###} · pitch {note.MidiPitch} · velocity {note.Velocity} · offset 0x{note.FileOffset:X} · {note.Evidence}"), project.NativeMidiNoteCandidates?.Count ?? 0)));
+        root.Children.Add(Section("Media references", Bounded((project.MediaReferences ?? []).Select(item =>
+            $"{item.Path} · {item.External switch { true => "external", false => "embedded", _ => "location unknown" }} · {item.Channels?.ToString() ?? "?"} channels · {item.SampleRate?.ToString("N0") ?? "?"} Hz"), project.MediaReferences?.Count ?? 0)));
+        root.Children.Add(Section("Timeline clips and markers", Bounded((project.TimelineItems ?? []).Select(item =>
+            $"{item.Kind} · {item.Name ?? "(unnamed)"} · time {item.Time:0.###} · duration {item.Duration?.ToString("0.###") ?? "unknown"}"), project.TimelineItems?.Count ?? 0)));
+        root.Children.Add(Section("Routing", Bounded(project.Routing.Select(edge =>
+            $"{edge.FromChannelId} → {edge.ToChannelId} · {edge.Kind} · level {edge.Level?.ToString("0.###") ?? "unknown"}"), project.Routing.Count)));
+        root.Children.Add(Section("Warnings and limitations", Bounded(project.Warnings, project.Warnings.Count)));
+        root.Children.Add(Note("The Markdown export contains the detailed report. The in-app preview limits each list to 100 rows to keep large projects responsive."));
+        var status = new TextBlock { Text = shell.Tools.Status, TextWrapping = TextWrapping.Wrap,
+            Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] };
         root.Children.Add(status);
         PropertyChangedEventHandler handler = (_, _) =>
         {
-            if (status.Child is TextBlock note) note.Text = shell.Tools.Status;
+            status.Text = shell.Tools.Status;
             export.IsEnabled = copy.IsEnabled = !shell.Tools.IsBusy;
         };
         shell.Tools.PropertyChanged += handler;
         root.Unloaded += (_, _) => shell.Tools.PropertyChanged -= handler;
         return root;
+
+        static IEnumerable<string> Bounded(IEnumerable<string> values, int total)
+        {
+            var rows = values.Take(100).ToArray();
+            if (total == 0) return ["No values were supplied by the selected project."];
+            return total > rows.Length
+                ? rows.Append($"{total - rows.Length:N0} additional rows are included in the Markdown export.")
+                : rows;
+        }
     }
 
     private UIElement SettingsPage()
@@ -302,6 +373,71 @@ internal sealed partial class WorkspacePageFactory
             _ => ElementTheme.Dark
         });
         AddPageActions(root, theme);
+
+        var scanTypes = shell.ProjectScanTypes;
+        var scanSettings = new StackPanel { Spacing = 8, Background = Surface, Padding = SectionInset,
+            Margin = new Thickness(0, 10, 0, 8) };
+        scanSettings.Children.Add(new TextBlock { Text = "PROJECT FILE TYPES",
+            Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] });
+        scanSettings.Children.Add(new TextBlock
+        {
+            Text = "Choose which formats folder scans inspect and add to the library. These settings apply to new scans and rescans; turning a type off does not remove projects already indexed.",
+            Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], TextWrapping = TextWrapping.Wrap
+        });
+        var scanCpr = new CheckBox { Content = "Cubase projects (.cpr)", IsChecked = scanTypes.Cpr };
+        var scanBak = new CheckBox { Content = "Cubase backup projects (.bak)", IsChecked = scanTypes.Bak };
+        var scanDawproject = new CheckBox { Content = "DAWproject files (.dawproject)", IsChecked = scanTypes.Dawproject };
+        var restoringScanTypes = false;
+        var scanSettingsStatus = new TextBlock
+        {
+            Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"],
+            TextWrapping = TextWrapping.Wrap
+        };
+        scanSettings.Children.Add(scanCpr);
+        scanSettings.Children.Add(scanBak);
+        scanSettings.Children.Add(scanDawproject);
+        scanSettings.Children.Add(scanSettingsStatus);
+        void RestoreScanTypes()
+        {
+            var saved = shell.ProjectScanTypes;
+            restoringScanTypes = true;
+            try
+            {
+                scanCpr.IsChecked = saved.Cpr;
+                scanBak.IsChecked = saved.Bak;
+                scanDawproject.IsChecked = saved.Dawproject;
+            }
+            finally { restoringScanTypes = false; }
+        }
+        void SaveScanTypes()
+        {
+            if (restoringScanTypes) return;
+            var selected = new ProjectScanTypes(scanCpr.IsChecked == true, scanBak.IsChecked == true,
+                scanDawproject.IsChecked == true);
+            if (!selected.AnyEnabled)
+            {
+                scanSettingsStatus.Text = "Keep at least one project type enabled for folder scans.";
+                RestoreScanTypes();
+                return;
+            }
+            try
+            {
+                shell.SetProjectScanTypes(selected);
+                scanSettingsStatus.Text = "Saved. This selection will be used for the next scan or rescan.";
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                RestoreScanTypes();
+                scanSettingsStatus.Text = "Could not save scan types: " + exception.Message;
+            }
+        }
+        scanCpr.Checked += (_, _) => SaveScanTypes();
+        scanCpr.Unchecked += (_, _) => SaveScanTypes();
+        scanBak.Checked += (_, _) => SaveScanTypes();
+        scanBak.Unchecked += (_, _) => SaveScanTypes();
+        scanDawproject.Checked += (_, _) => SaveScanTypes();
+        scanDawproject.Unchecked += (_, _) => SaveScanTypes();
+        root.Children.Add(scanSettings);
         var appVersion = typeof(App).Assembly.GetName().Version?.ToString(4) ?? "Unknown";
         root.Children.Add(DetailCard("APPEARANCE", ("Theme", "Select the application appearance."),
             ("Density", "Compact workspace layout")));

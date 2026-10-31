@@ -39,6 +39,37 @@ public sealed class FolderScanCancellationTests
         }
     }
 
+    private sealed class ConcurrencyTrackingInspector : IProjectInspector
+    {
+        private int _active;
+        private int _maximumActive;
+        public int MaximumActive => Volatile.Read(ref _maximumActive);
+
+        public async Task<Result<ProjectSnapshot>> InspectAsync(string path, CancellationToken cancellationToken = default)
+        {
+            var active = Interlocked.Increment(ref _active);
+            UpdateMaximum(active);
+            try
+            {
+                await Task.Delay(50, cancellationToken);
+                return Result<ProjectSnapshot>.Ok(new ProjectSnapshot(path,
+                    Path.GetFileNameWithoutExtension(path), "DAWproject test", null,
+                    null, EvidenceLevel.Confirmed, [], [], [], []));
+            }
+            finally { Interlocked.Decrement(ref _active); }
+        }
+
+        private void UpdateMaximum(int active)
+        {
+            while (true)
+            {
+                var previous = Volatile.Read(ref _maximumActive);
+                if (active <= previous || Interlocked.CompareExchange(ref _maximumActive, active, previous) == previous)
+                    return;
+            }
+        }
+    }
+
     [Fact]
     public async Task CancelledScanPreservesCompletedProjectsAndReportsPartialStatus()
     {
@@ -110,6 +141,60 @@ public sealed class FolderScanCancellationTests
             Assert.True(result.IsSuccess, result.Error?.Message);
             Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes)), Assert.Single(result.Value!.Projects).SourceSha256);
             Assert.Contains(updates, update => update.Stage == ScanStage.Hashing);
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Fact]
+    public async Task LargeDawprojectInspectionIsSerializedWithinFolderScan()
+    {
+        var directory = Directory.CreateTempSubdirectory("dawproject-scan-concurrency-");
+        try
+        {
+            for (var index = 0; index < 4; index++)
+                await File.WriteAllBytesAsync(Path.Combine(directory.FullName, $"project-{index}.dawproject"), [1, 2, 3]);
+            var inspector = new ConcurrencyTrackingInspector();
+
+            var result = await new FolderScanner(inspector).ScanAsync(directory.FullName);
+
+            Assert.True(result.IsSuccess, result.Error?.Message);
+            Assert.Equal(4, result.Value!.Projects.Count);
+            Assert.Equal(1, inspector.MaximumActive);
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Fact]
+    public async Task ScanSettingsLimitDiscoveryToSelectedProjectTypes()
+    {
+        var directory = Directory.CreateTempSubdirectory("project-scan-types-");
+        try
+        {
+            await File.WriteAllBytesAsync(Path.Combine(directory.FullName, "song.cpr"), [1, 2, 3]);
+            await File.WriteAllBytesAsync(Path.Combine(directory.FullName, "song.bak"),
+                [(byte)'R', (byte)'I', (byte)'F', (byte)'2', 0, 0, 0, 0, 0, 0, 0, 0, (byte)'N', (byte)'U', (byte)'N', (byte)'D']);
+            await File.WriteAllBytesAsync(Path.Combine(directory.FullName, "song.dawproject"), [4, 5, 6]);
+
+            var result = await new FolderScanner(new ConcurrencyTrackingInspector()).ScanAsync(directory.FullName,
+                projectTypes: new ProjectScanTypes(Cpr: false, Bak: true, Dawproject: false));
+
+            Assert.True(result.IsSuccess, result.Error?.Message);
+            Assert.Equal("song.bak", Path.GetFileName(Assert.Single(result.Value!.Projects).FilePath));
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Fact]
+    public async Task ScanRequiresAtLeastOneEnabledProjectType()
+    {
+        var directory = Directory.CreateTempSubdirectory("project-scan-no-types-");
+        try
+        {
+            var result = await new FolderScanner(new ConcurrencyTrackingInspector()).ScanAsync(directory.FullName,
+                projectTypes: new ProjectScanTypes(Cpr: false, Bak: false, Dawproject: false));
+
+            Assert.False(result.IsSuccess);
+            Assert.Equal("NO_PROJECT_TYPES", result.Error?.Code);
         }
         finally { directory.Delete(true); }
     }

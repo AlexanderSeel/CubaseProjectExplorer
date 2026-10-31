@@ -117,7 +117,13 @@ public sealed partial class LibraryDocumentStore : IDisposable
         _store = new SqliteDocumentStore($"Data Source={DatabasePath};Pooling=False");
     }
 
-    public async Task SaveScanAsync(string folder, FolderReport report, CancellationToken ct = default)
+    // Scan reconciliation includes path/hash deduplication and may touch thousands of
+    // existing records. Start the complete operation on a worker so its synchronous
+    // setup and continuation work never runs on a desktop UI synchronization context.
+    public Task SaveScanAsync(string folder, FolderReport report, CancellationToken ct = default) =>
+        Task.Run(() => SaveScanCoreAsync(folder, report, ct), ct);
+
+    private async Task SaveScanCoreAsync(string folder, FolderReport report, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var folderId = StableId(folder);
@@ -130,12 +136,9 @@ public sealed partial class LibraryDocumentStore : IDisposable
             var snapshot = existing.Snapshot!;
             var checksum = ProjectLibraryBrowser.NormalizeSha256(existing.SourceSha256) ??
                 ProjectLibraryBrowser.NormalizeSha256(snapshot.SourceSha256);
-            if (checksum is null && File.Exists(existing.FilePath))
-            {
-                try { checksum = await ProjectContentChecksum.ComputeAsync(existing.FilePath, ct); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-                    or ArgumentException or NotSupportedException or System.Security.SecurityException) { }
-            }
+            // Existing projects without a stored digest stay path-keyed here. Rehashing
+            // every old project on every scan caused a long, silent serial I/O tail.
+            // Freshly scanned projects already carry a digest from FolderScanner.
             if (checksum is not null)
             {
                 existing.SourceSha256 = checksum;
@@ -301,7 +304,7 @@ public sealed partial class LibraryDocumentStore : IDisposable
     }
 
     public Task<IReadOnlyList<LibraryProjectAssetIndexDocument>> GetProjectAssetIndexesAsync(CancellationToken ct = default) =>
-        _store.Query<LibraryProjectAssetIndexDocument>().OrderBy(document => document.ProjectPath).ToList(ct);
+        Task.Run(() => _store.Query<LibraryProjectAssetIndexDocument>().OrderBy(document => document.ProjectPath).ToList(ct), ct);
 
     /// <summary>Rebuilds search indexes from project snapshots already stored in this database, without reopening source files.</summary>
     public async Task<int> RebuildProjectAssetIndexesAsync(CancellationToken ct = default)
@@ -314,7 +317,7 @@ public sealed partial class LibraryDocumentStore : IDisposable
     }
 
     public Task<IReadOnlyList<LibraryProjectDocument>> GetProjectsAsync(CancellationToken ct = default) =>
-        _store.Query<LibraryProjectDocument>().OrderBy(x => x.Name).ToList(ct);
+        Task.Run(() => _store.Query<LibraryProjectDocument>().OrderBy(x => x.Name).ToList(ct), ct);
 
     /// <summary>Reads document counts from SQLite metadata without hydrating large JSON payloads or catalog images.</summary>
     public Task<LibraryDatabaseOverview> GetDatabaseOverviewAsync(CancellationToken ct = default) => Task.Run(() =>
@@ -613,13 +616,13 @@ public sealed partial class LibraryDocumentStore : IDisposable
     };
 
     public Task<LibraryProjectDocument?> GetProjectAsync(string id, CancellationToken ct = default) =>
-        _store.Get<LibraryProjectDocument>(id, cancellationToken: ct);
+        Task.Run(() => _store.Get<LibraryProjectDocument>(id, cancellationToken: ct), ct);
 
     public Task<IReadOnlyList<LibraryPluginDocument>> GetPluginsAsync(CancellationToken ct = default) =>
-        _store.Query<LibraryPluginDocument>().OrderBy(x => x.Name).ToList(ct);
+        Task.Run(() => _store.Query<LibraryPluginDocument>().OrderBy(x => x.Name).ToList(ct), ct);
 
     public Task<IReadOnlyList<LibraryCatalogProductDocument>> GetCatalogProductsAsync(CancellationToken ct = default) =>
-        _store.Query<LibraryCatalogProductDocument>().OrderBy(x => x.Name).ToList(ct);
+        Task.Run(() => _store.Query<LibraryCatalogProductDocument>().OrderBy(x => x.Name).ToList(ct), ct);
 
     public async Task SaveCatalogProductsAsync(IEnumerable<PluginMetadataEntry> products, CancellationToken ct = default)
     {
@@ -669,7 +672,7 @@ public sealed partial class LibraryDocumentStore : IDisposable
             .Distinct(StringComparer.OrdinalIgnoreCase).Take(100).ToArray();
 
     public Task<IReadOnlyList<LibraryScanFolderDocument>> GetScanFoldersAsync(CancellationToken ct = default) =>
-        _store.Query<LibraryScanFolderDocument>().OrderByDescending(x => x.LastScannedUtc).ToList(ct);
+        Task.Run(() => _store.Query<LibraryScanFolderDocument>().OrderByDescending(x => x.LastScannedUtc).ToList(ct), ct);
 
     public Task BackupAsync(string destinationPath, CancellationToken ct = default)
     {

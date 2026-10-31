@@ -1,8 +1,9 @@
 using System.Text.Json;
+using CubaseInspector.Core;
 
 namespace CubaseInspector.App.Services;
 
-/// <summary>Stores app appearance and local database location; project paths and scan results are not preferences.</summary>
+/// <summary>Stores appearance, database location and project scan types; project paths and scan results are not preferences.</summary>
 public sealed class AppPreferencesService(string? preferencePath = null)
 {
     private readonly string _path = preferencePath ?? Path.Combine(
@@ -11,6 +12,7 @@ public sealed class AppPreferencesService(string? preferencePath = null)
 
     public string Theme { get; private set; } = "Dark";
     public string? DatabasePath { get; private set; }
+    public ProjectScanTypes ProjectScanTypes { get; private set; } = CubaseInspector.Core.ProjectScanTypes.All;
 
     public void Load()
     {
@@ -27,6 +29,16 @@ public sealed class AppPreferencesService(string? preferencePath = null)
             if (document.RootElement.TryGetProperty("DatabasePath", out var databasePath) &&
                 databasePath.ValueKind == JsonValueKind.String && databasePath.GetString() is { Length: > 0 and <= 2048 } path)
                 DatabasePath = Path.GetFullPath(path);
+            if (document.RootElement.TryGetProperty("ProjectScanTypes", out var scanTypes) &&
+                scanTypes.ValueKind == JsonValueKind.Object)
+            {
+                bool Read(string name, bool fallback) =>
+                    scanTypes.TryGetProperty(name, out var value) &&
+                    value.ValueKind is JsonValueKind.True or JsonValueKind.False ? value.GetBoolean() : fallback;
+                var loaded = new ProjectScanTypes(Read("Cpr", ProjectScanTypes.Cpr),
+                    Read("Bak", ProjectScanTypes.Bak), Read("Dawproject", ProjectScanTypes.Dawproject));
+                if (loaded.AnyEnabled) ProjectScanTypes = loaded;
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or
                                    System.Security.SecurityException or ArgumentException)
@@ -54,6 +66,21 @@ public sealed class AppPreferencesService(string? preferencePath = null)
         }
     }
 
+    public void SetProjectScanTypes(ProjectScanTypes scanTypes)
+    {
+        ArgumentNullException.ThrowIfNull(scanTypes);
+        if (!scanTypes.AnyEnabled)
+            throw new ArgumentException("At least one project file type must remain enabled.", nameof(scanTypes));
+        var previous = ProjectScanTypes;
+        ProjectScanTypes = scanTypes;
+        try { Save(); }
+        catch
+        {
+            ProjectScanTypes = previous;
+            throw;
+        }
+    }
+
     private void Save()
     {
         var directory = Path.GetDirectoryName(_path)!;
@@ -61,7 +88,7 @@ public sealed class AppPreferencesService(string? preferencePath = null)
         var temporary = _path + ".tmp";
         try
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(new { Theme, DatabasePath }));
+            File.WriteAllText(temporary, JsonSerializer.Serialize(new { Theme, DatabasePath, ProjectScanTypes }));
             File.Move(temporary, _path, true);
         }
         finally

@@ -8,12 +8,14 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
     // Keep the complete scan pipeline off the UI synchronization context; IProgress<T>
     // still marshals updates to the caller's context when it is a Progress<T> instance.
     public Task<Result<FolderReport>> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
-        CancellationToken cancellationToken = default)
-        => Task.Run(() => ScanCoreAsync(path, progress, cancellationToken));
+        CancellationToken cancellationToken = default, ProjectScanTypes? projectTypes = null)
+        => Task.Run(() => ScanCoreAsync(path, progress, cancellationToken, projectTypes ?? ProjectScanTypes.All));
 
     private async Task<Result<FolderReport>> ScanCoreAsync(string path, IProgress<ScanProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, ProjectScanTypes projectTypes)
     {
+        if (!projectTypes.AnyEnabled)
+            return Result<FolderReport>.Fail("NO_PROJECT_TYPES", "Enable at least one project file type before scanning.");
         if (!Directory.Exists(path)) return Result<FolderReport>.Fail("FOLDER_NOT_FOUND", "Folder not found.");
         var files = new List<string>();
         var errors = new System.Collections.Concurrent.ConcurrentBag<(string Path, string Error)>();
@@ -52,10 +54,10 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
                         if ((attrs & FileAttributes.Directory) != 0 && depth < 12) queue.Enqueue((entry, depth + 1));
                         else if ((attrs & FileAttributes.Directory) == 0)
                         {
-                            if (entry.EndsWith(".cpr", StringComparison.OrdinalIgnoreCase) ||
-                                entry.EndsWith(".dawproject", StringComparison.OrdinalIgnoreCase))
+                            if ((projectTypes.Cpr && entry.EndsWith(".cpr", StringComparison.OrdinalIgnoreCase)) ||
+                                (projectTypes.Dawproject && entry.EndsWith(".dawproject", StringComparison.OrdinalIgnoreCase)))
                                 files.Add(entry);
-                            else if (entry.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
+                            else if (projectTypes.Bak && entry.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
                             {
                                 if (CprFileIdentity.HasCprHeader(entry)) files.Add(entry);
                                 else skippedUnrelatedBackups++;
@@ -70,6 +72,10 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
             // Publish the determinate phase before the first parse, even for empty folders.
             progress?.Report(new ScanProgress(0, files.Count, path, Stage: ScanStage.Inspecting));
             var results = new ProjectSnapshot?[files.Count];
+            // DAWproject inspection materializes a bounded XML document plus its
+            // normalized records. Keep only one such tree live at a time even
+            // when the surrounding CPR scan uses several workers.
+            using var dawprojectReadGate = new SemaphoreSlim(1, 1);
             var completed = 0;
             var interrupted = false;
             try
@@ -80,7 +86,16 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
                     MaxDegreeOfParallelism = Math.Min(4, Environment.ProcessorCount)
                 }, async (index, ct) =>
                 {
-                    var result = await inspector.InspectAsync(files[index], ct);
+                    progress?.Report(new ScanProgress(Volatile.Read(ref completed), files.Count,
+                        files[index], Stage: ScanStage.Inspecting));
+                    Result<ProjectSnapshot> result;
+                    if (Path.GetExtension(files[index]).Equals(".dawproject", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await dawprojectReadGate.WaitAsync(ct);
+                        try { result = await inspector.InspectAsync(files[index], ct); }
+                        finally { dawprojectReadGate.Release(); }
+                    }
+                    else result = await inspector.InspectAsync(files[index], ct);
                     ProjectSnapshot? project = null;
                     AppError? failure = result.Error?.Code == "CANCELLED" ? null : result.Error;
                     if (result.IsSuccess && result.Value is not null)
@@ -89,7 +104,10 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
                         progress?.Report(new ScanProgress(completed, files.Count, files[index], Stage: ScanStage.Hashing));
                         try
                         {
-                            var checksum = await ProjectContentChecksum.ComputeAsync(files[index], ct);
+                            var checksum = await ProjectContentChecksum.ComputeAsync(files[index], ct,
+                                (processedBytes, totalBytes) => progress?.Report(new ScanProgress(
+                                    Volatile.Read(ref completed), files.Count, files[index], Stage: ScanStage.Hashing,
+                                    BytesProcessed: processedBytes, TotalBytes: totalBytes)));
                             project = project with { SourceSha256 = checksum };
                             results[index] = project;
                         }

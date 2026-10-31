@@ -36,7 +36,8 @@ internal sealed partial class WorkspacePageFactory
         evidencePanel.Children.Add(evidence);
         evidencePanel.Children.Add(new TextBlock { Text = "Values in the table are rounded for readability. Original precision and byte offsets remain in JSON inspection output. Native observations cannot be exported as Standard MIDI.",
             Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap });
-        var evidenceButton = new Button { Content = "Evidence & source…", Flyout = Popup(evidencePanel) };
+        var evidenceButton = new Button { Content = "Evidence & source…" };
+        evidenceButton.Click += (_, _) => ShowInformationWindow("Native MIDI evidence & source", evidencePanel);
         var selectedNote = new TextBlock { Foreground = Muted, FontSize = 11,
             TextWrapping = TextWrapping.Wrap, Text = "Select a note to inspect its source offset." };
         var columns = new DataBrowserColumn<IndexedMidiNoteCandidate>[]

@@ -14,3 +14,4 @@ dist/*
 tests/private-fixtures/
 artifacts/
 Cubase15.exe
+Git-History-Backups/

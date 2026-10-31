@@ -183,6 +183,41 @@ boundary around every marker. Consequently the UI now says stored UID/name
 fields were found when the typed property pattern matched, while keeping
 plugin identity, format, slot/track ownership, state, and loadability unresolved.
 
+### Track callback follow-up and reader exposure
+
+A bounded extraction from the hash-matched IDA export also inspected the complete
+`MMidiTrackEvent`/`MInstrumentTrackEvent` callback (`sub_141BCCFB0`, excerpt
+SHA-256 `4a401572bce24948f9c42b648f02c9682a53ff0fb56cdc207a9946c309711892`)
+and `MAudioTrackEvent` callback (`sub_141E85B90`, excerpt SHA-256
+`d3333cf5201e5b34ba549111808c7b6835bb4af4d07045bcffdf9c34336dcc70`). The
+MIDI/instrument callback contains version-gated branches for
+`MMidiTrackEvent`, reads the named `solo` and `soloDefeat` properties, checks
+`isGrooveTrack`, and processes `FAttributes` in a later version branch. The
+audio callback selects nested `MAudioTrackEvent` or `MAutomationTrackEvent`
+objects and has an `MAutoFadeSetting` branch. These are useful search leads for
+the next reader work; they do not define the byte grammar of those property
+objects, and the native callback also performs in-memory object wiring.
+
+The inspected track callbacks do not by themselves show the saved-file grammar
+for these properties, nor do they establish mute or fader decoding. Other
+`Mute` and `Volume` strings in the export have references in unrelated
+control/parameter code, so string presence alone is not a track-serializer lead.
+
+The app now joins each arrangement track hint to a separately scanned class
+header only when both scanners agree on the exact absolute header offset and
+class name. When available, the technical details view exposes its stored class
+serializer version, body byte count, header encoding and file offsets. These
+values are still structural-reader interpretations; class version is not the
+Cubase application release. The normal track view keeps those low-level fields
+behind its `(i)` control. Separately, the bounded named-record reader can expose
+literal `Volume/AnchorValue`, `Mute`, and `Solo` values when a mixer record is
+wholly contained by exactly one scanned track byte range. The track page
+presents those as saved mixer settings and keeps the record source behind `(i)`.
+This is a structural join plus named-field observation; the Cubase 15 callback
+does not validate the field encoding or cross-version behavior. Pan,
+solo-defeat, groove, automation/fade state, and mixer field grammar remain open
+until the property reader and controlled saves are traced.
+
 These exact addresses apply only to the inspected executable hash above. The
 work improves the evidence label for Cubase 15 class/property observations; it
 does not certify cross-version field semantics or normalize inferred hierarchy.

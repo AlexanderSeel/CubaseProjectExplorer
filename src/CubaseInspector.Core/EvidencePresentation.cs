@@ -6,7 +6,7 @@ public static class EvidencePresentation
     public static string Label(EvidenceLevel level) => level switch
     {
         EvidenceLevel.Confirmed => "Read from project export",
-        EvidenceLevel.Candidate => "CPR data read · field interpretation varies",
+        EvidenceLevel.Candidate => "Project data read · some details may need review",
         _ => "Not available"
     };
 
@@ -20,7 +20,7 @@ public static class EvidencePresentation
     public static string TrackLabel(TrackInfo track) =>
         track.Evidence == EvidenceLevel.Candidate && track.SourceRecordClass is { } className &&
         CprTrackRecordKinds.KindFor(className) is { } kind
-            ? $"Serialized {kind} class recognized · links unverified"
+            ? $"{kind} information found · some links unavailable"
             : Label(track.Evidence);
 
     public static string TrackExplanation(TrackInfo track) =>
@@ -34,11 +34,11 @@ public static class EvidencePresentation
         if (plugin.Evidence != EvidenceLevel.Candidate || plugin.Role is not { } role)
             return Label(plugin.Evidence);
         if (role.StartsWith("Cubase Plugin UID and typed Plugin Name fields", StringComparison.Ordinal))
-            return "Stored CPR plug-in UID/name found · identity and owner unverified";
+            return "Plug-in info found · project link may need review";
         if (role.StartsWith("Cubase Plugin UID field", StringComparison.Ordinal))
-            return "Stored CPR plug-in UID found · name and owner unavailable";
+            return "Plug-in ID found · name unavailable";
         if (role.StartsWith("Plugin UID marker found", StringComparison.Ordinal))
-            return "CPR plug-in UID marker found · values unresolved";
+            return "Plug-in data found · details unavailable";
         return Label(plugin.Evidence);
     }
 

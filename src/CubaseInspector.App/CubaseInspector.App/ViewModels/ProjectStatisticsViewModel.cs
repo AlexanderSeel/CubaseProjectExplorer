@@ -45,7 +45,7 @@ public sealed partial class ProjectStatisticsViewModel : ObservableObject
             LibraryCandidateMarkers.ReplaceAll(index.CandidateMarkers);
             LibraryUsageStatus = index.StoredProjectCount == 0
                 ? "No saved project snapshots are available. Scan a folder or inspect a project first."
-                : $"{index.ConfirmedProjectCount:N0} confirmed projects among {index.StoredProjectCount:N0} saved snapshots · {index.CandidateReferenceCount:N0} candidate references kept separate ({index.CandidateWithoutTokenCount:N0} without a token) · {index.UnknownReferenceCount:N0} unknown-evidence references excluded. Ranked by exact displayed name, format and vendor fields; export-local IDs are not treated as cross-project identities or last-use times.";
+                : $"{index.ConfirmedProjectCount:N0} confirmed projects among {index.StoredProjectCount:N0} saved snapshots · {index.CandidateReferenceCount:N0} plug-in references needing review ({index.CandidateWithoutTokenCount:N0} without a searchable ID) · {index.UnknownReferenceCount:N0} references without enough source detail excluded. Grouped by exact displayed name, format and vendor fields; export-local IDs are not treated as cross-project identities or last-use times.";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Data.Common.DbException)
         { LibraryUsageStatus = "Could not load library-wide plug-in references: " + ex.Message; }
@@ -67,6 +67,6 @@ public sealed partial class ProjectStatisticsViewModel : ObservableObject
                      "Confirmed exported references"))) Plugins.Add(row);
         Summary = result.CandidatePluginReferences == 0
             ? $"{project.Tracks.Count:N0} track records · {project.Plugins.Count:N0} confirmed plugin references"
-            : $"{project.Tracks.Count:N0} recognized serialized track classes · {result.CandidatePluginReferences:N0} stored plug-in markers; format and identity charts require more evidence";
+            : $"{project.Tracks.Count:N0} track types found · {result.CandidatePluginReferences:N0} plug-in references need review before product and format charts are reliable";
     }
 }

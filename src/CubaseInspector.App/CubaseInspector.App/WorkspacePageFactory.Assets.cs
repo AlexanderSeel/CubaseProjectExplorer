@@ -15,7 +15,7 @@ internal sealed partial class WorkspacePageFactory
 {
     private UIElement SamplesPage()
     {
-        var root = Page("Sample finder", "Find audio references across projects. CPR path observations appear with their source offset; preview checks whether the referenced file can be read.");
+        var root = Page("Find audio", "Find, preview, and organize audio used in your projects.");
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var search = FilterTextBox("Search filename, folder, project, track…", 300);
         search.Text = mediaLibrary.Search;
@@ -26,7 +26,6 @@ internal sealed partial class WorkspacePageFactory
         type.SelectionChanged += (_, _) => mediaLibrary.SampleType = type.SelectedItem?.ToString() ?? "All";
         actions.Children.Add(search); actions.Children.Add(type);
         AddPageActions(root, actions);
-        root.Children.Add(MediaIndexActivityPanel());
         var projectScope = new ComboBox { Width = 290, DisplayMemberPath = nameof(SampleProjectScopeOption.DisplayName),
             SelectedValuePath = nameof(SampleProjectScopeOption.Path),
             Style = (Style)Application.Current.Resources["InspectorFilterComboBoxStyle"] };
@@ -46,13 +45,12 @@ internal sealed partial class WorkspacePageFactory
             { new TextBlock { Text = "Samples used in", Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"],
                 VerticalAlignment = VerticalAlignment.Center }, projectScope } });
         var duplicateActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 6) };
-        var duplicateScan = Button("Find byte-identical files…", async () => await mediaLibrary.FindByteIdenticalSamplesCommand.ExecuteAsync(null));
+        var duplicateScan = Button("Find exact duplicates…", async () => await mediaLibrary.FindByteIdenticalSamplesCommand.ExecuteAsync(null));
         var cancelDuplicateScan = Button("Cancel", () => mediaLibrary.CancelDuplicateScan());
         cancelDuplicateScan.Visibility = Visibility.Collapsed;
         var duplicateHint = new TextBlock { Text = "Explicit scan of filtered external audio only · up to 500 files · 150 MiB/file · 1 GiB total",
             FontSize = 10, Foreground = Muted, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
         duplicateActions.Children.Add(duplicateScan); duplicateActions.Children.Add(cancelDuplicateScan); duplicateActions.Children.Add(duplicateHint);
-        root.Children.Add(duplicateActions);
         var duplicateStatus = new TextBlock { Text = mediaLibrary.DuplicateScanStatus, FontSize = 10,
             Foreground = Muted, TextWrapping = TextWrapping.Wrap };
         var summary = new TextBlock { Text = mediaLibrary.Status, Margin = new Thickness(0, 8, 0, 4),
@@ -81,15 +79,20 @@ internal sealed partial class WorkspacePageFactory
             }
         };
         mediaLibrary.PropertyChanged += statusChanged;
-        root.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { loadRing, summary } });
+        root.Children.Add(new Border { Background = Surface, Padding = new Thickness(14, 10),
+            Child = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { loadRing, summary } } });
 
         var layout = new Grid { ColumnSpacing = 12, Margin = new Thickness(0, 4, 0, 0) };
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.15, GridUnitType.Star) });
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var detail = new StackPanel { Spacing = 10, Padding = new Thickness(14) };
         var selectedText = new TextBlock { Text = "Select a media reference to inspect its source and folder.", TextWrapping = TextWrapping.Wrap };
+        var nativeSelectedText = new TextBlock { Text = "Select audio to see where it is used.", TextWrapping = TextWrapping.Wrap };
+        var nativePath = new TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, AcceptsReturn = true,
+            MinHeight = 40, MaxHeight = 86, PlaceholderText = "Audio location" };
+        Button? nativePreview = null;
         NativeSampleCandidateRow? selectedNativeSample = null;
-        var preview = Button("Prepare preview", () =>
+        var preview = Button("Preview", () =>
         {
             if (selectedSample is { } row) _ = mediaLibrary.PreviewSampleAsync(row);
             else if (selectedNativeSample is { } candidate) _ = mediaLibrary.PrepareNativeSamplePreviewCommand.ExecuteAsync(candidate);
@@ -115,7 +118,7 @@ internal sealed partial class WorkspacePageFactory
                 preview.IsEnabled = true;
                 export.IsEnabled = true;
                 collect.IsEnabled = true;
-                selectedText.Text = $"{row.ProjectName}\n{row.TrackName} · {row.FileType} · {row.Source}\nUsed by {row.UseCount:N0} references in this project · {row.Folder}\n{row.Channels?.ToString() ?? "?"} channels · {row.SampleRate?.ToString("N0") ?? "?"} Hz · {(row.Duration is double duration ? duration.ToString("N1") + " s" : "duration unknown")}\nDeclared path: {row.DeclaredPath}";
+                selectedText.Text = $"{row.TrackName} · {row.ProjectName}\n{row.UseCount:N0} project use{(row.UseCount == 1 ? "" : "s")} · {row.FileType}";
             }
             else { preview.IsEnabled = false; export.IsEnabled = false; collect.IsEnabled = false; selectedText.Text = "Select a media reference to inspect its source and folder."; }
         }
@@ -126,11 +129,11 @@ internal sealed partial class WorkspacePageFactory
             selectedNativeSample = row;
             preview.IsEnabled = row is not null && !mediaLibrary.IsBusy;
             export.IsEnabled = collect.IsEnabled = false;
-            selectedText.Text = row is null
-                ? "Select a media reference or CPR path observation to inspect it."
-                : $"{row.ProjectName}\n{row.TrackName} · {row.FileType} · CPR path observation\nDeclared path: {row.DeclaredPath}\nCPR file offset: 0x{row.FileOffset:X}" +
-                  (row.CandidateTrackOffset is long trackOffset ? $" · audio-track record context 0x{trackOffset:X}" : "") +
-                  $"\n{row.Warning}\nPreview checks the referenced file and copies a bounded temporary preview; it does not edit the CPR project.";
+            nativeSelectedText.Text = row is null
+                ? "Select audio to see where it is used."
+                : $"{row.TrackName} · {row.ProjectName}\n{row.FileType} audio file";
+            nativePath.Text = row?.DeclaredPath ?? string.Empty;
+            if (nativePreview is not null) nativePreview.IsEnabled = row is not null && !mediaLibrary.IsBusy;
         }
         PropertyChangedEventHandler actionBusyChanged = (_, args) =>
         {
@@ -149,9 +152,44 @@ internal sealed partial class WorkspacePageFactory
             MinHeight = 180, MaxHeight = 220, Visibility = Visibility.Collapsed };
         var waveformSummary = new TextBlock { Text = mediaLibrary.WaveformSummary, FontSize = 10,
             Foreground = Muted, TextWrapping = TextWrapping.Wrap };
-        var waveform = new TextBlock { Text = mediaLibrary.WaveformSparkline, FontFamily = new FontFamily("Consolas"),
-            FontSize = 17, TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.NoWrap };
-        AutomationProperties.SetName(waveform, "Selected sample waveform peak overview");
+        var waveform = new Canvas { Width = 760, Height = 144, Background = Surface,
+            HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetName(waveform, "Selected audio waveform; click to seek");
+        var waveformViewport = new ScrollViewer { Content = waveform, MaxHeight = 150,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        MediaPlayerElement? nativePlayer = null;
+        void DrawWaveform()
+        {
+            waveform.Children.Clear();
+            var data = mediaLibrary.Waveform;
+            if (data is null || data.PeakLevels.Count == 0)
+            {
+                waveform.Children.Add(new TextBlock { Text = mediaLibrary.WaveformSparkline, Foreground = Muted,
+                    FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
+                return;
+            }
+            const double center = 72, margin = 8;
+            waveform.Children.Add(new Line { X1 = margin, X2 = waveform.Width - margin, Y1 = center, Y2 = center,
+                Stroke = Divider, StrokeThickness = 1 });
+            var binWidth = (waveform.Width - margin * 2) / data.PeakLevels.Count;
+            for (var index = 0; index < data.PeakLevels.Count; index++)
+            {
+                var height = Math.Max(2, data.PeakLevels[index] * 58);
+                var bar = new Rectangle { Width = Math.Max(1.5, binWidth * .68), Height = height * 2,
+                    Fill = Accent, RadiusX = 1, RadiusY = 1 };
+                Canvas.SetLeft(bar, margin + index * binWidth + (binWidth - bar.Width) / 2);
+                Canvas.SetTop(bar, center - height);
+                waveform.Children.Add(bar);
+            }
+        }
+        waveform.PointerPressed += (_, args) =>
+        {
+            if (mediaLibrary.Waveform is not { DurationSeconds: > 0 } data) return;
+            var x = args.GetCurrentPoint(waveform).Position.X;
+            var position = TimeSpan.FromSeconds(Math.Clamp(x / waveform.Width, 0, 1) * data.DurationSeconds);
+            foreach (var mediaPlayer in new[] { player.MediaPlayer, nativePlayer?.MediaPlayer })
+                if (mediaPlayer is not null) mediaPlayer.PlaybackSession.Position = position;
+        };
         PropertyChangedEventHandler previewChanged = (_, args) =>
         {
             if (args.PropertyName == nameof(mediaLibrary.PreviewUri))
@@ -160,15 +198,28 @@ internal sealed partial class WorkspacePageFactory
                 {
                     player.Source = MediaSource.CreateFromUri(uri);
                     player.Visibility = Visibility.Visible;
+                    if (nativePlayer is not null)
+                    {
+                        nativePlayer.Source = MediaSource.CreateFromUri(uri);
+                        nativePlayer.Visibility = Visibility.Visible;
+                    }
                 }
-                else { player.Source = null; player.Visibility = Visibility.Collapsed; }
+                else
+                {
+                    player.Source = null; player.Visibility = Visibility.Collapsed;
+                    if (nativePlayer is not null) { nativePlayer.Source = null; nativePlayer.Visibility = Visibility.Collapsed; }
+                }
             }
-            if (args.PropertyName == nameof(mediaLibrary.WaveformSparkline)) waveform.Text = mediaLibrary.WaveformSparkline;
+            if (args.PropertyName is nameof(mediaLibrary.WaveformSparkline) or nameof(mediaLibrary.Waveform))
+            {
+                DrawWaveform();
+            }
             if (args.PropertyName == nameof(mediaLibrary.WaveformSummary)) waveformSummary.Text = mediaLibrary.WaveformSummary;
         };
         mediaLibrary.PropertyChanged += previewChanged;
+        DrawWaveform();
         detail.Children.Add(waveformSummary);
-        detail.Children.Add(waveform);
+        detail.Children.Add(waveformViewport);
         detail.Children.Add(player);
         var sampleColumns = new DataBrowserColumn<SampleUseRow>[]
         {
@@ -187,7 +238,7 @@ internal sealed partial class WorkspacePageFactory
             {
                 var menu = new MenuFlyout();
                 foreach (var (label, action) in new (string, Action)[]
-                         { ("Prepare preview", () => _ = mediaLibrary.PreviewSampleAsync(row)),
+                         { ("Preview", () => _ = mediaLibrary.PreviewSampleAsync(row)),
                            ("Export copy…", () => _ = mediaLibrary.ExportSampleAsync(row)),
                            ("Collect project media…", () => _ = mediaLibrary.CollectProjectMediaAsync(row)) })
                 {
@@ -200,49 +251,132 @@ internal sealed partial class WorkspacePageFactory
         Grid.SetColumn(detail, 1);
         layout.Children.Add(sampleBrowser); layout.Children.Add(detail);
         root.Children.Add(layout);
-        var nativeSampleList = new ListView { ItemsSource = mediaLibrary.NativeSampleCandidates,
-            SelectionMode = ListViewSelectionMode.Single, MaxHeight = 380 };
-        AutomationProperties.SetName(nativeSampleList, "Audio paths read from native Cubase projects; track association is unverified");
-        nativeSampleList.ItemTemplate = new DataTemplate(() =>
+        var nativeSampleColumns = new DataBrowserColumn<NativeSampleCandidateRow>[]
         {
-            var body = new StackPanel { Spacing = 4 };
-            var path = new TextBlock { FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                TextTrimming = TextTrimming.CharacterEllipsis };
-            path.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("DeclaredPath") });
-            var projectName = new TextBlock { FontSize = 10, Foreground = Muted, TextTrimming = TextTrimming.CharacterEllipsis };
-            projectName.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("ProjectName") });
-            var trackName = new TextBlock { FontSize = 10, Foreground = Muted, TextTrimming = TextTrimming.CharacterEllipsis };
-            trackName.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("TrackName") });
-            var warning = new TextBlock { FontSize = 10, Foreground = Muted, TextWrapping = TextWrapping.Wrap };
-            warning.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Warning") });
-            var play = new Button { Content = "Prepare preview…",
-                Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
-            play.Click += async (_, _) =>
+            new("Audio file", "DeclaredPath", row => System.IO.Path.GetFileName(row.DeclaredPath), row => row.DeclaredPath, 2.2),
+            new("Track", "TrackName", row => row.TrackName, row => row.TrackName, 1.1),
+            new("Project", "ProjectName", row => row.ProjectName, row => row.ProjectName, 1.1),
+            new("Type", "FileType", row => row.FileType, row => row.FileType, .6)
+        };
+        var nativeSampleBrowser = new DataBrowserControl<NativeSampleCandidateRow>(nativeSampleColumns,
+            mediaLibrary.NativeSampleCandidates, ["None", "Project", "File type"], "None",
+            (row, mode) => mode switch { "Project" => row.ProjectName, "File type" => row.FileType, _ => "" },
+            _ => { }, row => { ShowNativeSampleCandidate(row); return Task.CompletedTask; },
+            row =>
             {
-                if (play.DataContext is NativeSampleCandidateRow candidate)
+                var menu = new MenuFlyout();
+                var item = new MenuFlyoutItem { Text = "Preview" };
+                item.Click += (_, _) =>
                 {
-                    ShowNativeSampleCandidate(candidate);
-                    await mediaLibrary.PrepareNativeSamplePreviewCommand.ExecuteAsync(candidate);
-                }
-            };
-            body.Children.Add(path); body.Children.Add(projectName); body.Children.Add(trackName);
-            body.Children.Add(warning); body.Children.Add(play);
-            return new Border { Background = Surface, Margin = new Thickness(4), Padding = new Thickness(10),
-                BorderBrush = Divider, BorderThickness = new Thickness(1), Child = body };
-        });
-        nativeSampleList.SelectionChanged += (_, _) =>
-            ShowNativeSampleCandidate(nativeSampleList.SelectedItem as NativeSampleCandidateRow);
-        var nativeSampleExpander = new Expander { Header = "CPR audio path observations · track association unverified",
-            IsExpanded = true, Content = new StackPanel { Spacing = 6, Children =
+                    ShowNativeSampleCandidate(row);
+                    _ = mediaLibrary.PrepareNativeSamplePreviewCommand.ExecuteAsync(row);
+                };
+                menu.Items.Add(item);
+                return menu;
+            }, minimumRowsHeight: 260, maximumRowsHeight: 560);
+        AutomationProperties.SetName(nativeSampleBrowser, "Audio files found in native project data");
+        var nativePathsPanel = new Grid { ColumnSpacing = 12 };
+        nativePathsPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.15, GridUnitType.Star) });
+        nativePathsPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var nativeDetails = new StackPanel { Background = Surface, Padding = new Thickness(14), Spacing = 8,
+            Children =
             {
-                Note("Audio filenames were read inside MAudioEvent records nested in MAudioTrackEvent records. That nesting gives structural context, but does not confirm the active clip or assigned track. Paths may be stale or offline."),
-                nativeSampleList
-            } } };
-        nativeSampleExpander.Visibility = mediaLibrary.NativeSampleCandidates.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                new TextBlock { Text = "Selected audio", Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] },
+                nativeSelectedText,
+                nativePath
+            } };
+        nativePreview = Button("Preview", () =>
+        {
+            if (selectedNativeSample is { } candidate)
+                _ = mediaLibrary.PrepareNativeSamplePreviewCommand.ExecuteAsync(candidate);
+        });
+        nativePreview.IsEnabled = false;
+        PropertyChangedEventHandler nativePreviewStateChanged = (_, args) =>
+        {
+            if (args.PropertyName == nameof(mediaLibrary.IsBusy))
+                nativePreview!.IsEnabled = selectedNativeSample is not null && !mediaLibrary.IsBusy;
+        };
+        mediaLibrary.PropertyChanged += nativePreviewStateChanged;
+        nativeDetails.Children.Add(nativePreview);
+        var nativeEvidence = InfoButton(() =>
+        {
+            var evidence = new StackPanel { Spacing = 10 };
+            if (selectedNativeSample is { } row)
+            {
+                evidence.Children.Add(Note("The project stores this audio path inside a Cubase audio event. The reader found it in an audio-track record. Track ownership and clip placement have not been confirmed."));
+                evidence.Children.Add(DetailCard("SOURCE DETAILS", ("Project", row.ProjectPath), ("Track label", row.TrackName),
+                    ("Class", row.EvidenceSource), ("File offset", $"0x{row.FileOffset:X}"),
+                    ("Track record offset", row.CandidateTrackOffset is long offset ? $"0x{offset:X}" : "Not available"),
+                    ("Reader note", row.Warning)));
+            }
+            else evidence.Children.Add(Empty("Select an audio file first."));
+            ShowInformationWindow("Audio file details", evidence, 900, 620);
+        }, "More about this audio reference");
+        nativeDetails.Children.Add(nativeEvidence);
+        nativePlayer = new MediaPlayerElement { AreTransportControlsEnabled = true, AutoPlay = false,
+            MinHeight = 180, MaxHeight = 220, Visibility = Visibility.Collapsed };
+        var nativeWaveformSummary = new TextBlock { Text = mediaLibrary.WaveformSummary, FontSize = 10,
+            Foreground = Muted, TextWrapping = TextWrapping.Wrap };
+        var nativeWaveform = new Canvas { Width = 760, Height = 144, Background = Surface,
+            HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetName(nativeWaveform, "Selected audio waveform; click to seek");
+        var nativeWaveformViewport = new ScrollViewer { Content = nativeWaveform, MaxHeight = 150,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        void DrawNativeWaveform()
+        {
+            nativeWaveform.Children.Clear();
+            if (mediaLibrary.Waveform is not { PeakLevels.Count: > 0 } data)
+            {
+                nativeWaveform.Children.Add(new TextBlock { Text = mediaLibrary.WaveformSparkline, Foreground = Muted,
+                    FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis });
+                return;
+            }
+            const double center = 72, margin = 8;
+            nativeWaveform.Children.Add(new Line { X1 = margin, X2 = nativeWaveform.Width - margin,
+                Y1 = center, Y2 = center, Stroke = Divider, StrokeThickness = 1 });
+            var binWidth = (nativeWaveform.Width - margin * 2) / data.PeakLevels.Count;
+            for (var index = 0; index < data.PeakLevels.Count; index++)
+            {
+                var height = Math.Max(2, data.PeakLevels[index] * 58);
+                var bar = new Rectangle { Width = Math.Max(1.5, binWidth * .68), Height = height * 2,
+                    Fill = Accent, RadiusX = 1, RadiusY = 1 };
+                Canvas.SetLeft(bar, margin + index * binWidth + (binWidth - bar.Width) / 2);
+                Canvas.SetTop(bar, center - height);
+                nativeWaveform.Children.Add(bar);
+            }
+        }
+        nativeWaveform.PointerPressed += (_, args) =>
+        {
+            if (mediaLibrary.Waveform is not { DurationSeconds: > 0 } data) return;
+            var x = args.GetCurrentPoint(nativeWaveform).Position.X;
+            if (nativePlayer is { } selectedPlayer)
+                selectedPlayer.MediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(
+                    Math.Clamp(x / nativeWaveform.Width, 0, 1) * data.DurationSeconds);
+        };
+        mediaLibrary.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(mediaLibrary.Waveform) or nameof(mediaLibrary.WaveformSparkline)) DrawNativeWaveform();
+            if (args.PropertyName == nameof(mediaLibrary.WaveformSummary)) nativeWaveformSummary.Text = mediaLibrary.WaveformSummary;
+        };
+        DrawNativeWaveform();
+        nativeDetails.Children.Add(nativeWaveformSummary);
+        nativeDetails.Children.Add(nativeWaveformViewport);
+        nativeDetails.Children.Add(nativePlayer);
+        var nativePathsLeft = new StackPanel { Spacing = 8,
+            Children =
+            {
+                Note("Choose a file to preview it. Click its waveform to move through the recording."),
+                nativeSampleBrowser
+            } };
+        var nativeEmpty = Empty("No additional audio references were found. Select Analyze to re-read the project and refresh its details.");
+        nativeEmpty.Visibility = mediaLibrary.NativeSampleCandidates.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        nativePathsLeft.Children.Insert(1, nativeEmpty);
+        nativePathsPanel.Children.Add(nativePathsLeft);
+        Grid.SetColumn(nativeDetails, 1);
+        nativePathsPanel.Children.Add(nativeDetails);
         NotifyCollectionChangedEventHandler nativeSamplesChanged = (_, _) =>
-            nativeSampleExpander.Visibility = mediaLibrary.NativeSampleCandidates.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            nativeEmpty.Visibility = mediaLibrary.NativeSampleCandidates.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         mediaLibrary.NativeSampleCandidates.CollectionChanged += nativeSamplesChanged;
-        root.Children.Add(nativeSampleExpander);
         var duplicateSection = new StackPanel { Spacing = 6, Margin = new Thickness(0, 8, 0, 0) };
         var duplicateList = new ListView { ItemsSource = mediaLibrary.IdenticalSampleGroups,
             SelectionMode = ListViewSelectionMode.Single, MaxHeight = 260 };
@@ -268,24 +402,40 @@ internal sealed partial class WorkspacePageFactory
             }
             else duplicateDetails.Text = "Select a group to inspect its source folders and project uses.";
         };
-        duplicateSection.Children.Add(duplicateStatus); duplicateSection.Children.Add(duplicateList); duplicateSection.Children.Add(duplicateDetails);
-        root.Children.Add(new Expander { Header = "Byte-identical sample candidates (manual review; no files are changed)",
-            Content = duplicateSection, IsExpanded = false });
+        duplicateSection.Children.Add(duplicateActions);
+        duplicateSection.Children.Add(duplicateStatus);
+        var duplicateLayout = new Grid { ColumnSpacing = 12 };
+        duplicateLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        duplicateLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.3, GridUnitType.Star) });
+        duplicateLayout.Children.Add(duplicateList);
+        Grid.SetColumn(duplicateDetails, 1);
+        duplicateLayout.Children.Add(duplicateDetails);
+        duplicateSection.Children.Add(duplicateLayout);
+        duplicateSection.Children.Add(Note("Only exact byte-identical files are grouped. This read-only audit does not move, replace, or delete files."));
+        var initialTab = mediaLibrary.FocusNativeAudioTab ? 1 : 0;
+        mediaLibrary.FocusNativeAudioTab = false;
+        root.Children.Add(DashboardTabs(initialTab,
+            ("Project media", layout),
+            ("Audio paths", nativePathsPanel),
+            ("Duplicates", duplicateSection),
+            ("Analyze", MediaIndexActivityPanel())));
         root.Unloaded += (_, _) =>
         {
             mediaLibrary.CancelDuplicateScan();
             mediaLibrary.StopPreview();
             mediaLibrary.PropertyChanged -= statusChanged;
             mediaLibrary.PropertyChanged -= actionBusyChanged;
+            mediaLibrary.PropertyChanged -= nativePreviewStateChanged;
             mediaLibrary.PropertyChanged -= previewChanged;
             mediaLibrary.NativeSampleCandidates.CollectionChanged -= nativeSamplesChanged;
         };
+        root.Loaded += (_, _) => _ = mediaLibrary.LoadAsync();
         return root;
     }
 
     private UIElement MidiTracksPage()
     {
-        var root = Page("MIDI tracks", "Inspect CPR note observations and exported MIDI tracks. Select a project or part to preview its notes.");
+        var root = Page("MIDI tracks", "Browse note parts and tracks from your projects, then preview or export what is supported.");
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var search = FilterTextBox("Search project, part or pitch…", 300);
         search.Text = mediaLibrary.MidiSearch;
@@ -426,14 +576,14 @@ internal sealed partial class WorkspacePageFactory
             });
         Grid.SetColumn(detail, 1); layout.Children.Add(midiBrowser); layout.Children.Add(detail);
         var nativePanel = NativeMidiPanel(out var cleanupNative);
-        var source = new ComboBox { ItemsSource = new[] { "CPR note observations", "Exported MIDI" },
+        var source = new ComboBox { ItemsSource = new[] { "Native project notes", "Exported MIDI" },
             SelectedIndex = mediaLibrary.NativeMidiGroups.Count == 0 && mediaLibrary.MidiTracks.Count > 0 ? 1 : 0,
             MinWidth = 190, HorizontalAlignment = HorizontalAlignment.Left };
         AutomationProperties.SetName(source, "MIDI data source");
         var sourceRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
         sourceRow.Children.Add(new TextBlock { Text = "Source", Foreground = Muted, VerticalAlignment = VerticalAlignment.Center });
         sourceRow.Children.Add(source);
-        var exportedEmpty = Empty("No exported MIDI tracks match this view. Choose CPR note observations to inspect notes read from native files, or index a DAWproject export.");
+        var exportedEmpty = Empty("No exported MIDI tracks match this view. Choose Native project notes to browse note information found in Cubase files.");
         browserPanel.Children.Add(sourceRow); browserPanel.Children.Add(nativePanel); browserPanel.Children.Add(layout); browserPanel.Children.Add(exportedEmpty);
         var initialSourceChosen = mediaLibrary.NativeMidiGroups.Count + mediaLibrary.MidiTracks.Count > 0;
         void UpdateSource()
@@ -458,7 +608,8 @@ internal sealed partial class WorkspacePageFactory
             if (args.PropertyName is nameof(mediaLibrary.MidiSummary) or nameof(mediaLibrary.IsBusy)) UpdateSource();
         };
         mediaLibrary.PropertyChanged += sourceChanged;
-        root.Children.Add(DashboardTabs(("MIDI browser", browserPanel), ("Index activity", activityPanel)));
+        root.Children.Add(DashboardTabs(("MIDI browser", browserPanel), ("Analysis", activityPanel)));
+        root.Loaded += (_, _) => _ = mediaLibrary.LoadAsync();
         UpdateSource();
         root.Unloaded += (_, _) =>
         {

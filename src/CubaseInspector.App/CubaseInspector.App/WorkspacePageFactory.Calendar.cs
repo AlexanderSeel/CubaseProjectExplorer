@@ -15,7 +15,7 @@ internal sealed partial class WorkspacePageFactory
         var dateCounts = ProjectCalendarBrowser.CountsByLocalFileModifiedDate(entries);
         if (entries.Count == 0)
         {
-            root.Children.Add(Empty("No projects are currently indexed. Open a project or scan a folder from Project Library."));
+            root.Children.Add(Empty("No projects are in the library yet. Select Analyze to choose a project, or scan a folder."));
             return root;
         }
 

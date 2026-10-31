@@ -98,7 +98,7 @@ public sealed class ProjectFieldEvidenceTests
         var track = new TrackInfo("r1", "Bass", "Audio", null, null, null, null, null,
             EvidenceLevel.Candidate, "MAudioTrackEvent", 1234);
 
-        Assert.Contains("Serialized Audio class recognized", EvidencePresentation.TrackLabel(track));
+        Assert.Contains("Audio information found", EvidencePresentation.TrackLabel(track));
         Assert.Contains("MAudioTrackEvent", EvidencePresentation.TrackExplanation(track));
         Assert.Contains("parent hierarchy", EvidencePresentation.TrackExplanation(track));
         Assert.DoesNotContain("Unverified CPR record", EvidencePresentation.TrackLabel(track));
@@ -110,8 +110,8 @@ public sealed class ProjectFieldEvidenceTests
         var plugin = new PluginReference("uid", "Compressor", null, "CPR UID (format unverified)",
             null, EvidenceLevel.Candidate, Role: "Cubase Plugin UID and typed Plugin Name fields at 0x1234");
 
-        Assert.Contains("Stored CPR plug-in UID/name found", EvidencePresentation.PluginLabel(plugin));
-        Assert.Contains("identity and owner unverified", EvidencePresentation.PluginLabel(plugin));
+        Assert.Contains("Plug-in info found", EvidencePresentation.PluginLabel(plugin));
+        Assert.Contains("may need review", EvidencePresentation.PluginLabel(plugin));
         Assert.Contains("APluginSlot", EvidencePresentation.PluginExplanation(plugin));
         Assert.DoesNotContain("Unverified CPR record", EvidencePresentation.PluginLabel(plugin));
     }

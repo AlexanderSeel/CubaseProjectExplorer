@@ -122,6 +122,63 @@ public sealed partial class AppShellViewModel : ObservableObject
     public void SetProjectScanTypes(ProjectScanTypes types) => _preferences.SetProjectScanTypes(types);
 
     [RelayCommand]
+    private async Task AnalyzeProjectAsync()
+    {
+        var path = _session.SelectedProject?.FilePath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            Status = "Choose a project to analyze…";
+            path = await _picker.PickProjectAsync();
+            if (path is null) return;
+        }
+
+        await AnalyzeScopeAsync(path);
+    }
+
+    /// <summary>Single orchestration point for user-requested project and library analysis.</summary>
+    public async Task AnalyzeScopeAsync(string? projectPath)
+    {
+        if (IsAnyBusy) return;
+        IsBusy = true;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(projectPath))
+            {
+                Status = "Analyzing audio and MIDI across the library…";
+                await MediaLibrary.RebuildIndexScopeAsync(null);
+                Status = MediaLibrary.Status;
+                return;
+            }
+
+            if (_session.SelectedProject is { } selected &&
+                string.Equals(selected.FilePath, projectPath, StringComparison.OrdinalIgnoreCase))
+            {
+                Status = "Re-reading the selected project…";
+                await Library.OpenProjectAsync(projectPath);
+                if (Library.Status.StartsWith("Opened", StringComparison.Ordinal) &&
+                    _session.SelectedProject is { } project &&
+                    string.Equals(project.FilePath, projectPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    Status = "Analyzing audio and MIDI details…";
+                    await MediaLibrary.LoadOpenProjectAsync(project);
+                    Status = $"Analysis complete · {project.Name} · project, audio and MIDI details refreshed.";
+                }
+                else
+                {
+                    Status = Library.Status;
+                }
+
+                return;
+            }
+
+            Status = $"Analyzing {Path.GetFileNameWithoutExtension(projectPath)}…";
+            await MediaLibrary.RebuildIndexScopeAsync(projectPath);
+            Status = MediaLibrary.Status;
+        }
+        finally { IsBusy = false; }
+    }
+
+    [RelayCommand]
     private async Task OpenProjectAsync()
     {
         IsBusy = true;

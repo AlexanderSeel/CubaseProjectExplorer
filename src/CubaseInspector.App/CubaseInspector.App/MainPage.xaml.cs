@@ -16,7 +16,7 @@ public sealed partial class MainPage : Page
 {
     private AppShellViewModel? _shell;
     private ProjectLibraryViewModel? _progressLibrary;
-    private Button? _openButton;
+    private Button? _analyzeButton;
     private Button? _scanButton;
     private PluginInventoryViewModel? _progressInventory;
     private readonly NavigationHistory _history = new("Overview");
@@ -26,7 +26,7 @@ public sealed partial class MainPage : Page
     public MainPage()
     {
         InitializeComponent();
-        _openButton = OpenProjectButton;
+        _analyzeButton = AnalyzeProjectButton;
         _scanButton = ScanFolderButton;
         RequestedTheme = ElementTheme.Dark;
     }
@@ -75,11 +75,11 @@ public sealed partial class MainPage : Page
         }
     }
 
-    private async void OpenProject_Click(object sender, RoutedEventArgs e)
+    private async void AnalyzeProject_Click(object sender, RoutedEventArgs e)
     {
         if (_shell is null) return;
-        await _shell.OpenProjectCommand.ExecuteAsync(null);
-        StatusText.Text = _shell.Library.Status;
+        await _shell.AnalyzeProjectCommand.ExecuteAsync(null);
+        StatusText.Text = _shell.Status;
         if (_shell.HasProject) Render(_shell.CurrentPage);
     }
 
@@ -93,34 +93,15 @@ public sealed partial class MainPage : Page
 
     private void CancelScan_Click(object sender, RoutedEventArgs e) => _shell?.Library.CancelScanCommand.Execute(null);
 
-    private void Evidence_Click(object sender, RoutedEventArgs e)
+    private void ActivityCancel_Click(object sender, RoutedEventArgs e)
     {
-        var content = new StackPanel { Spacing = 12, MaxWidth = 900 };
-        content.Children.Add(new TextBlock
-        {
-            Text = "Evidence and limitations",
-            Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"]
-        });
-        content.Children.Add(new TextBlock
-        {
-            Text = "The reader identifies registered Cubase track-event classes and displays stored plug-in UID/name fields. Track hierarchy, plug-in identity and ownership remain unresolved; unknown values do not mean zero or absent.",
-            TextWrapping = TextWrapping.Wrap,
-            Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"]
-        });
-        content.Children.Add(new TextBlock
-        {
-            Text = "Project files are inspection sources. Originals are never modified.",
-            TextWrapping = TextWrapping.Wrap,
-            Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"]
-        });
-        var theme = _shell is null ? ElementTheme.Dark : _shell.Theme switch
-        {
-            "Light" => ElementTheme.Light,
-            "System" => ElementTheme.Default,
-            _ => ElementTheme.Dark
-        };
-        InfoWindowPresenter.Show("Evidence and limitations", content, theme, 760, 420);
+        if (_shell?.MediaLibrary.IsIndexLoading == true)
+            _shell.MediaLibrary.CancelIndexLoadCommand.Execute(null);
+        else if (_shell?.Library.IsScanning == true)
+            _shell.Library.CancelScanCommand.Execute(null);
     }
+
+    private void Evidence_Click(object sender, RoutedEventArgs e) => Render("Help");
 
     private void LibraryProgressChanged(object? sender, PropertyChangedEventArgs args)
     {
@@ -144,7 +125,7 @@ public sealed partial class MainPage : Page
         ScanProgressBar.Value = library.Progress;
         ScanProgressBar.IsIndeterminate = library.IsBusy && library.Progress <= 0;
         CancelScanButton.Visibility = library.IsScanning ? Visibility.Visible : Visibility.Collapsed;
-        if (_openButton is not null) _openButton.IsEnabled = !library.IsBusy;
+        if (_analyzeButton is not null) _analyzeButton.IsEnabled = _shell is { IsAnyBusy: false };
         if (_scanButton is not null) _scanButton.IsEnabled = !library.IsBusy;
     }
 
@@ -185,7 +166,7 @@ public sealed partial class MainPage : Page
                     (DataTemplate)Resources["ProjectChangeTemplate"],
                     (DataTemplate)Resources["ScanIssueTemplate"],
                     theme => { RequestedTheme = theme; _shell.SetTheme(theme switch { ElementTheme.Light => "Light", ElementTheme.Default => "System", _ => "Dark" }); },
-                    _shell.MediaLibrary).Create(page) });
+                    _shell.MediaLibrary, XamlRoot!).Create(page) });
         }
         finally { _rendering = false; }
         UpdateNavigationControls();
@@ -233,7 +214,7 @@ public sealed partial class MainPage : Page
         "Projects" => "Project Library", "Search" => "Search everything", "Calendar" => "Project Calendar", "IO" => "Audio / MIDI I/O",
         "Inventory" => "Local plug-in inventory", "Catalog" => "Plug-in catalog", "Preflight" => "Dependency preflight",
         "Overview" => "Studio overview", "Tools" => "Reports & tools", "Database" => "Library database", "Compare" => "Compare projects",
-        "Samples" => "Sample finder", "Midi" => "MIDI tracks",
+        "Samples" => "Audio", "Midi" => "MIDI tracks", "Help" => "Help & reader FAQ",
         _ => page
     };
 
@@ -241,49 +222,61 @@ public sealed partial class MainPage : Page
     {
         if (_shell is null) return;
         var busy = _shell.IsAnyBusy;
+        if (_analyzeButton is not null) _analyzeButton.IsEnabled = !busy;
         BusyIndicatorPanel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         BusySpinner.IsActive = busy;
-        BusyText.Text = busy ? _shell.BusyStatus : string.Empty;
-        ToolTipService.SetToolTip(BusyText, BusyText.Text);
-
-        // Startup has its own full-window loading overlay. The detached progress
-        // window is reserved for operations the user may continue working beside.
-        var hasLongOperation = !_startupHydrating && ((_shell.Library.IsBusy && !_shell.Library.IsLoading) || _shell.PluginInventory.IsBusy ||
-            _shell.Comparison.IsBusy || _shell.Tools.IsBusy || _shell.LibraryAdmin.IsBusy ||
-            _shell.LibraryAdmin.IsRecordBrowserBusy || _shell.LibraryAdmin.IsQueryBusy ||
-            _shell.PluginCatalog.IsBusy || _shell.Preflight.IsBusy || _shell.LibrarySearch.IsSearching ||
-            _shell.MediaLibrary.IsBusy || _shell.MediaLibrary.IsMidiPreviewBusy ||
-            _shell.Statistics.IsLibraryUsageBusy);
-        if (!hasLongOperation)
-        {
-            ProgressWindowPresenter.Close();
-            return;
-        }
-
-        var theme = _shell.Theme switch
-        {
-            "Light" => ElementTheme.Light,
-            "System" => ElementTheme.Default,
-            _ => ElementTheme.Dark
-        };
-        ProgressWindowPresenter.ShowOrUpdate(
-            _shell.Library.IsScanning ? "Scanning project library" : _shell.MediaLibrary.IsIndexLoading ? "Media / MIDI index activity" : "Working in background",
-            _shell.MediaLibrary.IsIndexLoading && !_shell.Library.IsScanning
-                ? $"{_shell.MediaLibrary.IndexStage}\n{_shell.MediaLibrary.IndexProcessed:N0}/{_shell.MediaLibrary.IndexTotal:N0} projects · {_shell.MediaLibrary.IndexElapsed} elapsed\n{_shell.MediaLibrary.IndexCurrentProject}\n{_shell.MediaLibrary.IndexOutcome}"
-                : _shell.BusyStatus,
-            _shell.Library.IsScanning && _shell.Library.Progress > 0 ? _shell.Library.Progress :
-                _shell.MediaLibrary.IsIndexLoading && _shell.MediaLibrary.IndexTotal > 0 ? _shell.MediaLibrary.IndexProgress : null,
-            _shell.Library.IsScanning ? () => _shell.Library.CancelScanCommand.Execute(null) :
-                _shell.MediaLibrary.IsIndexLoading && !_shell.MediaLibrary.IsIndexCancelling ? () => _shell.MediaLibrary.CancelIndexLoadCommand.Execute(null) : null,
-            theme, _shell.Library.IsScanning ? "Cancel scan" : "Cancel index load");
+        BusyText.Text = busy ? ActivityStatus(_shell) : string.Empty;
+        var activityDetails = BusyText.Text;
+        if (_shell.MediaLibrary.IsIndexLoading)
+            activityDetails += $"\n{_shell.MediaLibrary.IndexCurrentProject}\n{_shell.MediaLibrary.IndexOutcome}";
+        ToolTipService.SetToolTip(BusyText, activityDetails);
+        var scan = !_startupHydrating && _shell.Library.IsScanning;
+        var analysis = _shell.MediaLibrary.IsIndexLoading;
+        ActivityProgressBar.Visibility = scan || analysis ? Visibility.Visible : Visibility.Collapsed;
+        ActivityProgressBar.IsIndeterminate = scan ? _shell.Library.Progress <= 0 : analysis && _shell.MediaLibrary.IndexTotal <= 0;
+        ActivityProgressBar.Value = scan ? _shell.Library.Progress : _shell.MediaLibrary.IndexProgress;
+        var canCancelAnalysis = analysis && !_shell.MediaLibrary.IsIndexCancelling;
+        ActivityCancelButton.Visibility = canCancelAnalysis || scan ? Visibility.Visible : Visibility.Collapsed;
+        ActivityCancelButton.IsEnabled = canCancelAnalysis || scan;
+        ActivityCancelButton.Content = _shell.MediaLibrary.IsIndexCancelling ? "Stopping…" : "Cancel";
     }
+
+    private static string ActivityStatus(AppShellViewModel shell)
+    {
+        if (shell.MediaLibrary.IsIndexLoading)
+            return $"{FriendlyAnalysisStage(shell.MediaLibrary.IndexStage)} · {shell.MediaLibrary.IndexProcessed:N0}/{shell.MediaLibrary.IndexTotal:N0} · {shell.MediaLibrary.IndexElapsed}";
+        if (shell.Library.IsScanning)
+            return string.IsNullOrWhiteSpace(shell.Library.ProgressText) ? "Scanning projects…" : shell.Library.ProgressText;
+        if (shell.MediaLibrary.IsMidiPreviewBusy) return "Preparing MIDI preview…";
+        return shell.BusyStatus;
+    }
+
+    private static string FriendlyAnalysisStage(string stage) => stage switch
+    {
+        "Opening saved asset indexes" => "Loading saved audio and MIDI…",
+        "Reading saved asset indexes" => "Loading audio and MIDI details…",
+        "Preparing the open project's current audio/MIDI data" => "Reading this project's audio and MIDI…",
+        "Open project prepared" => "Project details ready",
+        "Preparing rebuild" => "Preparing analysis…",
+        "Rebuilding project asset index" => "Reading project details…",
+        "Project asset index prepared" => "Project analyzed…",
+        "Saving rebuilt asset indexes" => "Saving audio and MIDI details…",
+        "Rebuilt asset indexes saved" => "Analysis results saved",
+        "Source unavailable; keeping previous saved index" => "Some project files unavailable; previous details kept",
+        "Preparing browser results" => "Organizing results…",
+        "Index ready" => "Analysis ready",
+        "Load interrupted" => "Analysis stopped",
+        "Cancelled · partial results available" => "Analysis stopped · results so far are available",
+        "Could not prepare browser results" => "Could not organize the results",
+        _ => stage
+    };
 }
 
 /// <summary>Builds focused task pages; shared spacing, type, and surfaces keep navigation consistent.</summary>
 internal sealed partial class WorkspacePageFactory(AppShellViewModel shell, Action<string> navigate,
     DataTemplate changeRowTemplate,
     DataTemplate scanIssueTemplate, Action<ElementTheme> setTheme,
-    MediaLibraryViewModel mediaLibrary)
+    MediaLibraryViewModel mediaLibrary, XamlRoot xamlRoot)
 {
     public UIElement Create(string page)
     {
@@ -306,6 +299,7 @@ internal sealed partial class WorkspacePageFactory(AppShellViewModel shell, Acti
             "Database" => DatabasePage(),
             "Samples" => SamplesPage(),
             "Midi" => MidiTracksPage(),
+            "Help" => ReaderFaqPage(),
             "Settings" => SettingsPage(),
             _ => OverviewPage()
         };

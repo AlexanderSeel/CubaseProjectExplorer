@@ -47,7 +47,7 @@ internal sealed partial class WorkspacePageFactory
             row =>
             {
                 var menu = new MenuFlyout();
-                var open = new MenuFlyoutItem { Text = row.Category is "Project" or "Plug-in" ? "Open source project" : "Show in browser" };
+                var open = new MenuFlyoutItem { Text = row.Category is "Project" or "Plug-in" ? "Analyze project" : "Show in browser" };
                 open.Click += async (_, _) => await ActivateSearchResultAsync(row);
                 menu.Items.Add(open);
                 return menu;
@@ -86,7 +86,7 @@ internal sealed partial class WorkspacePageFactory
                 navigate("Samples");
                 break;
             case "MIDI":
-            case "MIDI candidate":
+            case "Native MIDI notes":
                 shell.MediaLibrary.MidiSearch = result.Title;
                 shell.NavigateTo("Midi");
                 navigate("Midi");

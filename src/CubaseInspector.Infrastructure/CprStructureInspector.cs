@@ -207,6 +207,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
             if (omittedInventories > 0)
                 warnings.Add($"Detailed ARCH evidence omitted {omittedInventories} archive(s) after the {MaxInventoryArchives}-archive limit; their container chunk entries remain available.");
             warnings.Add("Detailed class-header matches and byte containment are candidate evidence, not a verified Cubase object graph or musical field coverage. Unknown class names are retained without assigning semantics.");
+            arrangement = AttachTrackHeaderDetails(arrangement, inventories);
             return Result<CprStructureReport>.Ok(new CprStructureReport(path, declared, chunks,
                 arrangement, versionCandidate, warnings, namedRecordCandidates, sizeDiagnostics, metadataCandidates,
                 isRif2 ? "RIF2" : "RIFF", inventories));
@@ -214,6 +215,30 @@ public sealed class CprStructureInspector : ICprStructureInspector
         catch (OperationCanceledException) { return Result<CprStructureReport>.Fail("CANCELLED", "CPR inspection cancelled."); }
         catch (IOException e) { return Result<CprStructureReport>.Fail("IO_ERROR", e.Message); }
         catch (UnauthorizedAccessException e) { return Result<CprStructureReport>.Fail("ACCESS_DENIED", e.Message); }
+    }
+
+    private static CprArchiveSummary? AttachTrackHeaderDetails(CprArchiveSummary? arrangement,
+        IReadOnlyList<CprArchiveRecordInventory> inventories)
+    {
+        if (arrangement is null || arrangement.TrackHints.Count == 0) return arrangement;
+        var inventory = inventories.FirstOrDefault(item => item.ArchiveClass == "PArrangement" &&
+            item.StreamName == arrangement.StreamName);
+        if (inventory is null || inventory.Records.Count == 0) return arrangement;
+        var byOffset = inventory.Records.GroupBy(record => record.HeaderFileOffset)
+            .ToDictionary(group => group.Key, group => group.First());
+        var hints = arrangement.TrackHints.Select(hint =>
+        {
+            if (!byOffset.TryGetValue(hint.ArchiveOffset, out var record) ||
+                !string.Equals(record.ClassName, hint.RecordClass, StringComparison.Ordinal))
+                return hint;
+            return hint with
+            {
+                ClassVersion = record.ClassVersion,
+                BodyBytes = record.BodyBytes,
+                ClassEncoding = record.ClassEncoding
+            };
+        }).ToArray();
+        return arrangement with { TrackHints = hints };
     }
 
     private static uint BigEndian32(ReadOnlySpan<byte> b, int off) =>

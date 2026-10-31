@@ -18,49 +18,36 @@ internal sealed partial class WorkspacePageFactory
         var current = new TextBlock { Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap };
         var counts = new TextBlock { Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap };
         var outcome = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap };
-        var scope = new ComboBox { Header = "Load scope", Width = 270, DisplayMemberPath = nameof(SampleProjectScopeOption.DisplayName) };
-        var limit = new ComboBox { Header = "Notes to load", Width = 155, ItemsSource = new[] { 10000, 50000, 100000, 250000 }, SelectedItem = vm.IndexNoteLimit };
-        AutomationProperties.SetName(scope, "Saved asset index scope");
-        AutomationProperties.SetName(limit, "Maximum native notes retained when loading the index");
-        var updating = false;
+        var scope = new ComboBox { Header = "Projects", Width = 270, DisplayMemberPath = nameof(SampleProjectScopeOption.DisplayName) };
+        AutomationProperties.SetName(scope, "Choose which projects to analyze");
         void UpdateScopes()
         {
-            updating = true;
             var options = new List<SampleProjectScopeOption> { new("", "Whole library") };
             if (shell.Workspace.Project is { } selected) options.Add(new(selected.FilePath, "Selected project · " + selected.Name));
             options.AddRange(vm.SampleProjects);
             scope.ItemsSource = options.DistinctBy(item => item.Path, StringComparer.OrdinalIgnoreCase).ToArray();
+            var selectedPath = string.IsNullOrWhiteSpace(vm.IndexProjectPath)
+                ? shell.Workspace.Project?.FilePath ?? ""
+                : vm.IndexProjectPath;
             scope.SelectedItem = ((IEnumerable<SampleProjectScopeOption>)scope.ItemsSource)
-                .FirstOrDefault(option => option.Path.Equals(vm.IndexProjectPath, StringComparison.OrdinalIgnoreCase));
-            updating = false;
+                .FirstOrDefault(option => option.Path.Equals(selectedPath, StringComparison.OrdinalIgnoreCase));
         }
         UpdateScopes();
-        limit.SelectionChanged += (_, _) => { if (!updating && limit.SelectedItem is int value) vm.IndexNoteLimit = value; };
-        var reload = Button("Load saved index", async () =>
-            await vm.LoadIndexScopeAsync((scope.SelectedItem as SampleProjectScopeOption)?.Path));
         var cancel = Button("Cancel · keep results", () => vm.CancelIndexLoadCommand.Execute(null));
-        var openProject = Button("Use open project", async () =>
-        {
-            if (shell.Workspace.Project is { } project) await vm.LoadOpenProjectAsync(project);
-        });
-        var rebuild = Button("Rebuild from projects…", () =>
-        {
-            var selectedScope = scope.SelectedItem as SampleProjectScopeOption;
-            var panel = new StackPanel { Spacing = 12 };
-            panel.Children.Add(Note("Rebuilding updates saved indexes from project snapshots. Compact entries require reading their original project files. Missing or unreadable sources keep their previous index. You can cancel during the rebuild."));
-            panel.Children.Add(DetailCard("REBUILD SCOPE", ("Projects", selectedScope?.DisplayName ?? "Whole library"), ("Database", shell.LibraryAdmin.DatabasePath)));
-            var start = Button("Start rebuild", async () => await vm.RebuildIndexScopeAsync(selectedScope?.Path));
-            start.IsEnabled = !vm.IsBusy;
-            panel.Children.Add(start);
-            ShowInformationWindow("Rebuild media and MIDI indexes", panel, 780, 470);
-        });
-        var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { scope, limit } };
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { reload, cancel, openProject, rebuild } };
-        var detailsButton = Button("Activity details…", () =>
+        var analyze = Button("Analyze", async () =>
+            await shell.AnalyzeScopeAsync((scope.SelectedItem as SampleProjectScopeOption)?.Path));
+        var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { scope, analyze, cancel } };
+        var detailsButton = InfoButton(() =>
         {
             var panel = new StackPanel { Spacing = 12, DataContext = vm };
-            panel.Children.Add(DetailCard("INDEX OPERATION", ("Database", shell.LibraryAdmin.DatabasePath), ("Active scope", vm.IndexScope),
-                ("Notes to load", vm.IndexNoteLimit.ToString("N0")), ("Audio/track loading limit", "50,000 rows per category"), ("Browser rows", "2,000 matches per view")));
+            panel.Children.Add(DetailCard("ANALYSIS DETAILS", ("Database", shell.LibraryAdmin.DatabasePath), ("Active scope", vm.IndexScope),
+                ("Audio/track display limit", "50,000 rows per category"), ("Browser display limit", "2,000 matches per view")));
+            panel.Children.Add(Note("Analyze uses the shared project-reading workflow for this scope. The selected project is re-read when it is open; other projects and the whole library refresh their audio and MIDI details. Unavailable or unreadable source files keep their previous results."));
+            var limit = new ComboBox { Header = "MIDI note detail limit", Width = 210,
+                ItemsSource = new[] { 10000, 50000, 100000, 250000 }, SelectedItem = vm.IndexNoteLimit };
+            AutomationProperties.SetName(limit, "Maximum MIDI notes retained during analysis");
+            limit.SelectionChanged += (_, _) => { if (limit.SelectedItem is int value) vm.IndexNoteLimit = value; };
+            panel.Children.Add(limit);
             foreach (var property in new[] { nameof(vm.IndexStage), nameof(vm.IndexCurrentProject), nameof(vm.IndexOutcome) })
             {
                 var text = new TextBlock { TextWrapping = TextWrapping.Wrap };
@@ -75,25 +62,42 @@ internal sealed partial class WorkspacePageFactory
                 return text;
             });
             panel.Children.Add(log);
-            ShowInformationWindow("Media / MIDI index activity", panel, 940, 720);
-        });
+            ShowInformationWindow("Analysis details", panel, 940, 720);
+        }, "Technical details · index activity log");
+        controls.Children.Add(detailsButton);
         content.Children.Add(stage); content.Children.Add(progress); content.Children.Add(current);
-        content.Children.Add(counts); content.Children.Add(outcome); content.Children.Add(controls); content.Children.Add(actions);
-        content.Children.Add(detailsButton);
-        content.Children.Add(new TextBlock { Text = "Saved-index loading reads the database. Rebuild is a separate source-reading operation. Browsers show up to 2,000 rows per view; use search or a project scope to narrow larger results.",
+        content.Children.Add(counts); content.Children.Add(outcome); content.Children.Add(controls);
+        content.Children.Add(new TextBlock { Text = "Choose a project or the whole library, then select Analyze to read its project and refresh audio and MIDI details.",
             FontSize = 11, Foreground = Muted, TextWrapping = TextWrapping.Wrap });
         void Update()
         {
-            stage.Text = vm.IsIndexFiltering ? "Filtering and grouping browser results…" : vm.IndexStage;
+            stage.Text = vm.IsIndexFiltering ? "Organizing the results…" : vm.IndexStage switch
+            {
+                "Opening saved asset indexes" => "Loading saved audio and MIDI…",
+                "Reading saved asset indexes" => "Loading audio and MIDI details…",
+                "Preparing the open project's current audio/MIDI data" => "Reading this project's audio and MIDI…",
+                "Open project prepared" => "Project details ready",
+                "Preparing rebuild" => "Preparing analysis…",
+                "Rebuilding project asset index" => "Reading project details…",
+                "Project asset index prepared" => "Project analyzed…",
+                "Saving rebuilt asset indexes" => "Saving audio and MIDI details…",
+                "Rebuilt asset indexes saved" => "Analysis results saved",
+                "Source unavailable; keeping previous saved index" => "Some project files unavailable; previous details kept",
+                "Preparing browser results" => "Organizing results…",
+                "Index ready" => "Analysis ready",
+                "Load interrupted" => "Analysis stopped",
+                "Cancelled · partial results available" => "Analysis stopped · results so far are available",
+                "Could not prepare browser results" => "Could not organize the results",
+                _ => vm.IndexStage
+            };
             progress.Visibility = vm.IsIndexLoading || vm.IsIndexFiltering ? Visibility.Visible : Visibility.Collapsed;
             progress.IsIndeterminate = vm.IsIndexFiltering || vm.IndexTotal == 0;
             progress.Value = vm.IndexProgress;
-            current.Text = vm.IndexCurrentProject;
-            counts.Text = $"{vm.IndexProcessed:N0}/{vm.IndexTotal:N0} projects · {vm.IndexElapsed} elapsed · {vm.IndexSkipped:N0} skipped · active scope: {vm.IndexScope}";
+            current.Text = Path.GetFileName(vm.IndexCurrentProject);
+            ToolTipService.SetToolTip(current, vm.IndexCurrentProject);
+            counts.Text = $"{vm.IndexProcessed:N0}/{vm.IndexTotal:N0} projects · {vm.IndexElapsed} elapsed · {vm.IndexSkipped:N0} skipped · Projects: {vm.IndexScope}";
             outcome.Text = vm.IndexOutcome;
-            reload.Content = vm.IndexStage == "Load interrupted" ? "Retry saved-index load" : vm.IndexProcessed > 0 ? "Reload saved index" : "Load saved index";
-            reload.IsEnabled = rebuild.IsEnabled = scope.IsEnabled = limit.IsEnabled = !vm.IsBusy;
-            openProject.IsEnabled = !vm.IsBusy && shell.Workspace.Project is not null;
+            analyze.IsEnabled = scope.IsEnabled = !shell.IsAnyBusy;
             cancel.Visibility = vm.IsIndexLoading ? Visibility.Visible : Visibility.Collapsed;
             cancel.IsEnabled = !vm.IsIndexCancelling;
         }
@@ -103,6 +107,7 @@ internal sealed partial class WorkspacePageFactory
             Update();
         };
         vm.PropertyChanged += changed;
+        shell.PropertyChanged += (_, _) => Update();
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         timer.Tick += (_, _) => { if (vm.IsIndexLoading) Update(); };
         var host = new Border { Background = Surface, BorderBrush = Divider, BorderThickness = new Thickness(1),
@@ -110,7 +115,7 @@ internal sealed partial class WorkspacePageFactory
         host.Loaded += (_, _) => timer.Start();
         host.SizeChanged += (_, args) =>
         {
-            controls.Orientation = actions.Orientation = args.NewSize.Width < 560 ? Orientation.Vertical : Orientation.Horizontal;
+            controls.Orientation = args.NewSize.Width < 560 ? Orientation.Vertical : Orientation.Horizontal;
         };
         host.Unloaded += (_, _) => { timer.Stop(); vm.PropertyChanged -= changed; };
         Update();

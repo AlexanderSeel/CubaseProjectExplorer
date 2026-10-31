@@ -25,7 +25,7 @@ internal sealed partial class WorkspacePageFactory
             HorizontalAlignment = HorizontalAlignment.Stretch, Visibility = Visibility.Collapsed,
             PlaceholderText = "Choose a project or part", Margin = new Thickness(0, 0, 0, 4) };
         AutomationProperties.SetName(compactPicker, "Select native MIDI project or part");
-        var title = new TextBlock { Text = "CPR note observations", FontSize = 18,
+        var title = new TextBlock { Text = "Notes found in native projects", FontSize = 18,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
         var context = new TextBlock { Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap };
         var plot = new MidiNotePlot();
@@ -34,15 +34,17 @@ internal sealed partial class WorkspacePageFactory
         var evidence = new TextBlock { Foreground = Muted, TextWrapping = TextWrapping.Wrap, FontSize = 12 };
         var partPicker = new ComboBox { DisplayMemberPath = nameof(NativeMidiNoteGroup.DisplayName),
             PlaceholderText = "Choose a part", MinWidth = 240, HorizontalAlignment = HorizontalAlignment.Left };
-        AutomationProperties.SetName(partPicker, "MIDI parts grouped under the possible track");
+        AutomationProperties.SetName(partPicker, "MIDI parts in this track grouping");
         var evidencePanel = new StackPanel { Spacing = 8 };
         evidencePanel.Children.Add(evidence);
-        evidencePanel.Children.Add(new TextBlock { Text = "Values in the table are rounded for readability. Original precision and byte offsets remain in JSON inspection output. Native observations cannot be exported as Standard MIDI.",
+        var selectedNoteEvidence = new TextBlock { Foreground = Muted, TextWrapping = TextWrapping.Wrap, FontSize = 12 };
+        evidencePanel.Children.Add(selectedNoteEvidence);
+        evidencePanel.Children.Add(new TextBlock { Text = "Values in the table are rounded for readability. Original precision and byte offsets remain in the saved project evidence. Native observations are not yet available for Standard MIDI export.",
             Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap });
-        var evidenceButton = new Button { Content = "Evidence & source…" };
-        evidenceButton.Click += (_, _) => ShowInformationWindow("Native MIDI evidence & source", evidencePanel);
+        var evidenceButton = InfoButton(() => ShowInformationWindow("Native MIDI evidence & source", evidencePanel),
+            "Technical details · MIDI source records");
         var selectedNote = new TextBlock { Foreground = Muted, FontSize = 11,
-            TextWrapping = TextWrapping.Wrap, Text = "Select a note to inspect its source offset." };
+            TextWrapping = TextWrapping.Wrap, Text = "Select a note to see its musical details." };
         var columns = new DataBrowserColumn<IndexedMidiNoteCandidate>[]
         {
             new("Pitch", "Pitch", note => note.Pitch.ToString(), note => note.Pitch, 0.7),
@@ -54,11 +56,13 @@ internal sealed partial class WorkspacePageFactory
         var notes = new DataBrowserControl<IndexedMidiNoteCandidate>(columns, noteRows, ["None"], "None",
             (_, _) => "", _ => { }, note =>
             {
-                selectedNote.Text = $"Note {note.Observation} · byte offset 0x{note.FileOffset:X}" +
+                selectedNote.Text = $"Pitch {note.Pitch} · position {NativeMidiNoteGroup.Format(note.PositionTicks)} · length {NativeMidiNoteGroup.Format(note.DurationTicks)} · velocity {note.Velocity}" +
+                    (note.Channel is int channel ? $" · channel {channel + 1}" : "");
+                selectedNoteEvidence.Text = $"Saved note #{note.Observation} · byte offset 0x{note.FileOffset:X}" +
                     (note.RawFlags is ushort flags ? $" · raw flags 0x{flags:X4}" : "") + $" · {note.SourceLayout}";
                 return Task.CompletedTask;
             }, _ => null, minimumRowsHeight: 160, maximumRowsHeight: 280, showToolbar: false);
-        AutomationProperties.SetName(notes, "CPR note observations. Stored timing units and track ownership are unverified.");
+        AutomationProperties.SetName(notes, "Notes found in Cubase project files. Select a note to see pitch, position, length and velocity.");
         var detail = new StackPanel { Spacing = 10 };
         detail.Children.Add(title); detail.Children.Add(context);
         detail.Children.Add(new Border { CornerRadius = new CornerRadius(6), BorderBrush = Divider,
@@ -75,7 +79,8 @@ internal sealed partial class WorkspacePageFactory
             evidence.Text = group.SourceLayout + "\n\n" + (group.Notes.FirstOrDefault()?.Warning ?? "No source evidence available.");
             timing.Text = "Stored note positions · source details explain timing and part context" +
                 (group.NoteCount > 2000 ? " · plot and table show the first 2,000 notes; narrow the project/part search to inspect another group" : "");
-            selectedNote.Text = "Select a note to inspect its source offset.";
+            selectedNote.Text = "Select a note to see its musical details.";
+            selectedNoteEvidence.Text = string.Empty;
             return Task.CompletedTask;
         }
         Task ShowTrack(NativeMidiTrackGroup group)
@@ -83,7 +88,7 @@ internal sealed partial class WorkspacePageFactory
             selected = group;
             compactPicker.SelectedItem = group;
             title.Text = group.DisplayName;
-            context.Text = $"{group.ProjectName} · {group.Context}\n{group.PartCount:N0} possible parts · {group.NoteCount:N0} notes";
+            context.Text = $"{group.ProjectName} · {group.Context}\n{group.PartCount:N0} parts · {group.NoteCount:N0} notes";
             partPicker.ItemsSource = group.Parts;
             partPicker.SelectedItem = group.Parts.FirstOrDefault();
             return group.Parts.Count > 0 ? ShowPart(group.Parts[0]) : Task.CompletedTask;
@@ -95,7 +100,7 @@ internal sealed partial class WorkspacePageFactory
         detail.Children.Insert(2, partPicker);
         var groupColumns = new DataBrowserColumn<NativeMidiTrackGroup>[]
         {
-            new("Project / possible track", "DisplayName", group => group.DisplayName, group => group.DisplayName, 2.8),
+            new("Project / track", "DisplayName", group => group.DisplayName, group => group.DisplayName, 2.8),
             new("Parts", "PartCount", group => group.PartCount.ToString("N0"), group => group.PartCount, 0.6),
             new("Notes", "NoteCount", group => group.NoteCount.ToString("N0"), group => group.NoteCount, 0.7)
         };
@@ -110,7 +115,7 @@ internal sealed partial class WorkspacePageFactory
             if (compactPicker.SelectedItem is NativeMidiTrackGroup group && !ReferenceEquals(group, selected))
             { groups.SelectItem(group); _ = ShowTrack(group); }
         };
-        var empty = Empty("Choose Load saved index or Use open project above to inspect MIDI notes.");
+        var empty = Empty("No MIDI details are loaded yet. Select Analyze to read the project again and refresh its MIDI view.");
         host.Children.Add(empty); host.Children.Add(layout);
         void Refresh()
         {
@@ -119,7 +124,7 @@ internal sealed partial class WorkspacePageFactory
             empty.Visibility = hasRows ? Visibility.Collapsed : Visibility.Visible;
             if (empty.Child is TextBlock text) text.Text = mediaLibrary.IsIndexLoading ? "Follow the index activity above. Cancel to browse records read so far."
                 : mediaLibrary.MidiSearch.Length > 0
-                ? "No native notes match this search. Try a project, possible track or part name, or MIDI pitch."
+                ? "No notes match this search. Try a project, track or part name, or MIDI pitch."
                 : "No native note groups in this view. Load a saved scope, use the open project, or rebuild its index above.";
             var next = mediaLibrary.NativeMidiTrackGroups.FirstOrDefault(group => group.Key == selected?.Key)
                 ?? mediaLibrary.NativeMidiTrackGroups.FirstOrDefault();

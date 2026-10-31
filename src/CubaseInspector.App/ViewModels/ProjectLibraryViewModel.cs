@@ -22,9 +22,9 @@ public sealed class LibraryProjectRow(ProjectLibraryEntry entry)
     public int? TrackCount => entry.TrackRecordCount ?? (entry.Project.Tracks.Count == 0 ? null : entry.Project.Tracks.Count);
     public int PluginReferenceCount => entry.PluginReferenceCount ?? entry.Project.Plugins.Count;
     public string Plugins => entry.Project.Evidence == EvidenceLevel.Candidate
-        ? $"{PluginReferenceCount:N0} stored plug-in markers · identity/owner unresolved"
+        ? $"{PluginReferenceCount:N0} plug-in references · details may need review"
         : (entry.ConfirmedPluginReferenceCount ?? entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Confirmed)) + " confirmed · " +
-          (entry.CandidatePluginReferenceCount ?? entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Candidate)) + " candidate · " +
+          (entry.CandidatePluginReferenceCount ?? entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Candidate)) + " need review · " +
           (entry.UnknownPluginReferenceCount ?? entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Unknown)) + " unknown";
     public string FileSize => entry.SizeBytes is long size ? FormatSize(size) : "Unknown";
     public string Modified => entry.LastModifiedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "Unknown";
@@ -54,7 +54,7 @@ public sealed partial class ProjectLibraryViewModel(
     private string _search = string.Empty;
 
     [ObservableProperty]
-    private string _status = "Open a project or scan a folder to start building your library.";
+    private string _status = "Select Analyze to inspect a project, or scan a folder to build your library.";
 
     [ObservableProperty]
     private string _progressText = string.Empty;

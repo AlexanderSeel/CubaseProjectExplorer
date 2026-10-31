@@ -193,7 +193,7 @@ internal sealed partial class WorkspacePageFactory
                 body.Children.Add(new TextBlock { Text = $"Saved volume {volume ?? "not decoded"}\nPan {track?.Pan?.ToString("0.###") ?? "not decoded"} · Mute {Flag(track?.Mute)} · Solo {Flag(track?.Solo)}",
                     Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap });
                 if (native)
-                    body.Children.Add(Button("Source details…", () =>
+                    body.Children.Add(InfoButton(() =>
                     {
                         var source = new StackPanel { Spacing = 10 };
                         source.Children.Add(Note("CPR field interpretation. Connections match saved bus IDs within the same source stream. Duplicate IDs remain unresolved; record names are not used to join channels."));
@@ -219,8 +219,8 @@ internal sealed partial class WorkspacePageFactory
                             }
                         }
                         source.Children.Add(Section("Connections", focus.Incoming.Concat(focus.Outgoing).Select(connection => EdgeLabel(connection.Edge))));
-                        ShowInformationWindow("CPR record · " + focus.Selected.Name, source, 920, 700);
-                    }));
+                        ShowInformationWindow("Project details · " + focus.Selected.Name, source, 920, 700);
+                    }, "Technical details · source fields and offsets"));
                 body.Children.Add(new Border { Height = 1, Background = Divider });
                 body.Children.Add(new TextBlock { Text = $"DEVICES · {focus.Selected.Devices.Count}", FontSize = 10, Foreground = Muted });
                 var devices = new ListView { ItemsSource = focus.Selected.Devices.Select(device =>

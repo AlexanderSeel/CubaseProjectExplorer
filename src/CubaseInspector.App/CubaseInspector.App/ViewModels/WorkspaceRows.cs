@@ -9,14 +9,14 @@ public sealed record TrackDisplayRow(string Name, string Type, string Channel, s
 {
     public static TrackDisplayRow From(TrackInfo track) => new(
         track.Name,
-        track.Kind,
-        track.ChannelId ?? "Unknown",
-        track.DestinationChannelId ?? "Unknown",
-        track.Volume is double volume ? volume.ToString("0.###", CultureInfo.CurrentCulture) : "Unknown",
+        CprTrackRecordKinds.KindFor(track.SourceRecordClass ?? track.Kind) ?? track.Kind,
+        track.ChannelId ?? "Not listed",
+        track.DestinationChannelId ?? "Not assigned",
+        track.Volume is double volume ? volume.ToString("0.###", CultureInfo.CurrentCulture) : "Not listed",
         $"Mute {Flag(track.Mute)} · Solo {Flag(track.Solo)}",
         EvidencePresentation.TrackLabel(track), track);
 
-    private static string Flag(bool? value) => value switch { true => "On", false => "Off", _ => "Unknown" };
+    private static string Flag(bool? value) => value switch { true => "On", false => "Off", _ => "Not listed" };
 }
 
 public sealed record PluginReferenceDisplayRow(string Name, string Manufacturer, string Format,
@@ -29,14 +29,14 @@ public sealed record PluginReferenceDisplayRow(string Name, string Manufacturer,
         plugin.Version ?? "Unknown",
         plugin.Role ?? "Role not supplied",
         plugin.TrackId is not null && owners.TryGetValue(plugin.TrackId, out var owner) ? owner :
-            plugin.CandidateOwnerName is { Length: > 0 } candidate ? "Possible enclosing channel: " + candidate + " · relationship unverified" : "Location not found",
+            plugin.CandidateOwnerName is { Length: > 0 } candidate ? "Possible channel: " + candidate : "Location not found",
         EvidencePresentation.PluginLabel(plugin), plugin);
 }
 
 public sealed record PluginGroupCardRow(ProjectPluginGroup Group, ImageSource? Artwork)
 {
     public string Name => Group.Name;
-    public string Vendor => Group.Vendor ?? "Maker not listed";
+    public string Vendor => Group.Vendor ?? "Vendor not listed";
     public string Format => Group.Format;
     public string Uses => Group.CountLabel;
     public string Locations => Group.LocationSummary;

@@ -48,8 +48,10 @@ public sealed partial class MediaLibraryViewModel(
     [ObservableProperty] private string _midiSearch = string.Empty;
     [ObservableProperty] private string _sampleProjectPath = string.Empty;
     [ObservableProperty] private Uri? _previewUri;
-    [ObservableProperty] private string _waveformSparkline = "Select a WAV sample and prepare its preview to analyze a waveform.";
-    [ObservableProperty] private string _waveformSummary = "Waveform analysis is available for PCM or IEEE-float WAV only.";
+    [ObservableProperty] private AudioWaveform? _waveform;
+    [ObservableProperty] private bool _focusNativeAudioTab;
+    [ObservableProperty] private string _waveformSparkline = "Choose a WAV file to see its waveform.";
+    [ObservableProperty] private string _waveformSummary = "Waveform preview is available for supported WAV files.";
     [ObservableProperty] private MidiPianoRollPreview? _midiPianoRoll;
     [ObservableProperty] private bool _isMidiPreviewBusy;
     [ObservableProperty] private string _midiPianoRollStatus = "Select a MIDI track to preview its exported notes.";
@@ -78,8 +80,8 @@ public sealed partial class MediaLibraryViewModel(
         StopPreview();
         if (IsBusy) return;
         IsBusy = true;
-        WaveformSparkline = "Preparing bounded waveform…";
-        WaveformSummary = "Analyzing selected sample bytes…";
+        WaveformSparkline = "Preparing waveform…";
+        WaveformSummary = "Preparing the selected audio preview…";
         Status = $"Preparing preview: {row.DeclaredPath}";
         try
         {
@@ -109,17 +111,20 @@ public sealed partial class MediaLibraryViewModel(
                 });
                 if (waveform.IsSuccess && waveform.Value is not null)
                 {
+                    Waveform = waveform.Value;
                     WaveformSparkline = waveform.Value.Sparkline;
-                    WaveformSummary = $"{waveform.Value.DurationSeconds:N2} s · {waveform.Value.SampleRate:N0} Hz · {waveform.Value.Channels} ch · {waveform.Value.FrameCount:N0} frames · peak envelope from WAV data";
+                    WaveformSummary = $"{waveform.Value.DurationSeconds:N2} s · {waveform.Value.SampleRate:N0} Hz · {waveform.Value.Channels} channels";
                 }
                 else
                 {
+                    Waveform = null;
                     WaveformSparkline = "Waveform unavailable";
                     WaveformSummary = waveform.Error?.Message ?? "WAV data could not be analyzed.";
                 }
             }
             else
             {
+                Waveform = null;
                 WaveformSparkline = "Waveform unavailable for this format";
                 WaveformSummary = "Waveform preview currently analyzes uncompressed PCM/IEEE-float WAV files only.";
             }
@@ -136,9 +141,9 @@ public sealed partial class MediaLibraryViewModel(
         StopPreview();
         if (IsBusy) return;
         IsBusy = true;
-        WaveformSparkline = "Preparing bounded waveform from a candidate media path…";
-        WaveformSummary = "The path and track link are unverified; the source project remains unchanged.";
-        Status = $"Checking candidate audio path from {row.ProjectName}…";
+        WaveformSparkline = "Preparing waveform…";
+        WaveformSummary = "Preparing the selected audio preview…";
+        Status = $"Checking audio location from {row.ProjectName}…";
         try
         {
             var document = await GetIndexedProjectAsync(row.ProjectId);
@@ -148,7 +153,7 @@ public sealed partial class MediaLibraryViewModel(
                     candidate.FileOffset == row.FileOffset && string.Equals(candidate.DeclaredPath,
                         row.DeclaredPath, StringComparison.OrdinalIgnoreCase)))
             {
-                Status = "This candidate index row is stale. Rescan the project and rebuild the asset index.";
+                Status = "This audio reference is out of date. Analyze the project and try again.";
                 return;
             }
 
@@ -171,28 +176,31 @@ public sealed partial class MediaLibraryViewModel(
                 });
                 if (waveform.IsSuccess && waveform.Value is not null)
                 {
+                    Waveform = waveform.Value;
                     WaveformSparkline = waveform.Value.Sparkline;
-                    WaveformSummary = $"Candidate preview · {waveform.Value.DurationSeconds:N2} s · {waveform.Value.SampleRate:N0} Hz · {waveform.Value.Channels} ch · {waveform.Value.FrameCount:N0} frames";
+                    WaveformSummary = $"{waveform.Value.DurationSeconds:N2} s · {waveform.Value.SampleRate:N0} Hz · {waveform.Value.Channels} channels";
                 }
-                else { WaveformSparkline = "Waveform unavailable"; WaveformSummary = waveform.Error?.Message ?? "WAV data could not be analyzed."; }
+                else { Waveform = null; WaveformSparkline = "Waveform unavailable"; WaveformSummary = waveform.Error?.Message ?? "WAV data could not be analyzed."; }
             }
             else
             {
+                Waveform = null;
                 WaveformSparkline = "Waveform unavailable for this format";
-                WaveformSummary = "Candidate path resolved. Waveform overview supports PCM/IEEE-float WAV only.";
+                WaveformSummary = "Waveform preview is not available for this audio format.";
             }
-            Status = $"Candidate preview ready · {row.ProjectName} · {row.TrackName} · track/media ownership unverified.";
+            Status = $"Preview ready · {row.ProjectName} · {row.TrackName}";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
-        { Status = "Candidate preview could not be prepared: " + ex.Message; }
+        { Status = "Audio preview could not be prepared: " + ex.Message; }
         finally { IsBusy = false; }
     }
 
     public void StopPreview()
     {
         PreviewUri = null;
-        WaveformSparkline = "Select a WAV sample and prepare its preview to analyze a waveform.";
-        WaveformSummary = "Waveform analysis is available for PCM or IEEE-float WAV only.";
+        Waveform = null;
+        WaveformSparkline = "Choose a WAV file to see its waveform.";
+        WaveformSummary = "Waveform preview is available for supported WAV files.";
         if (_preparedPreview is not null) previewService.Release(_preparedPreview);
         _preparedPreview = null;
     }
@@ -394,7 +402,7 @@ public sealed partial class MediaLibraryViewModel(
 
     private void RefreshSamples() => QueueBrowserRefresh();
     private void RefreshMidiTracks() => QueueBrowserRefresh();
-    public string SampleSummary => $"{Samples.Count:N0} exported uses shown of {_allSamples.Length:N0} · {NativeSampleCandidates.Count:N0} CPR paths shown of {_allNativeSampleCandidates.Length:N0}";
+    public string SampleSummary => $"{Samples.Count:N0} project uses · {NativeSampleCandidates.Count:N0} audio locations found in native projects";
     public string MidiSummary => $"{MidiTracks.Count:N0} exported tracks shown of {_allMidiTracks.Length:N0} · {NativeMidiGroups.Count:N0} note groups · {_allMidiCandidates.Length:N0} notes loaded";
     public void SetSampleProjectScope(string? projectPath)
     {

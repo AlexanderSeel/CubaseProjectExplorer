@@ -17,7 +17,7 @@ public sealed partial class ProjectComparisonViewModel(
     private IReadOnlyList<TrackMatchDecision>? _appliedMatches;
     [ObservableProperty] private ProjectSnapshot? _before;
     [ObservableProperty] private ProjectSnapshot? _after;
-    [ObservableProperty] private string _status = "Choose two project files to compare exported fields and candidate-level CPR markers.";
+    [ObservableProperty] private string _status = "Choose two projects to compare their tracks, plug-ins, media, and saved settings.";
     [ObservableProperty] private string _search = string.Empty;
     [ObservableProperty] private string _category = "All";
     [ObservableProperty] private bool _isBusy;

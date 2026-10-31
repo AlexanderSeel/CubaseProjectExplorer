@@ -20,9 +20,9 @@ internal sealed partial class WorkspacePageFactory
             await shell.ScanFolderCommand.ExecuteAsync(null);
             navigate("Projects");
         });
-        var open = Button("Open a project…", async () =>
+        var open = Button("Analyze", async () =>
         {
-            await shell.OpenProjectCommand.ExecuteAsync(null);
+            await shell.AnalyzeProjectCommand.ExecuteAsync(null);
             if (shell.HasProject) navigate("Overview");
         });
         var browse = Button("Browse project library", () => navigate("Projects"));
@@ -68,7 +68,7 @@ internal sealed partial class WorkspacePageFactory
         var recentRows = new StackPanel { Spacing = 4 };
         recentPanel.Children.Add(recentRows);
         root.Children.Add(recentPanel);
-        var evidenceNote = Note("CPR/BAK class markers recognized in Cubase 15.0.40 ASM are shown with their stored names and offsets. Plug-in UID/name fields found in the project are shown directly; track hierarchy, plug-in ownership and identity remain unresolved. Unknown values are not treated as zero or absent.");
+        var evidenceNote = Note("The reader shows project information it can find and leaves unavailable track links or plug-in details open. Visit Help & reader FAQ to see what each result means and which parts are still being researched.");
         root.Children.Add(evidenceNote);
 
         void AddMetric(int column, int row, Border card)

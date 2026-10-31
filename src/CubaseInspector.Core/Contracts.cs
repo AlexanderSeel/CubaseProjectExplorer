@@ -28,7 +28,8 @@ public sealed record TrackInfo(
     string? ParentTrackId = null,
     string? Color = null, string? Comment = null, bool? Loaded = null,
     double? Pan = null, string? ChannelRole = null,
-    long? SourceEndOffset = null);
+    long? SourceEndOffset = null, ushort? SourceClassVersion = null,
+    long? SourceBodyBytes = null, string? SourceClassEncoding = null);
 
 public sealed record RoutingEdge(string FromChannelId, string ToChannelId, string Kind,
     double? Level = null, bool? Enabled = null, string? Tap = null,
@@ -205,7 +206,8 @@ public interface IReportService
 
 // CPR details are structural observations, not confirmed Cubase track/plugin data.
 public sealed record CprTrackHint(string RecordClass, string? Name, long ArchiveOffset,
-    string? NameSource = null, long? ArchiveEndOffset = null);
+    string? NameSource = null, long? ArchiveEndOffset = null,
+    ushort? ClassVersion = null, long? BodyBytes = null, string? ClassEncoding = null);
 public sealed record CprChunkSummary(string Id, long Offset, long PayloadBytes, string? StreamName, string? ArchiveClass);
 
 /// <summary>

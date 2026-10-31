@@ -13,7 +13,7 @@ internal sealed partial class WorkspacePageFactory
 {
     private UIElement LibraryPage()
     {
-        var root = Page("Project Library", "Scan, filter and select projects. Native CPR details remain labelled by evidence.");
+        var root = Page("Project Library", "Find and review your Cubase and DAWproject sessions.");
         var summary = new TextBlock { FontSize = 12, Foreground = Muted, VerticalAlignment = VerticalAlignment.Center };
         void UpdateSummary() => summary.Text = shell.Library.VisibleSummary;
         UpdateSummary();

@@ -34,16 +34,31 @@ internal sealed partial class WorkspacePageFactory
         var headerGrid = new Grid { ColumnSpacing = 16, MinHeight = 64 };
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        headerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         headerGrid.Children.Add(heading);
         Grid.SetColumn(toolbarViewport, 1);
         headerGrid.Children.Add(toolbarViewport);
+        headerGrid.SizeChanged += (_, args) =>
+        {
+            var compact = args.NewSize.Width < 760;
+            headerGrid.ColumnDefinitions[1].Width = compact
+                ? new GridLength(1, GridUnitType.Star)
+                : GridLength.Auto;
+            Grid.SetColumn(toolbarViewport, compact ? 0 : 1);
+            Grid.SetRow(toolbarViewport, compact ? 1 : 0);
+            toolbarViewport.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+            toolbar.Orientation = args.NewSize.Width < 520 ? Orientation.Vertical : Orientation.Horizontal;
+        };
         root.Children.Add(new Border { BorderBrush = Divider, BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(0, 0, 0, 12), Child = headerGrid });
         _pageToolbars[root] = toolbar;
         return root;
     }
 
-    private static Grid DashboardTabs(params (string Title, UIElement Content)[] sections)
+    private static Grid DashboardTabs(params (string Title, UIElement Content)[] sections) => DashboardTabs(0, sections);
+
+    private static Grid DashboardTabs(int initialIndex, params (string Title, UIElement Content)[] sections)
     {
         var tabs = new Grid { RowSpacing = 10 };
         tabs.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -64,7 +79,10 @@ internal sealed partial class WorkspacePageFactory
             contentHost.Children.Add(content);
             for (var i = 0; i < buttons.Count; i++)
             {
-                buttons[i].IsEnabled = i != index;
+                buttons[i].IsEnabled = true;
+                buttons[i].Foreground = i == index ? Accent : Muted;
+                buttons[i].BorderBrush = i == index ? Accent : Divider;
+                buttons[i].BorderThickness = new Thickness(0, 0, 0, i == index ? 2 : 1);
                 AutomationProperties.SetName(buttons[i], $"{sections[i].Title} tab{(i == index ? ", selected" : "")}");
             }
         }
@@ -72,13 +90,13 @@ internal sealed partial class WorkspacePageFactory
         {
             var index = buttons.Count;
             var button = new Button { Content = title, Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"],
-                IsEnabled = index != selected };
+                IsEnabled = true };
             button.Click += (_, _) => Show(index);
             buttons.Add(button);
             commands.Children.Add(button);
         }
         tabs.SizeChanged += (_, args) => commands.Orientation = args.NewSize.Width < 560 ? Orientation.Vertical : Orientation.Horizontal;
-        Show(0);
+        Show(Math.Clamp(initialIndex, 0, Math.Max(0, sections.Length - 1)));
         return tabs;
     }
 
@@ -106,16 +124,8 @@ internal sealed partial class WorkspacePageFactory
         };
     }
 
-    private void ShowInformationWindow(string title, UIElement content, int width = 840, int height = 640)
-    {
-        var theme = shell.Theme switch
-        {
-            "Light" => ElementTheme.Light,
-            "System" => ElementTheme.Default,
-            _ => ElementTheme.Dark
-        };
-        InfoWindowPresenter.Show(title, content, theme, width, height);
-    }
+    private void ShowInformationWindow(string title, UIElement content, int width = 840, int height = 640) =>
+        _ = InfoWindowPresenter.ShowAsync(xamlRoot, title, content, width, height);
 
     private Border Metric(string label, string value) => new()
     {
@@ -178,6 +188,22 @@ internal sealed partial class WorkspacePageFactory
     private Button Button(string label, Action action)
     {
         var button = new Button { Content = label, Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
+        button.Click += (_, _) => action();
+        return button;
+    }
+
+    private Button InfoButton(Action action, string accessibleName = "More about this data")
+    {
+        var button = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE946", FontSize = 15 },
+            Width = 36,
+            MinWidth = 36,
+            Padding = new Thickness(0),
+            Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"]
+        };
+        ToolTipService.SetToolTip(button, accessibleName);
+        AutomationProperties.SetName(button, accessibleName);
         button.Click += (_, _) => action();
         return button;
     }

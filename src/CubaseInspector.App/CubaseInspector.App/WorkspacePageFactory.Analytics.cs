@@ -68,13 +68,13 @@ internal sealed partial class WorkspacePageFactory
         panel.Children.Add(new TextBlock { Text = "¹ IDs are reported only as a count; they are export-local and are not used to merge rows.",
             FontSize = 10, Foreground = Muted, TextWrapping = TextWrapping.Wrap });
         var candidateDetails = new StackPanel { Spacing = 5 };
-        var candidateSources = new TextBlock { Text = "Select an exact token to see which saved projects contain it.",
+        var candidateSources = new TextBlock { Text = "Select a plug-in reference to see which saved projects include it.",
             FontSize = 10, TextWrapping = TextWrapping.Wrap, Foreground = Muted };
         void ShowCandidateSources(LibraryCandidateMarkerRow? row)
         {
             if (row is not null)
-                candidateSources.Text = "Exact observed token; still unverified. Source projects (" + row.ProjectPaths.Count + "):" + Environment.NewLine + string.Join(Environment.NewLine, row.ProjectPaths);
-            else candidateSources.Text = "Select an exact token to see which saved projects contain it.";
+                candidateSources.Text = "Project references (" + row.ProjectPaths.Count + ") · product identity may need review:" + Environment.NewLine + string.Join(Environment.NewLine, row.ProjectPaths);
+            else candidateSources.Text = "Select a plug-in reference to see which saved projects include it.";
         }
         var candidates = new DataBrowserControl<LibraryCandidateMarkerRow>(
             [new("Exact token", "Token", row => row.Token, row => row.Token),
@@ -90,10 +90,10 @@ internal sealed partial class WorkspacePageFactory
                 menu.Items.Add(sources);
                 return menu;
             });
-        AutomationProperties.SetName(candidates, "Unverified candidate tokens");
+        AutomationProperties.SetName(candidates, "Plug-in references that may need review");
         candidateDetails.Children.Add(candidates);
         candidateDetails.Children.Add(candidateSources);
-        panel.Children.Add(new Expander { Header = "Unverified CPR / BAK candidate tokens · never confirmed plug-in identities",
+        panel.Children.Add(new Expander { Header = "Plug-in references needing review",
             Content = candidateDetails, IsExpanded = false });
         PropertyChangedEventHandler statusChanged = (_, args) =>
         {

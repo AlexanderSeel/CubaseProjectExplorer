@@ -27,23 +27,23 @@ public sealed partial class ProjectWorkspaceViewModel : ObservableObject
 
     public bool HasProject => Project is not null;
     public string ProjectName => Project?.Name ?? "No project selected";
-    public string ProjectPath => Project?.FilePath ?? "Open a project or choose one from the Library.";
+    public string ProjectPath => Project?.FilePath ?? "Select Analyze to choose a project or pick one from the Library.";
     public string Format => Project?.Format ?? "—";
     public string SavedBy => Project?.CreatorVersion ?? "Unknown";
     public string Evidence => Project is null ? "No project open" : EvidencePresentation.Label(Project.Evidence);
     public string Bpm => Project?.Bpm is double bpm
         ? bpm.ToString("0.##") + " BPM"
-        : CandidateValue("Tempo event BPM", "Tempo track BPM", "Musical tempo BPM") is { } tempo ? tempo + " BPM · unverified" : "Unknown";
+        : CandidateValue("Tempo event BPM", "Tempo track BPM", "Musical tempo BPM") is { } tempo ? tempo + " BPM · needs review" : "Not listed";
     public string TimeSignature => Project is { TimeSignatureNumerator: int n, TimeSignatureDenominator: int d }
-        ? $"{n}/{d}" : CandidateValue("Time signature event") is { } signature ? signature + " · unverified" : "Unknown";
+        ? $"{n}/{d}" : CandidateValue("Time signature event") is { } signature ? signature + " · needs review" : "Not listed";
     public string TrackCount => Project is null ? "—" : Project.Tracks.Count.ToString("N0");
     public string TrackEvidence => Project?.Evidence == EvidenceLevel.Candidate
-        ? "recognized serialized classes · names and links unresolved" : "tracks read from the project export";
+        ? "Track information found · some links need review" : "Tracks read from the project export";
     public string PluginCount => Project is null ? "—" : Project.Plugins.Count.ToString("N0");
     public string PluginEvidence => Project?.Evidence == EvidenceLevel.Candidate
-        ? "stored UID/name markers shown · identity, format, and owner unresolved"
+        ? "Plug-in names found · product details may need review"
         : Project?.Plugins.Any(p => p.Evidence == EvidenceLevel.Candidate) == true
-            ? "some references have unverified identities or locations"
+            ? "some plug-in details need review"
             : Project?.Plugins.Any(p => p.Evidence == EvidenceLevel.Unknown) == true
             ? "some references are not available in the source" : "plug-ins listed by the project export";
     public string RouteCount => Project is null ? "—" : CprSignalFlowPresentation.Create(Project).Routing.Count.ToString("N0");
@@ -54,10 +54,10 @@ public sealed partial class ProjectWorkspaceViewModel : ObservableObject
     public string OverviewSummary => Project is null
         ? "Choose a project from the Library to inspect its available evidence."
         : Project.Evidence == EvidenceLevel.Candidate
-        ? "Recognized CPR/BAK serialized track classes and stored plug-in UID/name fields are shown below. Names, track links, plug-in identity, and cross-version meaning remain separate details."
+        ? "Track and plug-in information was found in this project. Some track/channel links and product details may need review; Help & reader FAQ explains what is known and what is still being researched."
             : "Showing fields declared in the project export. Missing values remain unknown.";
     public string RoutingSummary => Project?.Evidence == EvidenceLevel.Candidate
-        ? $"{CprSignalFlowPresentation.Create(Project).Tracks.Count:N0} records · {CprSignalFlowPresentation.Create(Project).Routing.Count:N0} bus/send links read from CPR fields. Select a record to explore its signal path and source details."
+        ? $"{CprSignalFlowPresentation.Create(Project).Tracks.Count:N0} channel details · {CprSignalFlowPresentation.Create(Project).Routing.Count:N0} saved connections found. Some channel links may need review."
         : Project?.Routing.Count > 0
             ? "Connections shown below come from exported project data. Hardware device mappings are not established."
             : "No routing connections were supplied by this project format.";

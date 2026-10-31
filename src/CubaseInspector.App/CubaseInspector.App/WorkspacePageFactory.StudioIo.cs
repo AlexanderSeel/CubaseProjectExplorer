@@ -40,14 +40,14 @@ internal sealed partial class WorkspacePageFactory
         var status = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Muted, FontSize = 12 };
         root.Children.Add(status);
         var navigation = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        navigation.Children.Add(Button("Open routing view", () => navigate("Routing")));
-        navigation.Children.Add(Button("Open MIDI workspace", async () =>
+        navigation.Children.Add(Button("Routing", () => navigate("Routing")));
+        navigation.Children.Add(Button("MIDI", async () =>
         {
             var load = mediaLibrary.LoadOpenProjectAsync(project);
             navigate("Midi");
             await load;
         }));
-        navigation.Children.Add(Button("Find project audio", async () =>
+        navigation.Children.Add(Button("Audio", async () =>
         {
             var load = mediaLibrary.LoadOpenProjectAsync(project);
             mediaLibrary.SetSampleProjectScope(project.FilePath);
@@ -111,7 +111,7 @@ internal sealed partial class WorkspacePageFactory
                         Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap });
                     if (outgoing.Length > 0) card.Children.Add(new TextBlock { Text = string.Join("\n", outgoing),
                         Foreground = Accent, FontSize = 11, TextWrapping = TextWrapping.Wrap });
-                    card.Children.Add(Button("Inspect saved fields & links…", () => ShowSource(node)));
+                    card.Children.Add(InfoButton(() => ShowSource(node), "Technical details · saved fields and links"));
                     column.Children.Add(new Border { Padding = new Thickness(12), Background = Surface, BorderBrush = Divider,
                         BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = card });
                 }
@@ -189,8 +189,8 @@ internal sealed partial class WorkspacePageFactory
             body.Children.Add(new TextBlock { Text = selected.Name, FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             body.Children.Add(new TextBlock { Text = selected.Kind, FontSize = 12, Foreground = Accent });
             body.Children.Add(new TextBlock { Text = selected.Description, FontSize = 12, Foreground = Muted, TextWrapping = TextWrapping.Wrap, MaxLines = 5 });
-            body.Children.Add(Button("Trace full chain…", () => ShowChain(selected)));
-            body.Children.Add(Button("Saved values & connections…", () => ShowSource(selected)));
+            body.Children.Add(Button("View signal path", () => ShowChain(selected)));
+            body.Children.Add(InfoButton(() => ShowSource(selected), "Technical details · saved values and connections"));
             Place(new Border { Width = 300, MinHeight = 240, Padding = new Thickness(16), Background = Surface,
                 BorderBrush = Accent, BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(9), Child = body }, 370, middleY - 120);
             if (incoming.Length == 0) Place(new TextBlock { Text = "No incoming assignment decoded.\nChoose another node to inspect its saved relationships.",

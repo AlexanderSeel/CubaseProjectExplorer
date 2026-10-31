@@ -111,6 +111,9 @@ public sealed class CprStructureTests
             Assert.Equal("Vox", hint.Name);
             Assert.True(hint.ArchiveOffset > 0);
             Assert.True(hint.ArchiveEndOffset > hint.ArchiveOffset);
+            Assert.Equal((ushort)1, hint.ClassVersion);
+            Assert.Equal((long)FullRecord("MListNode", name).Length, hint.BodyBytes);
+            Assert.Equal("inline-class-name", hint.ClassEncoding);
             var snapshot = await new CprEvidenceReader().ReadAsync(file);
             Assert.Equal(EvidenceLevel.Candidate, snapshot.Value!.Evidence);
             var candidateTrack = Assert.Single(snapshot.Value.Tracks);
@@ -119,6 +122,9 @@ public sealed class CprStructureTests
             Assert.Equal(EvidenceLevel.Candidate, candidateTrack.Evidence);
             Assert.Equal(hint.ArchiveOffset, candidateTrack.SourceOffset);
             Assert.Equal(hint.ArchiveEndOffset, candidateTrack.SourceEndOffset);
+            Assert.Equal(hint.ClassVersion, candidateTrack.SourceClassVersion);
+            Assert.Equal(hint.BodyBytes, candidateTrack.SourceBodyBytes);
+            Assert.Equal(hint.ClassEncoding, candidateTrack.SourceClassEncoding);
             Assert.Null(candidateTrack.Volume);
             Assert.Null(candidateTrack.ChannelId);
         }

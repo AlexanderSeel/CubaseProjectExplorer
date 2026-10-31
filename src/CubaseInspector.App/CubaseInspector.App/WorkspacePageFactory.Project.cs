@@ -25,7 +25,7 @@ internal sealed partial class WorkspacePageFactory
         var studioPanel = new StackPanel { Spacing = 10 };
         if (shell.Workspace.Project is { } selectedProject)
             studioPanel.Children.Add(StudioIoView(selectedProject));
-        else studioPanel.Children.Add(Empty("Open a project to inspect saved ports, audio references and MIDI streams."));
+        else studioPanel.Children.Add(Empty("Analyze a project to see its ports, audio files and MIDI parts."));
         var mediaPanel = new StackPanel { Spacing = 10 };
         mediaPanel.Children.Add(new TextBlock { Text = "EXTERNAL MEDIA CHECKLIST", Margin = new Thickness(0, 8, 0, 4),
             Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] });
@@ -98,13 +98,14 @@ internal sealed partial class WorkspacePageFactory
         var root = Page(vm.ProjectName, vm.ProjectPath);
         if (vm.Project is { } selectedProject)
         {
-            var findProjectSamples = Button("Find samples used in this project", () =>
+            var analyze = Button("Analyze", async () => await shell.AnalyzeProjectCommand.ExecuteAsync(null));
+            var findProjectSamples = Button("Find project audio", () =>
             {
                 mediaLibrary.SetSampleProjectScope(selectedProject.FilePath);
                 shell.NavigateTo("Samples");
                 navigate("Samples");
             });
-            AddPageActions(root, findProjectSamples);
+            AddPageActions(root, analyze, findProjectSamples);
         }
         var cards = new Grid { ColumnSpacing = 12, RowSpacing = 12, Margin = new Thickness(0, 12, 0, 16) };
         for (var i = 0; i < 3; i++) cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -132,25 +133,15 @@ internal sealed partial class WorkspacePageFactory
                     ($"{candidate.Field} · offset {candidate.ArchiveOffset}", candidate.Value + " · mapping unverified")))
                 .ToArray();
         coveragePanel.Child = DetailCard("FIELD AVAILABILITY", coverageRows);
-        var coverageButton = new Button { Content = "Field availability…",
-            Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
-        coverageButton.Click += (_, _) => ShowInformationWindow("Field availability", coveragePanel, 920, 720);
-        root.Children.Add(coverageButton);
+        AddPageActions(root, InfoButton(() => ShowInformationWindow("Field availability", coveragePanel, 920, 720),
+            "Technical details · field availability and raw evidence"));
         if (vm.Project?.NativeMidiNoteCandidates is { Count: > 0 } noteCandidates)
         {
-            var preview = noteCandidates.Take(128).Select(note =>
-                $"Position {note.PositionTicks.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} ticks · " +
-                $"duration {note.DurationTicks.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} ticks · " +
-                $"pitch {note.MidiPitch} · velocity {note.Velocity} · offset 0x{note.FileOffset:X}").ToArray();
-            IEnumerable<string> noteRows = preview;
-            if (noteCandidates.Count > preview.Length)
-                noteRows = preview.Append($"{noteCandidates.Count - preview.Length:N0} additional note observations are preserved in JSON inspection output.");
-            var candidateNotes = new StackPanel { Spacing = 6 };
-            candidateNotes.Children.Add(Note(string.Join(", ", noteCandidates.Select(note => note.SourceLayout).Distinct()) + ". Timing units, tempo, clip placement and track ownership remain unverified."));
-            candidateNotes.Children.Add(Section("Observed note records · first " + preview.Length + " of " + noteCandidates.Count,
-                noteRows));
-            root.Children.Add(new Expander { Header = $"CPR note observations · {noteCandidates.Count:N0}",
-                Content = candidateNotes, IsExpanded = true });
+            var midiSummary = new StackPanel { Spacing = 8 };
+            midiSummary.Children.Add(DetailCard("MIDI IN THIS PROJECT", ("Note events found", noteCandidates.Count.ToString("N0")),
+                ("Next", "Browse notes and parts on the MIDI tracks page.")));
+            midiSummary.Children.Add(Button("Browse MIDI notes", () => navigate("Midi")));
+            root.Children.Add(midiSummary);
         }
         if (vm.Project?.WarpPoints is { Count: > 0 } warpPoints)
             root.Children.Add(new Expander { Header = $"Exported audio warp points · {warpPoints.Count:N0}",
@@ -163,7 +154,9 @@ internal sealed partial class WorkspacePageFactory
     private UIElement TracksPage()
     {
         var project = shell.Workspace.Project;
-        var root = Page("Tracks & Channels", shell.Workspace.TrackEvidence + " · saved values are shown only when supplied by the source.");
+        var mixerTrackObservations = project is null ? Array.Empty<TrackInfo>() : CprSignalFlowPresentation.Create(project).Tracks
+            .Where(item => item.SourceRecordClass == "CPR named record" && item.ParentTrackId is not null).ToArray();
+        var root = Page("Tracks & Channels", "Browse the tracks, channels, and saved mixer settings in this session.");
         var search = FilterTextBox("Search tracks or channels", 240);
         var kinds = new[] { "All" }.Concat(shell.Workspace.Tracks.Select(track => track.Kind)
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(kind => kind, StringComparer.OrdinalIgnoreCase)).ToArray();
@@ -174,9 +167,9 @@ internal sealed partial class WorkspacePageFactory
         var count = new TextBlock { FontSize = 11, Foreground = new SolidColorBrush(Color.FromArgb(255, 180, 188, 199)), Margin = new Thickness(0, 0, 0, 5) };
         root.Children.Add(count);
         var rows = new ResettableObservableCollection<TrackDisplayRow>();
-        var empty = Empty("No track records match the current search and type."); empty.Visibility = Visibility.Collapsed;
+        var empty = Empty("No tracks match the current search and type."); empty.Visibility = Visibility.Collapsed;
         var selected = new Border { Background = Surface, Padding = new Thickness(12), Margin = new Thickness(0, 8, 0, 0), Visibility = Visibility.Collapsed };
-        var detail = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap };
+        var detail = new StackPanel { Spacing = 8 };
         selected.Child = detail;
         void Refresh()
         {
@@ -189,98 +182,98 @@ internal sealed partial class WorkspacePageFactory
             items = items.OrderBy(track => track.Name, StringComparer.OrdinalIgnoreCase);
             rows.ReplaceAll(items.Select(TrackDisplayRow.From));
             empty.Visibility = rows.Count == 0 && shell.Workspace.Tracks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            count.Text = $"{rows.Count:N0} of {shell.Workspace.Tracks.Count:N0} records";
+            count.Text = $"{rows.Count:N0} of {shell.Workspace.Tracks.Count:N0} tracks";
         }
         search.TextChanged += (_, _) => Refresh(); kindFilter.SelectionChanged += (_, _) => Refresh();
         void ShowTrackDetails(TrackDisplayRow row)
         {
-            detail.Text = $"{row.Name} · {row.Type}\nSerialized class: {row.Source?.SourceRecordClass ?? "not supplied"} · file offset: {row.Source?.SourceOffset?.ToString("N0") ?? "not supplied"}\nChannel: {row.Channel} · Destination: {row.Destination}\nSaved value: {row.SavedValue} · {row.Status}\n{(row.Source is { } source ? EvidencePresentation.TrackExplanation(source) : row.Evidence)}";
+            detail.Children.Clear();
+            detail.Children.Add(new TextBlock { Text = row.Name, FontSize = 17,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            detail.Children.Add(new TextBlock { Text = $"{row.Type} · Channel {row.Channel} · Output {row.Destination}",
+                FontSize = 12, TextWrapping = TextWrapping.Wrap });
+            detail.Children.Add(new TextBlock { Text = $"Volume {row.SavedValue} · {row.Status}",
+                Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], TextWrapping = TextWrapping.Wrap });
+            if (project is not null && row.Source is { Evidence: EvidenceLevel.Candidate } source)
+            {
+                var mixerRecords = mixerTrackObservations
+                    .Where(item => item.ParentTrackId == source.Id)
+                    .ToArray();
+                if (mixerRecords.Length == 1 && mixerRecords[0].SourceOffset is long mixerOffset &&
+                    project.NativeMixerObservations?.SingleOrDefault(item => item.ArchiveOffset == mixerOffset) is { } mixer &&
+                    (mixer.VolumeDb is not null || mixer.Mute is not null || mixer.Solo is not null || mixer.Pan is not null))
+                {
+                    var values = new List<(string Name, string Value)>();
+                    if (mixer.VolumeDb is double level) values.Add(("Level", level.ToString("0.##") + " dB"));
+                    if (mixer.Pan is double pan) values.Add(("Pan", pan.ToString("0.###")));
+                    if (mixer.Mute is bool mute) values.Add(("Mute", mute ? "On" : "Off"));
+                    if (mixer.Solo is bool solo) values.Add(("Solo", solo ? "On" : "Off"));
+                    detail.Children.Add(DetailCard("MIXER SETTINGS FOUND", values.ToArray()));
+                    detail.Children.Add(InfoButton(() =>
+                    {
+                        var evidence = new StackPanel { Spacing = 10 };
+                        evidence.Children.Add(Note("These saved mixer values are linked to this track record by their byte range. The Cubase 15 ASM names solo and solo-defeat properties; exact field encoding and behavior still need comparison with controlled saves and other Cubase versions."));
+                        evidence.Children.Add(DetailCard("SOURCE", ("Record name", mixer.Name), ("Source stream", mixer.SourceStream),
+                            ("File position", $"0x{mixer.ArchiveOffset:X}"), ("Reader", mixer.Evidence)));
+                        evidence.Children.Add(Section("Saved fields", (mixer.CandidateFields ?? []).Select(field =>
+                            $"{field.Path} · {field.Type} · {field.Value} · 0x{field.ArchiveOffset:X}")));
+                        ShowInformationWindow("Mixer settings · " + row.Name, evidence, 920, 680);
+                    }, "More about these mixer settings"));
+                }
+            }
+            detail.Children.Add(InfoButton(() =>
+            {
+                var source = row.Source;
+                var evidence = new StackPanel { Spacing = 10 };
+                evidence.Children.Add(DetailCard("SOURCE RECORD",
+                    ("Project", project?.FilePath ?? "Not available"),
+                    ("Stored class", source?.SourceRecordClass ?? "Not supplied"),
+                    ("Serializer version", source?.SourceClassVersion is ushort version ? version.ToString() : "Not read"),
+                    ("Record size", source?.SourceBodyBytes is long bodyBytes ? $"{bodyBytes:N0} bytes" : "Not read"),
+                    ("Header format", source?.SourceClassEncoding ?? "Not read"),
+                    ("Header offset", source?.SourceOffset is long offset ? $"0x{offset:X}" : "Not supplied"),
+                    ("Record end", source?.SourceEndOffset is long endOffset ? $"0x{endOffset:X}" : "Not supplied")));
+                evidence.Children.Add(Note("Serializer version is the saved class revision, not the Cubase application version. Header matches and nested byte ranges are reader interpretations; the raw record has not been validated across Cubase releases."));
+                if (source is not null) evidence.Children.Add(Note(EvidencePresentation.TrackExplanation(source)));
+                ShowInformationWindow("Technical details · " + row.Name, evidence, 900, 620);
+            }, "Technical details · source record, version and offsets"));
             selected.Visibility = Visibility.Visible;
         }
         void ShowTrackAudioReferences(TrackDisplayRow row)
         {
             if (project is null || row.Source is not { } track)
             {
-                ShowInformationWindow("Audio paths · " + row.Name, Note("No project media references are available in the current workspace."), 720, 420);
+                shell.Status = "Select a project to find its audio.";
                 return;
             }
             var references = TrackAudioReferencesPresentation.Build(project, track);
-            var content = new StackPanel { Spacing = 10 };
-            content.Children.Add(new TextBlock { Text = $"{references.Associated.Count:N0} references associated with this track · {references.Unassigned.Count:N0} other path observations without a confirmed track link",
-                Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"], TextWrapping = TextWrapping.Wrap });
-            content.Children.Add(Note("Paths below are the literal values stored or found in the project. The app has not checked whether each file currently exists at that location."));
-            UIElement ReferenceCard(TrackAudioReference item)
-            {
-                var card = new StackPanel { Spacing = 6 };
-                card.Children.Add(new TextBlock { Text = item.Name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    TextWrapping = TextWrapping.Wrap });
-                var path = new TextBox { Text = item.Path, IsReadOnly = true, AcceptsReturn = true,
-                    TextWrapping = TextWrapping.Wrap, MinHeight = 38, MaxHeight = 88 };
-                ToolTipService.SetToolTip(path, item.Path);
-                card.Children.Add(path);
-                Button? copy = null;
-                copy = Button("Copy path", () =>
-                {
-                    var package = new DataPackage();
-                    package.SetText(item.Path);
-                    Clipboard.SetContent(package);
-                    if (copy is not null) copy.Content = "Path copied";
-                });
-                var meta = new TextBlock { Text = $"{item.Association} · {item.Evidence} · {item.Kind}\n{item.Details}\nSource: {item.Source}" +
-                    (item.SourceOffset is long offset ? $" · 0x{offset:X}" : ""),
-                    Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], TextWrapping = TextWrapping.Wrap };
-                card.Children.Add(copy);
-                card.Children.Add(meta);
-                return new Border { Padding = new Thickness(10), Margin = new Thickness(0, 3, 0, 3), Background = Surface,
-                    BorderBrush = Divider, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Child = card };
-            }
-            void AddReferences(string title, IReadOnlyList<TrackAudioReference> items)
-            {
-                if (items.Count == 0) return;
-                var section = new StackPanel { Spacing = 6 };
-                section.Children.Add(new TextBlock { Text = title + $" ({items.Count:N0})" + (items.Count > 200 ? " · first 200 shown" : ""),
-                    Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] });
-                foreach (var item in items.Take(200)) section.Children.Add(ReferenceCard(item));
-                content.Children.Add(section);
-            }
-            if (references.Associated.Count > 0)
-                AddReferences("Track media references", references.Associated);
-            else
-                content.Children.Add(Note("No audio path could be linked to this track from the available project fields."));
-            AddReferences("Other paths found in this project · track not resolved", references.Unassigned);
-            if (references.Associated.Count > 200 || references.Unassigned.Count > 200)
-                content.Children.Add(Note("This details window shows the first 200 paths in each section to keep large projects responsive. Use Sample Finder to search the broader indexed library."));
-            if (references.Associated.Count > 0)
-            {
-                var search = Button("Search these paths in Sample Finder", async () =>
-                {
-                    var load = mediaLibrary.LoadOpenProjectAsync(project);
-                    mediaLibrary.SetSampleProjectScope(project.FilePath);
-                    mediaLibrary.Search = references.Associated[0].Path;
-                    shell.NavigateTo("Samples");
-                    navigate("Samples");
-                    await load;
-                });
-                content.Children.Add(search);
-            }
-            ShowInformationWindow("Audio paths · " + row.Name, content, 980, 720);
+            var firstPath = references.Associated.FirstOrDefault()?.Path;
+            mediaLibrary.FocusNativeAudioTab = true;
+            mediaLibrary.SetSampleProjectScope(project.FilePath);
+            mediaLibrary.Search = firstPath ?? row.Name;
+            _ = mediaLibrary.LoadOpenProjectAsync(project);
+            shell.Status = firstPath is null
+                ? $"Looking for audio used by {row.Name}…"
+                : $"Finding audio for {row.Name}…";
+            shell.NavigateTo("Samples");
+            navigate("Samples");
         }
         var browser = new DataBrowserControl<TrackDisplayRow>(
             [new("Track", "Name", row => row.Name, row => row.Name),
              new("Type", "Type", row => row.Type, row => row.Type),
              new("Channel", "Channel", row => row.Channel, row => row.Channel),
-             new("Destination", "Destination", row => row.Destination, row => row.Destination),
-             new("Saved value · state", "SavedValue", row => row.SavedValue + " · " + row.Status, row => row.SavedValue),
-             new("Evidence", "Evidence", row => row.Evidence, row => row.Evidence)],
+             new("Output", "Destination", row => row.Destination, row => row.Destination),
+             new("Level · mute · solo", "SavedValue", row => row.SavedValue + " · " + row.Status, row => row.SavedValue),
+             new("Details", "Evidence", row => row.Evidence, row => row.Evidence)],
             rows, ["None", "Type", "Evidence"], "None",
             (row, mode) => mode switch { "Type" => row.Type, "Evidence" => row.Evidence, _ => "" },
             _ => { }, row => { ShowTrackDetails(row); return Task.CompletedTask; }, row =>
             {
                 var menu = new MenuFlyout();
-                var inspect = new MenuFlyoutItem { Text = "Show track details" };
+                var inspect = new MenuFlyoutItem { Text = "Analyze track" };
                 inspect.Click += (_, _) => ShowTrackDetails(row);
                 menu.Items.Add(inspect);
-                var media = new MenuFlyoutItem { Text = "Audio paths & sample references…" };
+                var media = new MenuFlyoutItem { Text = "Find track audio" };
                 media.Click += (_, _) => ShowTrackAudioReferences(row);
                 menu.Items.Add(media);
                 return menu;
@@ -293,7 +286,7 @@ internal sealed partial class WorkspacePageFactory
     private UIElement PluginsPage()
     {
         var project = shell.Workspace.Project;
-        var root = Page("Plug-ins used in this project", "Repeated plug-in names are grouped together. Select a card to see every observed location and its source quality.");
+        var root = Page("Plug-ins used in this project", "Browse plug-ins by name, maker, and where they appear in the session.");
         var hasReferences = project?.Plugins.Count > 0;
         var search = FilterTextBox("Search plug-in or track name", 280);
         var formats = new[] { "All" }.Concat(shell.Workspace.Plugins.Select(plugin => plugin.Format)
@@ -315,7 +308,7 @@ internal sealed partial class WorkspacePageFactory
             var icon = new FontIcon { Glyph = "\uE71B", FontSize = 30, Foreground = Muted, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             var artOverlay = new Grid { Children = { icon, image } };
             var art = new Border { Width = 64, Height = 64, Background = Surface, CornerRadius = new CornerRadius(6), Child = artOverlay };
-            ToolTipService.SetToolTip(art, "Local VST3 image associated by exact CID. This does not verify the project's plug-in version or loadability.");
+            ToolTipService.SetToolTip(art, "Plug-in artwork from this computer, when available");
             var title = new TextBlock { FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
             // DataBrowser templates receive BrowserRow<T>, whose display columns are
             // projected into ValueN. Binding directly to PluginGroupCardRow leaves
@@ -327,11 +320,9 @@ internal sealed partial class WorkspacePageFactory
             formatText.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Value2") });
             var uses = new TextBlock { FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
             uses.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Value3") });
-            var reliability = new TextBlock { FontSize = 11, Foreground = Muted, TextTrimming = TextTrimming.CharacterEllipsis };
-            reliability.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Value4") });
             var locations = new TextBlock { FontSize = 11, Foreground = Muted, TextTrimming = TextTrimming.CharacterEllipsis };
             locations.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Value5") });
-            var body = new StackPanel { Spacing = 5, Children = { title, vendor, formatText, uses, reliability, locations } };
+            var body = new StackPanel { Spacing = 5, Children = { title, vendor, formatText, uses, locations } };
             var row = new Grid { ColumnSpacing = 12, Children = { art, body } };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -348,53 +339,104 @@ internal sealed partial class WorkspacePageFactory
         var details = new StackPanel { Spacing = 8, Background = Surface, Padding = SectionInset, Margin = new Thickness(0, 10, 0, 0) };
         var detailTitle = new TextBlock { Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] };
         var detailSummary = new TextBlock { Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], TextWrapping = TextWrapping.Wrap };
-        var lookupStatus = new TextBlock { Text = shell.PluginCatalog.ProjectLookupStatus,
+        var productInfo = new TextBlock { Text = "Choose Find product info to see a saved description.",
             Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 4, 0, 4) };
+        var productArtwork = new Image { Width = 112, Height = 112, Stretch = Stretch.Uniform };
+        var productProfile = new Grid { ColumnSpacing = 12, Children = { productArtwork, productInfo } };
+        productProfile.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(112) });
+        productProfile.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(productInfo, 1);
+        void ShowProductArtwork(ImageSource? source)
+        {
+            productArtwork.Source = source;
+            productArtwork.Visibility = source is null ? Visibility.Collapsed : Visibility.Visible;
+            productProfile.ColumnDefinitions[0].Width = source is null ? new GridLength(0) : new GridLength(112);
+        }
         details.Children.Add(detailTitle); details.Children.Add(detailSummary);
-        details.Children.Add(new TextBlock { Text = "WHERE THIS NAME APPEARS", Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] });
+        details.Children.Add(productProfile);
+        details.Children.Add(new TextBlock { Text = "IN THIS SESSION", Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] });
         var usageList = new ListView { ItemsSource = usageRows, SelectionMode = ListViewSelectionMode.None, MaxHeight = 220 };
         details.Children.Add(usageList);
         var eqDetails = new Expander { Header = "Exported channel EQ bands", Visibility = Visibility.Collapsed,
             Content = new ListView { ItemsSource = eqRows, SelectionMode = ListViewSelectionMode.None, MaxHeight = 240 } };
         details.Children.Add(eqDetails);
         var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var checkCatalog = Button("Check saved catalog", async () =>
+        async Task FindProductInfoAsync()
         {
             if (selectedCard?.Group.Uses.FirstOrDefault()?.Reference is { } reference)
+            {
                 await shell.PluginCatalog.CheckProjectReferenceAsync(reference);
-        });
-        var researchKvr = Button("Research on KVR", async () =>
+                var assessment = shell.PluginCatalog.Assess(reference);
+                var product = assessment.Candidates.FirstOrDefault();
+                productInfo.Text = product is null
+                    ? "No saved product profile yet. Open product page to search for it."
+                    : $"Catalog suggestion · {product.Name} · {product.Manufacturer} · {product.Category}" +
+                      (string.IsNullOrWhiteSpace(product.Description) ? "" : "\n" + product.Description) +
+                      $"\n{product.Source}";
+                ShowProductArtwork(selectedCard.Artwork);
+            }
+        }
+        async Task OpenProductPageAsync()
         {
             if (selectedCard is not { } card) return;
-            var url = ExternalPluginDiscovery.KvrSearchUrl(card.Name, card.Vendor);
+            var reference = card.Group.Uses.FirstOrDefault()?.Reference;
+            var product = reference is null ? null : shell.PluginCatalog.Assess(reference).Candidates.FirstOrDefault();
+            var url = product?.Source.Contains("KVR", StringComparison.OrdinalIgnoreCase) == true
+                ? product.Website : ExternalPluginDiscovery.KvrSearchUrl(card.Name, card.Vendor);
             if (url is not null) await Windows.System.Launcher.LaunchUriAsync(new Uri(url));
-        });
-        var grabKvr = Button("Grab exact listing from KVR", async () =>
+        }
+        async Task SaveProductDetailsAsync()
         {
             if (selectedCard?.Group.Uses.FirstOrDefault()?.Reference is { } reference)
+            {
                 await shell.PluginCatalog.GrabKvrForProjectReferenceAsync(reference);
-        });
-        var searchCatalog = Button("Search catalog", () =>
+                productInfo.Text = shell.PluginCatalog.ProjectLookupStatus.Contains("Added", StringComparison.Ordinal)
+                    ? "Product details saved to the catalog."
+                    : shell.PluginCatalog.ProjectLookupStatus.Contains("already in", StringComparison.Ordinal)
+                        ? "Product details are already in the catalog."
+                        : "No product details were added. Open product page to search manually.";
+            }
+        }
+        void SearchProductCatalog()
         {
             if (selectedCard is not { } card) return;
             shell.PluginCatalog.SearchFor(card.Name); navigate("Catalog");
-        });
-        var searchLocal = Button("Find in local VST inventory", () =>
+        }
+        void FindOnThisComputer()
         {
             if (selectedCard is not { } card) return;
             shell.PluginInventory.Search = card.Name; navigate("Inventory");
-        });
-        actionRow.Children.Add(checkCatalog); actionRow.Children.Add(researchKvr); actionRow.Children.Add(grabKvr);
-        var navigationActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        navigationActions.Children.Add(searchCatalog); navigationActions.Children.Add(searchLocal);
-        details.Children.Add(actionRow); details.Children.Add(navigationActions); details.Children.Add(lookupStatus);
+        }
+        var checkCatalog = Button("Find product info", async () => await FindProductInfoAsync());
+        var researchKvr = Button("Open on KVR", async () => await OpenProductPageAsync());
+        actionRow.Children.Add(checkCatalog); actionRow.Children.Add(researchKvr);
+        var moreActions = new Button { Content = "More", Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
+        var moreMenu = new MenuFlyout();
+        var saveItem = new MenuFlyoutItem { Text = "Save product details" };
+        saveItem.Click += async (_, _) => await SaveProductDetailsAsync();
+        var catalogItem = new MenuFlyoutItem { Text = "Search product catalog" };
+        catalogItem.Click += (_, _) => SearchProductCatalog();
+        var localItem = new MenuFlyoutItem { Text = "Find on this computer" };
+        localItem.Click += (_, _) => FindOnThisComputer();
+        moreMenu.Items.Add(saveItem); moreMenu.Items.Add(catalogItem); moreMenu.Items.Add(localItem);
+        moreActions.Flyout = moreMenu;
+        actionRow.Children.Add(moreActions);
+        details.Children.Add(actionRow);
+        details.Children.Add(InfoButton(() =>
+        {
+            if (selectedCard is not { } card) return;
+            var evidence = new StackPanel { Spacing = 10 };
+            evidence.Children.Add(Note(EvidencePresentation.PluginGroupExplanation(card.Group)));
+            evidence.Children.Add(Section("Project references", card.Group.Uses.Select(use =>
+                use.Location + " · " + EvidencePresentation.PluginLabel(use.Reference) +
+                (use.Reference.SourceByteOffset is long offset ? $" · file position {offset:N0}" : ""))));
+            ShowInformationWindow("More about " + card.Name, evidence, 900, 620);
+        }, "More about this plug-in"));
         PropertyChangedEventHandler lookupHandler = (_, args) =>
         {
-            if (args.PropertyName == nameof(PluginCatalogViewModel.ProjectLookupStatus))
-                lookupStatus.Text = shell.PluginCatalog.ProjectLookupStatus;
             if (args.PropertyName == nameof(PluginCatalogViewModel.IsBusy))
-                checkCatalog.IsEnabled = researchKvr.IsEnabled = grabKvr.IsEnabled = !shell.PluginCatalog.IsBusy;
+                checkCatalog.IsEnabled = researchKvr.IsEnabled = !shell.PluginCatalog.IsBusy;
         };
         shell.PluginCatalog.PropertyChanged += lookupHandler;
         root.Unloaded += (_, _) => shell.PluginCatalog.PropertyChanged -= lookupHandler;
@@ -403,14 +445,12 @@ internal sealed partial class WorkspacePageFactory
             selectedCard = card;
             if (card is null) { details.Visibility = Visibility.Collapsed; return; }
             detailTitle.Text = card.Name;
-            detailSummary.Text = $"{card.Vendor} · {card.Format} · {card.Uses}\n{EvidencePresentation.PluginGroupExplanation(card.Group)}";
+            detailSummary.Text = $"{card.Vendor} · {card.Format} · {card.Uses}";
+            productInfo.Text = "Choose Find product info to see a saved description.";
+            ShowProductArtwork(card.Artwork);
             usageRows.Clear();
             foreach (var use in card.Group.Uses)
-            {
-                var source = use.Reference;
-                var suffix = source.SourceByteOffset is long offset ? $" · file position {offset:N0}" : string.Empty;
-                usageRows.Add($"{use.Location}{suffix} · {EvidencePresentation.PluginLabel(source)}");
-            }
+                usageRows.Add(use.Location);
             details.Visibility = Visibility.Visible;
             eqRows.Clear();
             foreach (var band in project?.EqBands ?? [])
@@ -437,7 +477,7 @@ internal sealed partial class WorkspacePageFactory
                 more.Click += (_, _) => SelectGroup(row);
                 var catalogItem = new MenuFlyoutItem { Text = "Search plug-in catalog" };
                 catalogItem.Click += (_, _) => { shell.PluginCatalog.SearchFor(row.Name); navigate("Catalog"); };
-                var localItem = new MenuFlyoutItem { Text = "Find in local VST inventory" };
+                var localItem = new MenuFlyoutItem { Text = "Find on this computer" };
                 localItem.Click += (_, _) => { shell.PluginInventory.Search = row.Name; navigate("Inventory"); };
                 menu.Items.Add(more); menu.Items.Add(catalogItem); menu.Items.Add(localItem);
                 return menu;

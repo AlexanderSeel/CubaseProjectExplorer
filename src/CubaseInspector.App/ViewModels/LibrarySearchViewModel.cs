@@ -74,7 +74,7 @@ public sealed partial class LibrarySearchViewModel(LibraryDocumentStore store) :
             {
                 documents.Add(new LibrarySearchDocument("Plug-in", plugin.Name,
                     string.IsNullOrWhiteSpace(plugin.Detail)
-                        ? "Stored plug-in marker/reference · inspect project for full details"
+                        ? "Plug-in reference · see project details"
                         : plugin.Detail + " · inspect project for full details", project.Name,
                     project.FilePath, EvidencePresentation.Label(plugin.Evidence),
                     plugin.Name + " " + plugin.SearchTerms, project));
@@ -104,9 +104,9 @@ public sealed partial class LibrarySearchViewModel(LibraryDocumentStore store) :
             }
             foreach (var note in index.NativeMidiNoteCandidates ?? [])
             {
-                documents.Add(new LibrarySearchDocument("MIDI candidate", $"Unassigned note {note.Observation}",
+                documents.Add(new LibrarySearchDocument("Native MIDI notes", $"Note {note.Observation}",
                     $"Pitch {note.Pitch} · position {note.PositionTicks:0.##} ticks · {note.Warning}",
-                    note.ProjectName, note.ProjectPath, "Candidate", $"{note.FileOffset:X} {note.Velocity}",
+                    note.ProjectName, note.ProjectPath, "Needs review", $"{note.FileOffset:X} {note.Velocity}",
                     Target: note.FileOffset.ToString("X")));
             }
         }

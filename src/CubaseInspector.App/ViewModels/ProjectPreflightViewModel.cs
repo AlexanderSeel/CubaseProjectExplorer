@@ -63,8 +63,8 @@ public sealed partial class ProjectPreflightViewModel(
         var report = _service.Analyze(project, checks);
         Evidence = $"{project.Format} · {project.Evidence} evidence";
         Summary = project.Evidence == EvidenceLevel.Confirmed
-            ? $"{report.Plugins.Count:N0} confirmed plugin dependencies · {report.UnresolvedCandidateMarkers:N0} unresolved candidate markers · local inventory {(checks is null ? "not checked" : "checked")}."
-            : $"Confirmed plugin dependencies: Unknown · {report.UnresolvedCandidateMarkers:N0} stored plug-in markers need instance and owner resolution. They are shown as evidence, not treated as confirmed dependencies.";
+            ? $"{report.Plugins.Count:N0} plug-in dependencies found · {report.UnresolvedCandidateMarkers:N0} project references need review · local inventory {(checks is null ? "not checked" : "checked")}."
+            : $"Plug-in dependencies need review · {report.UnresolvedCandidateMarkers:N0} project references could not be matched to a saved plug-in instance.";
         foreach (var dependency in report.Plugins)
             Rows.Add($"{dependency.Name}  ·  {dependency.Manufacturer ?? "Vendor unknown"}  ·  {dependency.Format}  ·  {dependency.Instances:N0} instance(s)  ·  {dependency.LocalEvidence}{(dependency.FilenameMatchPath is null ? "" : "  ·  " + dependency.FilenameMatchPath)}");
         foreach (var warning in report.Warnings) Warnings.Add(warning);

@@ -134,7 +134,9 @@ public sealed class CprEvidenceReader : IProjectReader
             h.Name ?? "(unnamed CPR record)",
             CprTrackRecordKinds.KindFor(h.RecordClass) ?? "Unknown",
             null, null, null, null, null, EvidenceLevel.Candidate,
-            h.RecordClass, h.ArchiveOffset, SourceEndOffset: h.ArchiveEndOffset)).ToList();
+            h.RecordClass, h.ArchiveOffset, SourceEndOffset: h.ArchiveEndOffset,
+            SourceClassVersion: h.ClassVersion, SourceBodyBytes: h.BodyBytes,
+            SourceClassEncoding: h.ClassEncoding)).ToList();
         if (tracks.Count > 0)
             warnings.Add("Candidate CPR track count includes hidden/device carrier records; do not compare it directly with Cubase visible track count.");
         var fieldCandidates = structural.IsSuccess

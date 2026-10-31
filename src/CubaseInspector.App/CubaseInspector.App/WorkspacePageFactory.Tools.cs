@@ -274,7 +274,7 @@ internal sealed partial class WorkspacePageFactory
     {
         var project = shell.Workspace.Project;
         var root = Page("Project report", project is null
-            ? "Open a project or choose one from the Project Library to review its report."
+            ? "Select Analyze or choose a project from the Library to see its report."
             : "Review the selected project's available fields, source evidence and limitations before exporting.");
         var export = Button("Export Markdown report…", async () => await shell.Tools.ExportMarkdownCommand.ExecuteAsync(null));
         var copy = Button("Create byte-identical copy…", async () => await shell.Tools.CreateUnmodifiedCopyCommand.ExecuteAsync(null));
@@ -288,7 +288,7 @@ internal sealed partial class WorkspacePageFactory
         }
 
         root.Children.Add(Note(project.Evidence == EvidenceLevel.Candidate
-            ? "This is a reader's interpretation of native CPR/BAK evidence. The report keeps source offsets and clearly separates observations from established Cubase meaning."
+            ? "Some details from this native project need review. The Help & reader FAQ explains what the reader can identify and which relationships are still being researched."
             : "This report summarizes fields declared by the structured project export. Missing fields remain unknown; the source project is unchanged."));
 
         var summary = DetailCard("SESSION SNAPSHOT", ("Project", project.Name), ("Format / saved by", project.Format + " · " + (project.CreatorVersion ?? "version unknown")),
@@ -367,6 +367,55 @@ internal sealed partial class WorkspacePageFactory
                 ? rows.Append($"{total - rows.Length:N0} additional rows are included in the Markdown export.")
                 : rows;
         }
+    }
+
+    private UIElement ReaderFaqPage()
+    {
+        var root = Page("Help & reader FAQ", "Music and project questions first. File-format notes and current research limits are here when you need them.");
+        UIElement Answer(string title, string text)
+        {
+            var card = new StackPanel { Spacing = 6, Padding = new Thickness(14), Background = Surface };
+            card.Children.Add(new TextBlock { Text = title,
+                Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] });
+            card.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap,
+                Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"] });
+            return card;
+        }
+
+        var studio = new StackPanel { Spacing = 10 };
+        studio.Children.Add(Answer("How do I hear a project sample?",
+            "Open Audio, choose a file, and select Preview. Supported WAV files show a waveform you can click to seek, with play, pause, and transport controls. If the stored location no longer works, the preview reports that and leaves the project untouched."));
+        studio.Children.Add(Answer("How do I find out what a plug-in is?",
+            "Select a plug-in to see its name, maker when available, and where it appears. Find product info checks the saved catalog; Open on KVR goes to a product listing or a name search; Find on this computer checks your local plug-in collection. Product listings and names do not prove that the same version is installed or ready to open."));
+        studio.Children.Add(Answer("Where are technical details?",
+            "Select the `(i)` button beside an item for its exact source fields. The Help & reader FAQ explains file-format terms, why some relationships are uncertain, and which parts of native project reading are still being researched."));
+
+        var terms = new StackPanel { Spacing = 10 };
+        terms.Children.Add(Answer("CPR and BAK",
+            "CPR is Cubase's native project file. BAK is a Cubase backup/recovery file. The app reads both without editing them. Some native structures can be located and named, while their complete musical meaning may still need confirmation."));
+        terms.Children.Add(Answer("Class marker",
+            "A class marker is an internal label Cubase writes for a kind of saved object, such as an audio or MIDI track event. Finding the label helps the reader locate the object. It does not by itself decode every field, identify the visible track, or prove which mixer channel owns it."));
+        terms.Children.Add(Answer("Cubase assembly research",
+            "The Cubase 15 assembly export shows which object readers Cubase calls and which named properties it asks for. It is a map of application behavior, not the complete saved-file grammar. The current analysis found track callback references to solo and solo-defeat properties and audio-event handling; it does not yet establish how all those values are encoded or linked in every project version."));
+        terms.Children.Add(Answer("Saved class revision and file position",
+            "A saved class revision is the revision number for one object type; it is not the Cubase release number. A file position is the byte location of a reader observation, useful for technical review and comparison."));
+        terms.Children.Add(Answer("Why do some tracks show level, mute, or solo?",
+            "The reader can find named mixer values in a bounded project record and show them with a track when that record falls inside the track's saved byte range. Cubase 15 assembly code reads solo and solo-defeat properties, but does not provide the full on-disk grammar by itself. These displayed values still need controlled-save and older-version comparisons. A missing value does not mean the track is centered, unmuted, or at unity level."));
+        terms.Children.Add(Answer("How are native MIDI notes grouped by track?",
+            "Notes are shown together when their saved project positions share the same enclosing track record, with parts available in the selector. This makes the musical notes easier to browse, but that byte-range relationship is still a reader interpretation; it does not prove Cubase track ownership or note timing. Open `(i)` on the MIDI page to inspect the saved source details."));
+        terms.Children.Add(Answer("Why is the vendor not listed?",
+            "The project or available product catalog did not supply a maker name. This is missing information, not evidence that the plug-in has no maker."));
+
+        var open = new StackPanel { Spacing = 10 };
+        open.Children.Add(Answer("What is still being researched?",
+            "Across native CPR/BAK versions, remaining work includes linking track and mixer objects reliably, decoding saved level/mute/solo/pan fields, confirming sends and bus ownership, plug-in slots and saved state, and MIDI part placement and timing. Cubase 15 assembly clues guide this work; they do not establish compatibility with older releases by themselves."));
+        open.Children.Add(Answer("Why can a value be shown when its link is uncertain?",
+            "The reader can find a stored name, path, number, or on/off value before it can prove which visible track or channel owns it. The app shows useful observations in the relevant music workflow, and `(i)` gives the source and the exact limitation. Missing values are shown as unknown rather than zero or off."));
+        open.Children.Add(Answer("Will Analyze change my project?",
+            "No. Analyze reads the selected project and refreshes the library's project, audio, and MIDI information. It does not save changes to the CPR, BAK, or DAWproject source."));
+
+        root.Children.Add(DashboardTabs(("Using the app", studio), ("File-format terms", terms), ("Research and open items", open)));
+        return root;
     }
 
     private UIElement SettingsPage()
@@ -451,7 +500,7 @@ internal sealed partial class WorkspacePageFactory
             ("Density", "Compact workspace layout")));
         root.Children.Add(DetailCard("ABOUT", ("Application", "Cubase Project Explorer"), ("Version", appVersion)));
         root.Children.Add(theme);
-        root.Children.Add(Note("Native CPR/BAK fields are candidate evidence unless independently confirmed. Original project files are opened read-only."));
+        root.Children.Add(Note("Some project information may need review. See Help & reader FAQ for detail. Project files are opened read-only."));
         return root;
     }
 

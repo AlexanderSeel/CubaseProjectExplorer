@@ -20,6 +20,8 @@ internal static class CprNamedRecordScanner
     private static readonly byte[] ChannelNameAnchor =
         [0, 0, 0, 5, (byte)'N', (byte)'a', (byte)'m', (byte)'e', 0, 0, 2, 0, 6,
          0, 0, 0, 1, 0, 0, 0, 7, (byte)'S', (byte)'t', (byte)'r', (byte)'i', (byte)'n', (byte)'g', 0, 0, 8];
+    private static readonly byte[] DirectNameAnchor =
+        [0, 0, 0, 5, (byte)'N', (byte)'a', (byte)'m', (byte)'e', 0, 0, 8];
 
     public static IReadOnlyList<CprNamedRecordCandidate> Scan(string streamName, byte[] data,
         long archiveFileOffset, int maxCandidates = 128)
@@ -29,9 +31,9 @@ internal static class CprNamedRecordScanner
         var position = 0;
         while (results.Count < maxCandidates && position < span.Length)
         {
-            var found = span[position..].IndexOf(ChannelNameAnchor);
-            if (found < 0) break;
-            var anchor = position + found;
+            var anchor = FindNextAnchor(span, position);
+            if (anchor < 0) break;
+            var nextAnchorPosition = anchor + 1;
             try
             {
                 var parser = new Parser(data, anchor, Math.Min(data.Length, anchor + MaxRecordBytes));
@@ -40,15 +42,16 @@ internal static class CprNamedRecordScanner
                 var next = anchor;
                 while (next < parser.End && values.Count < MaxValuesPerAnchor && parsed < MaxNodesPerAnchor)
                 {
-                    // Each channel-like named record starts a new top-level Name/String object.
-                    // Do not merge the following record after reading past its insert/strip fields.
-                    if (parsed > 0 && data.AsSpan(next).StartsWith(ChannelNameAnchor)) break;
+                    // Named channel and bus records can start with either Name/String or a scalar Name.
+                    // Stop before the next record rather than merging its fields.
+                    if (parsed > 0 && FindNextAnchor(data, next) == next) break;
                     var recordStart = next;
                     if (!parser.TryRecord(ref next, 0, out var record)) break;
                     parsed++;
                     AddLeaves(record, record.Name, archiveFileOffset, values, MaxValuesPerAnchor);
                     if (next <= recordStart) break;
                 }
+                nextAnchorPosition = Math.Max(nextAnchorPosition, next);
                 if (values.Count > 0)
                     results.Add(new CprNamedRecordCandidate(streamName, archiveFileOffset + anchor,
                         values, "Cubase 12 named-record grammar candidate; field semantics not independently verified"));
@@ -58,9 +61,18 @@ internal static class CprNamedRecordScanner
                 // A matching byte sequence can occur in opaque payloads; it is not enough
                 // to establish that a channel object was found.
             }
-            position = anchor + ChannelNameAnchor.Length;
+            position = nextAnchorPosition;
         }
         return results;
+    }
+
+    private static int FindNextAnchor(ReadOnlySpan<byte> data, int start)
+    {
+        var channelOffset = data[start..].IndexOf(ChannelNameAnchor);
+        var directOffset = data[start..].IndexOf(DirectNameAnchor);
+        if (channelOffset < 0) return directOffset < 0 ? -1 : start + directOffset;
+        if (directOffset < 0) return start + channelOffset;
+        return start + Math.Min(channelOffset, directOffset);
     }
 
     private static void AddLeaves(Node node, string path, long archiveFileOffset,

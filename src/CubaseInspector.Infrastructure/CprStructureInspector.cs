@@ -18,7 +18,8 @@ public sealed class CprStructureInspector : ICprStructureInspector
     private const int MaxRecords = 250_000;
     private const int MaxDepth = 48;
     private const int MaxNamedArchiveBytes = 32 * 1024 * 1024;
-    private const int MaxNamedScanBytes = 128 * 1024 * 1024;
+    private const int MaxNamedScanBytes = 256 * 1024 * 1024;
+    private const int MaxNamedCandidates = 1024;
     private const int MaxMetadataScanBytes = 128 * 1024 * 1024;
     private const int MaxInventoryArchives = 128;
     private const int MaxInventoryBytes = 128 * 1024 * 1024;
@@ -118,6 +119,13 @@ public sealed class CprStructureInspector : ICprStructureInspector
                         var data = new byte[count];
                         await file.ReadExactlyAsync(data, ct);
                         arrangement = ScanArrangement(stream ?? "Unnamed", size, data, isRif2, payloadOffset, ct);
+                        if (namedScanBytes + count <= MaxNamedScanBytes &&
+                            namedRecordCandidates.Count < MaxNamedCandidates)
+                        {
+                            namedRecordCandidates.AddRange(CprNamedRecordScanner.Scan(stream ?? "Unnamed", data,
+                                payloadOffset, MaxNamedCandidates - namedRecordCandidates.Count));
+                            namedScanBytes += count;
+                        }
                         if (arrangement.Partial)
                             warnings.Add("Arrangement evidence is partial: " + string.Join("; ", arrangement.LimitReasons ?? []));
                     }
@@ -130,15 +138,15 @@ public sealed class CprStructureInspector : ICprStructureInspector
                         if (size > MaxVersionBytes)
                             warnings.Add("Version ARCH exceeds scan budget; version is incomplete.");
                     }
-                    if (!isRif2 && size <= MaxNamedArchiveBytes && namedScanBytes + size <= MaxNamedScanBytes &&
-                        namedRecordCandidates.Count < 128)
+                    if (cls != "PArrangement" && size <= MaxNamedArchiveBytes &&
+                        namedScanBytes + size <= MaxNamedScanBytes && namedRecordCandidates.Count < MaxNamedCandidates)
                     {
                         file.Position = payloadOffset;
                         var namedData = new byte[(int)size];
                         await file.ReadExactlyAsync(namedData, ct);
                         namedScanBytes += size;
                         namedRecordCandidates.AddRange(CprNamedRecordScanner.Scan(stream ?? "Unnamed", namedData,
-                            payloadOffset, 128 - namedRecordCandidates.Count));
+                            payloadOffset, MaxNamedCandidates - namedRecordCandidates.Count));
                     }
                     if (!isRif2 && size <= MaxNamedArchiveBytes && metadataScanBytes + size <= MaxMetadataScanBytes &&
                         metadataCandidates.Count < 128)
@@ -192,7 +200,9 @@ public sealed class CprStructureInspector : ICprStructureInspector
             if (metadataCandidates.Count > 0)
                 warnings.Add($"Public CubaseTools metadata patterns produced {metadataCandidates.Count} typed candidate value(s); values retain source offsets and have not been promoted to project metadata.");
             if (namedScanBytes >= MaxNamedScanBytes)
-                warnings.Add("Named-record scan reached its 128 MiB aggregate budget; later ARCH payloads were not scanned.");
+                warnings.Add($"Named-record scan reached its {MaxNamedScanBytes / (1024 * 1024)} MiB aggregate budget; later ARCH payloads were not scanned.");
+            if (namedRecordCandidates.Count >= MaxNamedCandidates)
+                warnings.Add($"Named-record scan reached its {MaxNamedCandidates:N0}-record retention limit; later channel-shaped records were not kept.");
             if (metadataScanBytes >= MaxMetadataScanBytes)
                 warnings.Add("Metadata candidate scan reached its 128 MiB aggregate budget; later ARCH payloads were not scanned.");
             if (inventories.Any(inventory => inventory.Partial))

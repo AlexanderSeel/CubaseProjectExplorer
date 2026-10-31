@@ -19,6 +19,9 @@ public static class CprSignalFlowPresentation
         var tracks = records.Select(item =>
         {
             var candidateFields = item.Record.CandidateFields ?? [];
+            var busType = candidateFields.FirstOrDefault(field =>
+                field.Path.Equals("Bus Type", StringComparison.OrdinalIgnoreCase));
+            var isBus = busType is not null && candidateFields.Any(IsBusUid);
             var lastFieldOffset = candidateFields.Count == 0 ? item.Record.ArchiveOffset
                 : candidateFields.Max(field => field.ArchiveOffset);
             var owners = project.Tracks.Where(track => track.Evidence == EvidenceLevel.Candidate &&
@@ -29,14 +32,24 @@ public static class CprSignalFlowPresentation
                 owners[0].SourceEndOffset!.Value - owners[0].SourceOffset!.Value <
                 owners[1].SourceEndOffset!.Value - owners[1].SourceOffset!.Value)
                 ? owners[0].Id : null;
-            return new TrackInfo(item.Id, item.Record.Name, "Mixer record", item.Id,
+            var kind = isBus ? "Bus" : "Mixer record";
+            return new TrackInfo(item.Id, item.Record.Name, kind, item.Id,
                 null, null, item.Record.Mute, item.Record.Solo, EvidenceLevel.Candidate,
                 "CPR named record", item.Record.ArchiveOffset, ParentTrackId: parent, Pan: item.Record.Pan);
         }).ToArray();
         var owners = new Dictionary<(string Stream, uint Uid), HashSet<string>>();
+        var busDefinitions = new Dictionary<(string Stream, uint Uid), List<string>>();
         foreach (var item in records)
             foreach (var field in item.Record.CandidateFields ?? [])
-                if (IsOwnBus(field.Path) && TryUid(field, out var uid))
+                if (IsBusUid(field) && TryUid(field, out var definitionUid) &&
+                    (item.Record.CandidateFields ?? []).Any(candidate =>
+                        candidate.Path.Equals("Bus Type", StringComparison.OrdinalIgnoreCase)))
+                {
+                    var key = (item.Record.SourceStream, definitionUid);
+                    if (!busDefinitions.TryGetValue(key, out var definitions)) busDefinitions[key] = definitions = [];
+                    definitions.Add(item.Id);
+                }
+                else if (IsOwnBus(field.Path) && TryUid(field, out var uid))
                 {
                     var key = (item.Record.SourceStream, uid);
                     if (!owners.TryGetValue(key, out var ids)) owners[key] = ids = new(StringComparer.Ordinal);
@@ -51,31 +64,94 @@ public static class CprSignalFlowPresentation
                     field.Path.Equals("OutputBus/Bus UID", StringComparison.OrdinalIgnoreCase) ||
                     field.Path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase);
                 var input = field.Path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase);
+                var direct = field.Path.StartsWith("directRoutingFolder/", StringComparison.OrdinalIgnoreCase) &&
+                    IsBusDestination(field.Path);
                 var send = field.Path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) &&
-                    (field.Path.EndsWith("/Output/Value", StringComparison.OrdinalIgnoreCase) ||
-                     field.Path.EndsWith("/Output/Bus UID", StringComparison.OrdinalIgnoreCase) ||
-                     field.Path.EndsWith("/OutputBus/Value", StringComparison.OrdinalIgnoreCase));
-                if ((!input && !output && !send) || !TryUid(field, out var uid)) continue;
+                    IsBusDestination(field.Path);
+                var childBus = IsChildBus(field.Path);
+                var recorder = IsRecorderBus(field.Path);
+                if ((!input && !output && !send && !direct && !childBus && !recorder) || !TryUid(field, out var uid)) continue;
                 var key = (item.Record.SourceStream, uid);
-                var target = owners.TryGetValue(key, out var matches) && matches.Count == 1
-                    ? matches.Single() : $"Bus UID {uid} [{item.Record.SourceStream}]";
-                var nameSeparator = field.Path.LastIndexOf('/');
-                var namePath = nameSeparator >= 0 ? field.Path[..nameSeparator] + "/Name" : field.Path + "/Name";
+                var target = ResolveBus(key, busDefinitions, owners) ?? $"Bus UID {uid} [{item.Record.SourceStream}]";
+                if (childBus && target.StartsWith("Bus UID ", StringComparison.Ordinal))
+                    target = BusNodeId(key.Item1, uid);
+                var namePath = NamePathFor(field.Path);
                 var names = (item.Record.CandidateFields ?? []).Where(value =>
                         value.Path.Equals(namePath, StringComparison.OrdinalIgnoreCase) && value.Type == "string")
                     .Select(value => value.Value).Where(value => !string.IsNullOrWhiteSpace(value))
                     .Distinct(StringComparer.Ordinal).ToArray();
-                edges.Add(new(input ? target : item.Id, input ? item.Id : target,
-                    input ? "Input" : send ? "Send" : "Output", Evidence: EvidenceLevel.Candidate,
+                if (childBus)
+                    edges.Add(new(item.Id, target, "Child bus", Evidence: EvidenceLevel.Candidate,
+                        SourceOffset: field.ArchiveOffset, SourcePath: item.Record.SourceStream + "/" + field.Path,
+                        TargetLabel: names.Length == 1 ? names[0] : $"Child bus {uid}"));
+                else if (recorder)
+                    edges.Add(new(item.Id, target, "Record", Evidence: EvidenceLevel.Candidate,
+                        SourceOffset: field.ArchiveOffset, SourcePath: item.Record.SourceStream + "/" + field.Path,
+                        TargetLabel: names.Length == 1 ? names[0] : $"Recorder bus {uid}"));
+                else
+                    edges.Add(new(input ? target : item.Id, input ? item.Id : target,
+                    input ? "Input" : send ? "Send" : direct ? "Direct output" : "Output", Evidence: EvidenceLevel.Candidate,
                     SourceOffset: field.ArchiveOffset, SourcePath: item.Record.SourceStream + "/" + field.Path,
                     TargetLabel: names.Length == 1 ? names[0] : null));
+            }
+        foreach (var item in records)
+            foreach (var field in item.Record.CandidateFields ?? [])
+            {
+                if (!field.Path.Equals("Parent Bus UID", StringComparison.OrdinalIgnoreCase) || !TryUid(field, out var uid)) continue;
+                var key = (item.Record.SourceStream, uid);
+                var target = ResolveBus(key, busDefinitions, owners) ?? $"Bus UID {uid} [{item.Record.SourceStream}]";
+                edges.Add(new(item.Id, target, "Parent bus", Evidence: EvidenceLevel.Candidate,
+                    SourceOffset: field.ArchiveOffset, SourcePath: item.Record.SourceStream + "/" + field.Path));
             }
         return project with { Tracks = [.. project.Tracks, .. tracks], Routing = edges };
     }
 
+    private static string? ResolveBus((string Stream, uint Uid) key,
+        IReadOnlyDictionary<(string Stream, uint Uid), List<string>> definitions,
+        IReadOnlyDictionary<(string Stream, uint Uid), HashSet<string>> owners)
+    {
+        if (definitions.TryGetValue(key, out var declared))
+        {
+            var distinct = declared.Distinct(StringComparer.Ordinal).ToArray();
+            return distinct.Length == 1 ? distinct[0] : null;
+        }
+        return owners.TryGetValue(key, out var matches) && matches.Count == 1 ? matches.Single() : null;
+    }
+
+    private static bool IsBusUid(CprNamedRecordValue field) =>
+        field.Path.Equals("Bus UID", StringComparison.OrdinalIgnoreCase) ||
+        field.Path.Equals("Bus UID/Value", StringComparison.OrdinalIgnoreCase);
+
     private static bool IsOwnBus(string path) =>
         path.Equals("OwnInputBus/Bus UID", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("OwnInputBus/Bus UID/Value", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsRecorderBus(string path) =>
+        path.Equals("RecorderBus/Bus UID", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("RecorderBus/Bus UID/Value", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsChildBus(string path) =>
+        (path.StartsWith("OwnInputBus/Child Bus/", StringComparison.OrdinalIgnoreCase) ||
+         path.StartsWith("RecorderBus/Child Bus/", StringComparison.OrdinalIgnoreCase)) &&
+        path.EndsWith("/Bus UID", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsBusDestination(string path) =>
+        path.EndsWith("/Output/Value", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith("/Output/Bus UID", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith("/OutputBus/Value", StringComparison.OrdinalIgnoreCase);
+
+    private static string NamePathFor(string path)
+    {
+        var childBus = path.IndexOf("/Bus UID", StringComparison.OrdinalIgnoreCase);
+        if (childBus >= 0) return path[..childBus] + "/Name";
+        var output = path.LastIndexOf("/Output", StringComparison.OrdinalIgnoreCase);
+        if (output >= 0) return path[..output] + "/Output/Name";
+        var separator = path.LastIndexOf('/');
+        return separator >= 0 ? path[..separator] + "/Name" : path + "/Name";
+    }
+
+    private static string BusNodeId(string stream, uint uid) =>
+        $"cpr-bus:{Uri.EscapeDataString(stream)}:{uid}";
 
     private static bool TryUid(CprNamedRecordValue field, out uint uid)
     {

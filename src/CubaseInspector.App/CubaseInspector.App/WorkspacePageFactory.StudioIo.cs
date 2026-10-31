@@ -15,28 +15,37 @@ internal sealed partial class WorkspacePageFactory
     {
         var diagram = StudioIoDiagramBuilder.Build(project);
         var nodes = diagram.Nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
-        var connections = diagram.Links.Where(link => link.Label is "Input" or "Output" or
-                "Saved input assignment" or "Saved output assignment")
+        var connections = diagram.Links.Where(link => link.Label is "Input" or "Output" or "Direct output" or "Record" or "Child bus" or "Parent bus" or
+                "Saved track input" or "Saved input assignment" or "Saved output assignment")
             .OrderBy(link => link.Label.Contains("input", StringComparison.OrdinalIgnoreCase) || link.Label == "Input" ? 0 : 1)
             .ToArray();
         string Endpoint(string id) => nodes.TryGetValue(id, out var node) ? node.Name
             : id.StartsWith("Bus UID ", StringComparison.OrdinalIgnoreCase) ? "Saved bus assignment"
             : "Endpoint unavailable";
         var rows = connections.Select(link => new StudioIoAssignmentRow(
-            link.Label.Contains("input", StringComparison.OrdinalIgnoreCase) || link.Label == "Input" ? "Input" : "Output",
+            link.Label switch
+            {
+                "Input" or "Saved track input" or "Saved input assignment" => "Input",
+                "Record" => "Record",
+                "Child bus" or "Parent bus" => "Bus layout",
+                "Direct output" => "Direct output",
+                _ => "Output"
+            },
             Endpoint(link.From), Endpoint(link.To), link.Label, link.Evidence.ToString(), link.Source,
             link.SourceOffset, link.Evidence)).ToArray();
         var root = new StackPanel { Spacing = 12 };
         var metrics = new Grid { ColumnSpacing = 12 };
-        foreach (var _ in Enumerable.Range(0, 3))
+        foreach (var _ in Enumerable.Range(0, 4))
             metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var inputs = rows.Count(row => row.Direction == "Input");
         var outputs = rows.Count(row => row.Direction == "Output");
+        var extraRoutes = rows.Count(row => row.Direction is "Direct output" or "Record" or "Bus layout");
         var namedPorts = diagram.Nodes.Count(node => node.Kind is "Saved input port" or "Saved output port");
         var metricValues = new[]
         {
             (Label: "INPUT ASSIGNMENTS", Count: inputs),
             (Label: "OUTPUT ASSIGNMENTS", Count: outputs),
+            (Label: "DIRECT / RECORD / BUS LINKS", Count: extraRoutes),
             (Label: "SAVED PORT NAMES", Count: namedPorts)
         };
         for (var index = 0; index < metricValues.Length; index++)
@@ -46,10 +55,10 @@ internal sealed partial class WorkspacePageFactory
             metrics.Children.Add(metric);
         }
         root.Children.Add(metrics);
-        root.Children.Add(Note("See the input and output assignments saved in this project. These names and links describe project data; they do not confirm that a port exists on the current audio device."));
+        root.Children.Add(Note("See track inputs, output assignments, direct routes, recording buses, and bus layouts saved in this project. Device names and port assignments describe the saved setup; they do not confirm that the current audio device exposes those ports."));
         if (rows.Length == 0)
         {
-            root.Children.Add(Empty("No explicit input or output assignments were read from this project. Track names and routing conventions are not used to invent ports."));
+            root.Children.Add(Empty("No explicit project track input, output, direct-route, or recording-bus connections were read. Track names and routing conventions are not used to invent them."));
         }
         else
         {

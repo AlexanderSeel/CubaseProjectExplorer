@@ -32,12 +32,15 @@ public static class RoutingFocusBuilder
             var track = matches.Length == 1 ? matches[0] : null;
             var labels = endpointLabels.GetValueOrDefault(id) ?? [];
             var endpointName = labels.Length == 1 ? labels[0] + " · " + id : id;
-            var channelName = track?.SourceRecordClass == "CPR named record" && track.ParentTrackId is { } parentId &&
-                declaredTracks.TryGetValue(parentId, out var parentTrack)
-                    ? parentTrack.Name + " · channel"
-                    : track?.Name ?? endpointName + (matches.Length > 1 ? " (ambiguous)" : " (unresolved)");
+            TrackInfo? ownerTrack = null;
+            if (track?.SourceRecordClass == "CPR named record" && track.ParentTrackId is { } parentId &&
+                declaredTracks.TryGetValue(parentId, out var foundOwner)) ownerTrack = foundOwner;
+            var channelName = ownerTrack is not null ? ownerTrack.Name + " · channel"
+                : track?.Name ?? endpointName + (matches.Length > 1 ? " (ambiguous)" : " (unresolved)");
+            var channelKind = ownerTrack is not null ? ownerTrack.ChannelRole ?? ownerTrack.Kind
+                : track?.ChannelRole ?? track?.Kind ?? "Unresolved";
             return new RoutingFocusChannel(id, channelName,
-                track?.ChannelRole ?? track?.Kind ?? "Unresolved", track,
+                channelKind, track,
                 track is not null && uniqueTrackIds.Contains(track.Id) ? devices.GetValueOrDefault(track.Id) ?? [] : []);
         }).OrderBy(channel => channel.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }

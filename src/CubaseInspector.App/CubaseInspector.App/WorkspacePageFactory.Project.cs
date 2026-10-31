@@ -271,9 +271,45 @@ internal sealed partial class WorkspacePageFactory
                     route = direction == "Input"
                         ? signalFlow.Routing.FirstOrDefault(edge => edge.Kind == direction && edge.ToChannelId == track.ChannelId)
                         : signalFlow.Routing.FirstOrDefault(edge => edge.Kind == direction && edge.FromChannelId == track.ChannelId);
-                if (route is null) return "—";
+                if (route is null)
+                    return direction == "Input" ? ResolveSavedTrackInput(track, mixerRecordsByTrack) : "—";
                 var endpoint = direction == "Input" ? route.FromChannelId : route.ToChannelId;
                 return ResolveEndpoint(endpoint, route.TargetLabel);
+            }
+
+            string ResolveSavedTrackInput(TrackInfo track, IReadOnlyDictionary<string, TrackInfo[]> recordsByTrack)
+            {
+                if (project is null || !recordsByTrack.TryGetValue(track.Id, out var records) || records.Length != 1)
+                    return "—";
+                var observations = (project.NativeMixerObservations ?? []).Where(item =>
+                    item.ArchiveOffset == records[0].SourceOffset).Take(2).ToArray();
+                if (observations.Length != 1) return "—";
+                var observation = observations[0];
+                var fields = observation.CandidateFields ?? [];
+                string? UniqueValue(params string[] paths)
+                {
+                    var values = fields.Where(field => field.Type == "string" &&
+                            paths.Contains(field.Path, StringComparer.OrdinalIgnoreCase))
+                        .Select(field => field.Value).Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Distinct(StringComparer.Ordinal).ToArray();
+                    return values.Length == 1 ? values[0] : null;
+                }
+                var device = UniqueValue("Input Device Name", "Input Device ID");
+                var port = UniqueValue("Input Port Name");
+                return new[] { device, port }.Any(value => !string.IsNullOrWhiteSpace(value))
+                    ? string.Join(" · ", new[] { device, port }.Where(value => !string.IsNullOrWhiteSpace(value)))
+                    : "—";
+            }
+
+            string ResolveDirectOutputs(TrackInfo track)
+            {
+                if (signalFlow is null || !mixerRecordsByTrack.TryGetValue(track.Id, out var mixers) || mixers.Length != 1)
+                    return "";
+                var mixerId = mixers[0].Id;
+                var outputs = signalFlow.Routing.Where(edge => edge.Kind == "Direct output" && edge.FromChannelId == mixerId)
+                    .Select(edge => ResolveEndpoint(edge.ToChannelId, edge.TargetLabel))
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                return outputs.Length == 0 ? "" : " · Direct: " + string.Join(", ", outputs);
             }
 
             string ResolveOwnedChannel(TrackInfo track)
@@ -289,10 +325,14 @@ internal sealed partial class WorkspacePageFactory
             string ResolveDestination(TrackInfo track)
             {
                 if (!TrackDisplayRow.HasSourceValue(track.DestinationChannelId))
-                    return ResolveNativeRoute(track, "Output");
-                if (channelNames.TryGetValue(track.DestinationChannelId!, out var name)) return name;
-                return ResolveEndpoint(track.DestinationChannelId!);
+                    return AppendDirect(ResolveNativeRoute(track, "Output"), ResolveDirectOutputs(track));
+                var main = channelNames.TryGetValue(track.DestinationChannelId!, out var name)
+                    ? name : ResolveEndpoint(track.DestinationChannelId!);
+                return AppendDirect(main, ResolveDirectOutputs(track));
             }
+
+            static string AppendDirect(string main, string direct) => direct.Length == 0 ? main
+                : main == "—" ? direct.TrimStart(' ', '·') : main + direct;
         }
         search.TextChanged += (_, _) => Refresh(); kindFilter.SelectionChanged += (_, _) => Refresh();
         void ShowTrackDetails(TrackDisplayRow row)

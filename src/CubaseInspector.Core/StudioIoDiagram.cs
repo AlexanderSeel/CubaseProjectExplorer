@@ -157,6 +157,32 @@ public static class StudioIoDiagramBuilder
         var savedPorts = 0;
         foreach (var observation in project.NativeMixerObservations ?? [])
         {
+            var record = routing.Tracks.FirstOrDefault(track => track.SourceOffset == observation.ArchiveOffset &&
+                track.SourceRecordClass == "CPR named record");
+            if (record?.ParentTrackId is not { } ownerId || !tracksById.TryGetValue(ownerId, out var owner)) continue;
+            var inputFields = (observation.CandidateFields ?? []).Where(field =>
+                (field.Type is "string" or "i64") &&
+                (field.Path.Equals("Input Type", StringComparison.OrdinalIgnoreCase) ||
+                 field.Path.Equals("Input Device Name", StringComparison.OrdinalIgnoreCase) ||
+                 field.Path.Equals("Input Device ID", StringComparison.OrdinalIgnoreCase) ||
+                 field.Path.Equals("Input Channel ID", StringComparison.OrdinalIgnoreCase) ||
+                 field.Path.Equals("Input Port Name", StringComparison.OrdinalIgnoreCase))).ToArray();
+            if (inputFields.Length == 0) continue;
+            var device = inputFields.FirstOrDefault(field => field.Path.Equals("Input Device Name", StringComparison.OrdinalIgnoreCase) ||
+                field.Path.Equals("Input Device ID", StringComparison.OrdinalIgnoreCase))?.Value;
+            var port = inputFields.FirstOrDefault(field => field.Path.Equals("Input Port Name", StringComparison.OrdinalIgnoreCase))?.Value;
+            var label = string.Join(" · ", new[] { device, port }.Where(value => !string.IsNullOrWhiteSpace(value)));
+            var id = $"saved-track-input:{observation.ArchiveOffset:X}";
+            nodes[id] = new(id, string.IsNullOrWhiteSpace(label) ? $"{owner.Name} · saved input" : label,
+                "Saved track input", "Input assignment values stored in the project; this does not verify that the device is available on this computer.",
+                observation.SourceStream + "/track input", observation.ArchiveOffset,
+                inputFields.Select(FormatField).ToArray(), EvidenceLevel.Candidate);
+            links.Add(new(id, TrackNodeId(owner.Id), "Saved track input", observation.SourceStream + "/Input Device and Port fields",
+                inputFields.Min(field => field.ArchiveOffset), EvidenceLevel.Candidate));
+            savedPorts++;
+        }
+        foreach (var observation in project.NativeMixerObservations ?? [])
+        {
             var owner = routing.Tracks.FirstOrDefault(track => track.SourceOffset == observation.ArchiveOffset)?.ChannelId;
             if (owner is null) continue;
             foreach (var field in observation.CandidateFields ?? [])

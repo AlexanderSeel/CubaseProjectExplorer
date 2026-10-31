@@ -139,4 +139,82 @@ public sealed class CprSignalFlowPresentationTests
         Assert.Equal("Group bus", destination.Name);
         Assert.Equal(EvidenceLevel.Candidate, view.Routing.Single().Evidence);
     }
+
+    [Fact]
+    public void ReadsRecorderBusDirectRoutingAndChildBusIdentifiersAsSeparateConnections()
+    {
+        var view = CprSignalFlowPresentation.Create(Project(
+            Mixer("Lead", 100,
+                new CprNamedRecordValue("OutputBusValue", "i64", "17", 110),
+                new CprNamedRecordValue("directRoutingFolder/Slot[0]/Output/Value", "i64", "23", 120),
+                new CprNamedRecordValue("RecorderBus/Bus UID", "i64", "31", 130),
+                new CprNamedRecordValue("RecorderBus/Name", "string", "Vocal record bus", 132),
+                new CprNamedRecordValue("OwnInputBus/Child Bus/[0]/Bus UID", "i64", "18", 140),
+                new CprNamedRecordValue("OwnInputBus/Child Bus/[0]/Name", "string", "Left output", 142)),
+            Mixer("Main out", 200, new CprNamedRecordValue("OwnInputBus/Bus UID", "i64", "17", 210)),
+            Mixer("Cue out", 300, new CprNamedRecordValue("OwnInputBus/Bus UID", "i64", "23", 310))));
+
+        var lead = view.Tracks.Single(track => track.Name == "Lead");
+        Assert.Contains(view.Routing, edge => edge.FromChannelId == lead.Id && edge.Kind == "Output" &&
+            edge.ToChannelId == "cpr-mixer-1-C8");
+        Assert.Contains(view.Routing, edge => edge.FromChannelId == lead.Id && edge.Kind == "Child bus" &&
+            edge.ToChannelId == "cpr-bus:PArrangement:18");
+        Assert.Contains(view.Routing, edge => edge.FromChannelId == lead.Id && edge.Kind == "Direct output" &&
+            edge.ToChannelId == "cpr-mixer-2-12C");
+        Assert.Contains(view.Routing, edge => edge.FromChannelId == lead.Id && edge.Kind == "Record" &&
+            edge.TargetLabel == "Vocal record bus");
+        Assert.All(view.Routing.Where(edge => edge.SourcePath?.Contains("RecorderBus", StringComparison.Ordinal) == true ||
+            edge.SourcePath?.Contains("directRoutingFolder", StringComparison.Ordinal) == true ||
+            edge.SourcePath?.Contains("Child Bus", StringComparison.Ordinal) == true),
+            edge => Assert.Equal(EvidenceLevel.Candidate, edge.Evidence));
+    }
+
+    [Fact]
+    public void JoinsExplicitBusDefinitionsAndParentBusUidFromCubaseBusLoaderFields()
+    {
+        var view = CprSignalFlowPresentation.Create(Project(
+            Mixer("Lead", 100, new CprNamedRecordValue("OutputBusValue", "i64", "42", 110)),
+            Mixer("Stereo Out", 200,
+                new CprNamedRecordValue("Bus UID", "i64", "42", 210),
+                new CprNamedRecordValue("Bus Type", "i64", "3", 212),
+                new CprNamedRecordValue("Input Arrangement", "string", "stereo", 214)),
+            Mixer("Control Room", 300,
+                new CprNamedRecordValue("Bus UID", "i64", "91", 310),
+                new CprNamedRecordValue("Bus Type", "i64", "5", 312),
+                new CprNamedRecordValue("Parent Bus UID", "i64", "42", 314))));
+
+        var stereo = Assert.Single(view.Tracks, track => track.Name == "Stereo Out");
+        Assert.Equal("Bus", stereo.Kind);
+        var output = Assert.Single(view.Routing, edge => edge.Kind == "Output");
+        Assert.Equal(stereo.Id, output.ToChannelId);
+        var parent = Assert.Single(view.Routing, edge => edge.Kind == "Parent bus");
+        Assert.Equal("cpr-mixer-2-12C", parent.FromChannelId);
+        Assert.Equal(stereo.Id, parent.ToChannelId);
+        Assert.EndsWith("Parent Bus UID", parent.SourcePath);
+        Assert.All(view.Routing, edge => Assert.Equal(EvidenceLevel.Candidate, edge.Evidence));
+    }
+
+    [Fact]
+    public void ShowsSavedTrackInputOnlyWhenNamedRecordIsInsideOneTrackExtent()
+    {
+        var track = new TrackInfo("arr-mic", "Vocal mic", "Audio", null, null, null, null, null,
+            EvidenceLevel.Candidate, "MAudioTrackEvent", 90, SourceEndOffset: 200);
+        var observation = Mixer("Saved device record", 120,
+            new CprNamedRecordValue("Input Device Name", "string", "Studio Interface", 130),
+            new CprNamedRecordValue("Input Channel ID", "i64", "2", 145),
+            new CprNamedRecordValue("Input Port Name", "string", "Mic/Line 2", 160));
+        var project = Project(observation) with { Tracks = [track] };
+
+        var map = StudioIoDiagramBuilder.Build(project);
+        var input = Assert.Single(map.Nodes, node => node.Kind == "Saved track input");
+        Assert.Equal("Studio Interface · Mic/Line 2", input.Name);
+        Assert.Contains(input.StoredFields!, value => value.Contains("Input Channel ID = 2", StringComparison.Ordinal));
+        var link = Assert.Single(map.Links, item => item.Label == "Saved track input");
+        Assert.Equal(input.Id, link.From);
+        Assert.Equal("track:arr-mic", link.To);
+        Assert.Equal(EvidenceLevel.Candidate, link.Evidence);
+
+        var ambiguous = project with { Tracks = [track, track with { Id = "other" }] };
+        Assert.DoesNotContain(StudioIoDiagramBuilder.Build(ambiguous).Nodes, node => node.Kind == "Saved track input");
+    }
 }

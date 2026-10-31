@@ -25,10 +25,16 @@ public sealed class CprNamedRecordScannerTests
         Join(items.Select(item => Join(U32((uint)item.Length), Join(item))).ToArray()));
     private static byte[] Blob(string key, byte[] value) => Join(Name(key), U16(2), U16(7), U32((uint)value.Length), value);
     private static byte[] Chunk(string id, byte[] payload) => Join(Encoding.ASCII.GetBytes(id), U32((uint)payload.Length), payload);
+    private static byte[] ChunkWide(string id, byte[] payload) => Join(Encoding.ASCII.GetBytes(id), U64((ulong)payload.Length), payload);
     private static byte[] Root(string stream, string cls)
     {
         var a = Encoding.ASCII.GetBytes(stream); var b = Encoding.ASCII.GetBytes(cls);
         return Chunk("ROOT", Join(U32((uint)a.Length), a, U32((uint)b.Length), b));
+    }
+    private static byte[] RootWide(string stream, string cls)
+    {
+        var a = Encoding.ASCII.GetBytes(stream); var b = Encoding.ASCII.GetBytes(cls);
+        return ChunkWide("ROOT", Join(U32((uint)a.Length), a, U32((uint)b.Length), b));
     }
 
     [Fact]
@@ -39,7 +45,10 @@ public sealed class CprNamedRecordScannerTests
         var eq = Object("EQ", RecordArray("Band", [Integer("Enable", 1), Float("Gain", 2.0)]), Blob("panner", [1, 2, 3, 4]));
         var records = Join(name, volume, eq, Integer("ChannelType", 3), Integer("Mute", 1), Integer("Solo", 0),
             Object("OwnInputBus", Integer("Bus UID", 42)), Object("OutputBus", Integer("Value", 91)),
-            Object("SendFolder", RecordArray("Slot", [Object("Output", Integer("Value", 92))])));
+            Object("SendFolder", RecordArray("Slot", [Object("Output", Integer("Value", 92))])),
+            Integer("Bus UID", 43), Integer("Bus Type", 3),
+            ScalarString("Input Arrangement", "stereo"), ScalarString("Input Device Name", "Interface"),
+            Integer("Input Channel ID", 2), ScalarString("Input Port Name", "Mic/Line 2"));
         var body = Join(Root("Mixer", "PMixer"), Chunk("ARCH", records));
         var fileBytes = Join(Encoding.ASCII.GetBytes("RIFF"), U32((uint)body.Length), Encoding.ASCII.GetBytes("NUND"), body);
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".cpr");
@@ -76,6 +85,9 @@ public sealed class CprNamedRecordScannerTests
             Assert.Contains("Unverified", mixer.Evidence);
             Assert.Contains(mixer.CandidateFields!, field => field.Path == "OwnInputBus/Bus UID" && field.Value == "42");
             Assert.Contains(mixer.CandidateFields!, field => field.Path == "OutputBus/Value" && field.Value == "91");
+            Assert.Contains(mixer.CandidateFields!, field => field.Path == "Bus UID" && field.Value == "43");
+            Assert.Contains(mixer.CandidateFields!, field => field.Path == "Input Device Name" && field.Value == "Interface");
+            Assert.Contains(mixer.CandidateFields!, field => field.Path == "Input Port Name" && field.Value == "Mic/Line 2");
             var routing = CprSignalFlowPresentation.Create(project.Value);
             Assert.Equal(2, routing.Routing.Count);
             Assert.Contains(routing.Routing, edge => edge.Kind == "Send" && edge.ToChannelId.StartsWith("Bus UID 92"));
@@ -107,6 +119,61 @@ public sealed class CprNamedRecordScannerTests
             var connection = Assert.Single(view.Routing);
             Assert.Equal("Audio", view.Tracks.Single(track => track.ChannelId == connection.FromChannelId).Name);
             Assert.Equal("Group", view.Tracks.Single(track => track.ChannelId == connection.ToChannelId).Name);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task ReadsNativeRoutingFieldsFromWideRif2ArrangementArchives()
+    {
+        var mixer = Join(Object("Name", ScalarString("String", "Wide Audio")),
+            Object("OutputBus", Integer("Value", 42)),
+            Object("SendFolder", RecordArray("Slot", [Object("Output", Integer("Value", 43))])),
+            Object("directRoutingFolder", RecordArray("Slot", [Object("Output", Integer("Value", 44))])),
+            Object("RecorderBus", Integer("Bus UID", 45)));
+        var body = Join(RootWide("Arrangement1", "PArrangement"), ChunkWide("ARCH", mixer));
+        var fileBytes = Join(Encoding.ASCII.GetBytes("RIF2"), U64((ulong)body.Length), Encoding.ASCII.GetBytes("NUND"), body);
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".cpr");
+        try
+        {
+            await File.WriteAllBytesAsync(path, fileBytes);
+            var project = await new CprEvidenceReader().ReadAsync(path);
+            Assert.True(project.IsSuccess, project.Error?.Message);
+            var mixerRecord = Assert.Single(project.Value!.NativeMixerObservations!);
+            Assert.Contains(mixerRecord.CandidateFields!, field => field.Path == "OutputBus/Value");
+            Assert.Contains(mixerRecord.CandidateFields!, field => field.Path.StartsWith("directRoutingFolder/", StringComparison.Ordinal));
+            var flow = CprSignalFlowPresentation.Create(project.Value);
+            Assert.Contains(flow.Routing, edge => edge.Kind == "Direct output");
+            Assert.Contains(flow.Routing, edge => edge.Kind == "Send");
+            Assert.Contains(flow.Routing, edge => edge.Kind == "Record");
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task FindsBusDefinitionsUsingCubasesScalarNameAndParentUidFields()
+    {
+        var bus = Join(ScalarString("Name", "Stereo Out"), Integer("Bus UID", 42), Integer("Bus Type", 3),
+            ScalarString("Input Arrangement", "stereo"));
+        var parent = Join(ScalarString("Name", "Control Room"), Integer("Bus UID", 91),
+            Integer("Parent Bus UID", 42), Integer("Bus Type", 5));
+        var body = Join(Root("Mixer", "PMixer"), Chunk("ARCH", Join(bus, parent)));
+        var bytes = Join(Encoding.ASCII.GetBytes("RIFF"), U32((uint)body.Length), Encoding.ASCII.GetBytes("NUND"), body);
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".cpr");
+        try
+        {
+            await File.WriteAllBytesAsync(path, bytes);
+            var project = await new CprEvidenceReader().ReadAsync(path);
+            Assert.True(project.IsSuccess, project.Error?.Message);
+            var observations = project.Value!.NativeMixerObservations!;
+            Assert.Contains(observations, observation => observation.Name == "Stereo Out" &&
+                observation.CandidateFields!.Any(field => field.Path == "Bus UID" && field.Value == "42"));
+            Assert.Contains(observations, observation => observation.Name == "Control Room" &&
+                observation.CandidateFields!.Any(field => field.Path == "Parent Bus UID" && field.Value == "42"));
+            var graph = CprSignalFlowPresentation.Create(project.Value);
+            Assert.Contains(graph.Tracks, track => track.Name == "Stereo Out" && track.Kind == "Bus");
+            Assert.Contains(graph.Routing, edge => edge.Kind == "Parent bus" &&
+                edge.ToChannelId == graph.Tracks.Single(track => track.Name == "Stereo Out").ChannelId);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }

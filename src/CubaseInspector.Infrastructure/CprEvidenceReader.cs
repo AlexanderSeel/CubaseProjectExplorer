@@ -172,7 +172,11 @@ public sealed class CprEvidenceReader : IProjectReader
         var result = new List<CprMixerObservation>();
         foreach (var record in records)
         {
-            var names = record.Values.Where(value => value.Path.Equals("Name/String", StringComparison.OrdinalIgnoreCase))
+            var busDefinition = record.Values.Any(value => value.Path.Equals("Bus UID", StringComparison.OrdinalIgnoreCase)) &&
+                record.Values.Any(value => value.Path.Equals("Bus Type", StringComparison.OrdinalIgnoreCase));
+            var connectionRecord = record.Values.Any(value => IsSavedConnectionField(value.Path));
+            string[] namePaths = busDefinition || connectionRecord ? ["Name/String", "Name"] : ["Name/String"];
+            var names = record.Values.Where(value => namePaths.Contains(value.Path, StringComparer.OrdinalIgnoreCase) && value.Type == "string")
                 .Select(value => value.Value).Where(value => !string.IsNullOrWhiteSpace(value))
                 .Distinct(StringComparer.Ordinal).ToArray();
             if (names.Length != 1) continue;
@@ -181,10 +185,13 @@ public sealed class CprEvidenceReader : IProjectReader
             var solo = ReadFlag("Solo");
             var candidateFields = record.Values.Where(value => IsMixerCandidatePath(value.Path))
                 .OrderBy(value => value.Path.StartsWith("OwnInputBus/", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("RecorderBus/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("OutputBus/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("directRoutingFolder/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase) ||
-                    value.Path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase) ? 0 :
+                    value.Path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase) ||
+                    IsSavedConnectionField(value.Path) ? 0 :
                     value.Path.Equals("postInsertsPreFader", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("InsertFolder/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("EQ/", StringComparison.OrdinalIgnoreCase) ||
@@ -225,12 +232,35 @@ public sealed class CprEvidenceReader : IProjectReader
             path.StartsWith("ChannelEQ/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("InsertFolder/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("OwnInputBus/", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("RecorderBus/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("OutputBus/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) ||
             path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase) ||
             path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase) ||
             path.Equals("postInsertsPreFader", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("directRoutingFolder/", StringComparison.OrdinalIgnoreCase);
+            path.StartsWith("directRoutingFolder/", StringComparison.OrdinalIgnoreCase) ||
+            IsSavedConnectionField(path);
+
+        static bool IsSavedConnectionField(string path) =>
+            path.Equals("Bus UID", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Bus UID/Value", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Parent Bus UID", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Bus Type", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Input Arrangement", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Output Arrangement", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("DeviceNode Name", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Input Type", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Input Device Name", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Input Device ID", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Input Channel ID", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Input Port Name", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Connection Type", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Device Name", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Channel ID", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Port Name", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("HasInputFromDevice", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("InFrDevDevName", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("InFrDevPortName", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<CprMetadataCandidate> ReadNamedRecordMixerObservations(

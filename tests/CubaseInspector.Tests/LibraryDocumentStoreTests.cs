@@ -37,6 +37,98 @@ public sealed class LibraryDocumentStoreTests
     }
 
     [Fact]
+    public async Task LibraryProjectionReadsFullDocumentsIndividuallyAndRetainsBrowserEvidence()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-library-projection-");
+        var database = Path.Combine(directory.FullName, "library.db");
+        try
+        {
+            using var store = new LibraryDocumentStore(database);
+            var project = new ProjectSnapshot("C:/Sessions/song.cpr", "song", "CPR candidate", "Cubase 14", null,
+                EvidenceLevel.Candidate,
+                [new TrackInfo("track", "Bass", "Instrument", null, null, null, null, null)],
+                [new PluginReference("uid", "Bass Engine", null, "VST3", "track", EvidenceLevel.Candidate)],
+                [], ["Native structure is partial"], SourceSha256: new string('B', 64));
+            await store.SaveScanAsync("C:/Sessions", new FolderReport([project], [], false, 1, 1));
+
+            var summary = Assert.Single(await store.GetProjectLibraryEntriesAsync());
+            var persisted = Assert.Single(await store.GetProjectsAsync());
+
+            Assert.True(summary.IsSummary);
+            Assert.Equal(1, summary.TrackRecordCount);
+            Assert.Equal(1, summary.PluginReferenceCount);
+            Assert.Equal(1, summary.ParserWarningCount);
+            Assert.Contains(summary.SearchablePlugins!, plugin => plugin.Name == "Bass Engine");
+            Assert.Single(persisted.Snapshot!.Tracks);
+            Assert.Single(persisted.Snapshot.Plugins);
+            Assert.Single(persisted.Snapshot.Warnings);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task LibraryPluginUsageStreamsPersistedProjectsAndKeepsEvidenceCounts()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-library-plugin-usage-");
+        try
+        {
+            using var store = new LibraryDocumentStore(Path.Combine(directory.FullName, "library.db"));
+            var confirmed = new ProjectSnapshot("C:/Sessions/confirmed.dawproject", "Confirmed", "DAWproject", "15", null,
+                EvidenceLevel.Confirmed, [],
+                [new("local-1", "Synth", "Vendor", "VST3", null, EvidenceLevel.Confirmed),
+                 new("local-2", "Synth", "Vendor", "VST3", null, EvidenceLevel.Confirmed)], [], []);
+            var candidate = new ProjectSnapshot("C:/Sessions/candidate.cpr", "Candidate", "CPR candidate", "14", null,
+                EvidenceLevel.Candidate, [],
+                [new("offset-1", "Possible Synth", null, "VST3", null, EvidenceLevel.Candidate),
+                 new("offset-1", "Possible Synth", null, "VST3", null, EvidenceLevel.Candidate),
+                 new("", "No token", null, "VST3", null, EvidenceLevel.Candidate),
+                 new("unknown", "Unknown", null, "VST3", null, EvidenceLevel.Unknown)], [], []);
+            await store.SaveScanAsync("C:/Sessions", new FolderReport([confirmed, candidate], [], false, 2, 2));
+
+            var index = await store.GetLibraryPluginUsageIndexAsync();
+
+            Assert.Equal(2, index.StoredProjectCount);
+            Assert.Equal(1, index.ConfirmedProjectCount);
+            Assert.Equal(3, index.CandidateReferenceCount);
+            Assert.Equal(1, index.CandidateWithoutTokenCount);
+            Assert.Equal(1, index.UnknownReferenceCount);
+            var plugin = Assert.Single(index.ConfirmedReferences);
+            Assert.Equal(2, plugin.ReferenceCount);
+            Assert.Equal(2, plugin.DistinctExportedIds);
+            var marker = Assert.Single(index.CandidateMarkers);
+            Assert.Equal(2, marker.OccurrenceCount);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task ScanningAnotherFolderDoesNotRewriteStoredFullSnapshotsAsHeaders()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-scan-header-preservation-");
+        var database = Path.Combine(directory.FullName, "library.db");
+        try
+        {
+            using var store = new LibraryDocumentStore(database);
+            var original = new ProjectSnapshot("C:/One/full.cpr", "Full", "CPR candidate", "Cubase 14", null,
+                EvidenceLevel.Candidate,
+                [new TrackInfo("track", "Bass", "Instrument", null, null, null, null, null)],
+                [new PluginReference("uid", "Bass Engine", null, "VST3", "track", EvidenceLevel.Candidate)],
+                [], ["Keep the source warning"], SourceSha256: new string('C', 64));
+            await store.SaveScanAsync("C:/One", new FolderReport([original], [], false, 1, 1));
+            var added = new ProjectSnapshot("C:/Two/new.dawproject", "New", "DAWproject", "1", null,
+                EvidenceLevel.Confirmed, [], [], [], [], SourceSha256: new string('D', 64));
+
+            await store.SaveScanAsync("C:/Two", new FolderReport([added], [], false, 1, 1));
+
+            var stored = (await store.GetProjectsAsync()).Single(project => project.Name == "Full").Snapshot!;
+            Assert.Single(stored.Tracks);
+            Assert.Single(stored.Plugins);
+            Assert.Equal("Keep the source warning", Assert.Single(stored.Warnings));
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
     public async Task ImportMergesNewRecordsAndPreservesMatchingTargetIds()
     {
         var directory = Directory.CreateTempSubdirectory("cpe-db-import-");
@@ -99,6 +191,28 @@ public sealed class LibraryDocumentStoreTests
             var directory = Path.GetDirectoryName(database)!;
             if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task AssetIndexRebuildPagesThroughLibrariesLargerThanOneBatch()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-assets-batches-");
+        try
+        {
+            using var store = new LibraryDocumentStore(Path.Combine(directory.FullName, "library.db"));
+            var projects = Enumerable.Range(0, 130).Select(index => new ProjectSnapshot(
+                $"C:/Sessions/song-{index:D3}.dawproject", $"song-{index:D3}", "DAWproject", "15", 120,
+                EvidenceLevel.Confirmed, [], [], [], [])).ToArray();
+            await store.SaveScanAsync("C:/Sessions", new FolderReport(projects, [], false, projects.Length, projects.Length));
+            foreach (var assetIndex in await store.GetProjectAssetIndexesAsync())
+                await store.DeleteAdminDatabaseRecordAsync(nameof(LibraryProjectAssetIndexDocument), assetIndex.Id);
+
+            var rebuilt = await store.RebuildProjectAssetIndexesAsync();
+
+            Assert.Equal(130, rebuilt);
+            Assert.Equal(130, (await store.GetProjectAssetIndexesAsync()).Count);
+        }
+        finally { directory.Delete(recursive: true); }
     }
 
     [Fact]

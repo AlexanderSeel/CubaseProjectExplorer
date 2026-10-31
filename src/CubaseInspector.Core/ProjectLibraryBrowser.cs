@@ -2,9 +2,19 @@ using System.Globalization;
 
 namespace CubaseInspector.Core;
 
+public sealed record ProjectPluginSearchFacet(string Name, EvidenceLevel Evidence,
+    string Detail, string SearchTerms);
+
 /// <summary>One parsed project and its filesystem metadata. These are not plugin usage timestamps.</summary>
 public sealed record ProjectLibraryEntry(ProjectSnapshot Project, long? SizeBytes, DateTimeOffset? LastModifiedUtc,
-    string? SourceSha256 = null);
+    string? SourceSha256 = null, int? TrackRecordCount = null, int? PluginReferenceCount = null,
+    int? ConfirmedPluginReferenceCount = null, int? CandidatePluginReferenceCount = null,
+    int? UnknownPluginReferenceCount = null, int? ParserWarningCount = null, int? RoutingCount = null,
+    IReadOnlySet<string>? TrackKinds = null, IReadOnlyList<string>? SearchableTrackNames = null,
+    IReadOnlyList<ProjectPluginSearchFacet>? SearchablePlugins = null)
+{
+    public bool IsSummary => TrackRecordCount.HasValue;
+}
 
 public sealed record ProjectLibraryQuery(
     string Search = "", string FileType = "All", string Evidence = "All",
@@ -87,9 +97,10 @@ public static class ProjectLibraryBrowser
                     StringComparison.OrdinalIgnoreCase) ?? false))
                 return false;
             if (!string.Equals(query.TrackType, "All", StringComparison.OrdinalIgnoreCase) &&
-                !p.Tracks.Any(t => t.Kind.Equals(query.TrackType, StringComparison.OrdinalIgnoreCase)))
+                !(entry.TrackKinds?.Contains(query.TrackType) ??
+                  p.Tracks.Any(t => t.Kind.Equals(query.TrackType, StringComparison.OrdinalIgnoreCase))))
                 return false;
-            if (query.WarningsOnly && p.Warnings.Count == 0) return false;
+            if (query.WarningsOnly && (entry.ParserWarningCount ?? p.Warnings.Count) == 0) return false;
             if (query.MinSizeBytes is long minSize &&
                 (!entry.SizeBytes.HasValue || entry.SizeBytes.Value < minSize)) return false;
             if (query.MaxSizeBytes is long maxSize &&
@@ -103,8 +114,11 @@ public static class ProjectLibraryBrowser
                 !p.FilePath.Contains(search, StringComparison.OrdinalIgnoreCase) &&
                 !(p.CreatorVersion?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false) &&
                 !p.Format.Contains(search, StringComparison.OrdinalIgnoreCase) &&
-                !p.Tracks.Any(t => t.Name.Contains(search, StringComparison.OrdinalIgnoreCase)) &&
-                !p.Plugins.Any(plug => plug.Name.Contains(search, StringComparison.OrdinalIgnoreCase)))
+                !(entry.SearchableTrackNames?.Any(name => name.Contains(search, StringComparison.OrdinalIgnoreCase)) ??
+                  p.Tracks.Any(t => t.Name.Contains(search, StringComparison.OrdinalIgnoreCase))) &&
+                !(entry.SearchablePlugins?.Any(plugin => plugin.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                    plugin.SearchTerms.Contains(search, StringComparison.OrdinalIgnoreCase)) ??
+                  p.Plugins.Any(plug => plug.Name.Contains(search, StringComparison.OrdinalIgnoreCase))))
                 return false;
 
             if (query.MinBpm is not null || query.MaxBpm is not null)
@@ -122,7 +136,7 @@ public static class ProjectLibraryBrowser
                 .ThenBy(e => e.Project.Name, StringComparer.OrdinalIgnoreCase),
             "Largest" => filtered.OrderByDescending(e => e.SizeBytes)
                 .ThenBy(e => e.Project.Name, StringComparer.OrdinalIgnoreCase),
-            "Track records" => filtered.OrderByDescending(e => e.Project.Tracks.Count)
+            "Track records" => filtered.OrderByDescending(e => e.TrackRecordCount ?? e.Project.Tracks.Count)
                 .ThenBy(e => e.Project.Name, StringComparer.OrdinalIgnoreCase),
             "Version" => filtered.OrderBy(e => e.Project.CreatorVersion ?? "", StringComparer.OrdinalIgnoreCase)
                 .ThenBy(e => e.Project.Name, StringComparer.OrdinalIgnoreCase),
@@ -149,5 +163,44 @@ public static class ProjectLibraryBrowser
         {
             return new ProjectLibraryEntry(project, fallbackSizeBytes, fallbackLastModifiedUtc, checksum);
         }
+    }
+
+    /// <summary>Retains library-level search and count evidence while releasing large detail arrays.</summary>
+    public static ProjectLibraryEntry ToSummary(ProjectLibraryEntry entry)
+    {
+        var project = entry.Project;
+        var pluginEvidenceCounts = project.Plugins.GroupBy(plugin => plugin.Evidence)
+            .ToDictionary(group => group.Key, group => group.Count());
+        var summary = project with
+        {
+            Tracks = [], Plugins = [], Routing = [], Warnings = [],
+            MediaReferences = [], TimelineItems = [], Metadata = null, MidiNotes = [],
+            NativeMetadataCandidates = [], NativeMixerObservations = [], EqBands = [], WarpPoints = [],
+            NativeMidiNoteCandidates = [], NativeAudioMediaCandidates = []
+        };
+        return entry with
+        {
+            Project = summary,
+            TrackRecordCount = project.Tracks.Count,
+            PluginReferenceCount = project.Plugins.Count,
+            ConfirmedPluginReferenceCount = pluginEvidenceCounts.GetValueOrDefault(EvidenceLevel.Confirmed),
+            CandidatePluginReferenceCount = pluginEvidenceCounts.GetValueOrDefault(EvidenceLevel.Candidate),
+            UnknownPluginReferenceCount = pluginEvidenceCounts.GetValueOrDefault(EvidenceLevel.Unknown),
+            ParserWarningCount = project.Warnings.Count,
+            RoutingCount = project.Routing.Count,
+            TrackKinds = project.Tracks.Select(track => track.Kind).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            SearchableTrackNames = project.Tracks.Select(track => track.Name)
+                .Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            SearchablePlugins = project.Plugins
+                .Where(plugin => !string.IsNullOrWhiteSpace(plugin.Name))
+                .Select(plugin => new ProjectPluginSearchFacet(plugin.Name, plugin.Evidence,
+                    string.Join(" · ", new[] { plugin.Manufacturer, plugin.Format, plugin.Version }
+                        .Where(value => !string.IsNullOrWhiteSpace(value))),
+                    string.Join(" ", new[] { plugin.Id, plugin.Role, plugin.CandidateOwnerName,
+                        plugin.CandidateLocationPath, plugin.InstanceId, plugin.StateReference }
+                        .Where(value => !string.IsNullOrWhiteSpace(value)))))
+                .DistinctBy(plugin => $"{plugin.Name}\u001f{plugin.Evidence}\u001f{plugin.Detail}\u001f{plugin.SearchTerms}",
+                    StringComparer.OrdinalIgnoreCase).ToArray()
+        };
     }
 }

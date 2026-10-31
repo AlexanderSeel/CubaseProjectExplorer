@@ -127,7 +127,7 @@ public sealed partial class LibraryDocumentStore : IDisposable
     {
         var now = DateTime.UtcNow;
         var folderId = StableId(folder);
-        var existingProjects = await GetProjectsAsync(ct);
+        var existingProjects = await GetProjectHeadersAsync(ct);
         var existingDocumentsByPath = existingProjects
             .ToDictionary(project => NormalizePath(project.FilePath), StringComparer.OrdinalIgnoreCase);
         var existingEntries = new List<ProjectLibraryEntry>(existingDocumentsByPath.Count);
@@ -188,8 +188,6 @@ public sealed partial class LibraryDocumentStore : IDisposable
                 documentsToSave.Add(document);
                 scannedWinners.Add(scanned);
             }
-            else if (existing is not null)
-                documentsToSave.Add(existing);
         }
 
         foreach (var duplicate in existingDocumentsByPath.Values.Where(document => document.Snapshot is not null &&
@@ -268,28 +266,13 @@ public sealed partial class LibraryDocumentStore : IDisposable
 
     private async Task DeduplicateStoredProjectsAsync(CancellationToken ct)
     {
-        var documents = await GetProjectsAsync(ct);
+        var documents = await GetProjectHeadersAsync(ct);
         var entries = new List<ProjectLibraryEntry>();
-        var updates = new List<LibraryProjectDocument>();
         foreach (var document in documents.Where(item => item.Snapshot is not null))
         {
             var snapshot = document.Snapshot!;
             var checksum = ProjectLibraryBrowser.NormalizeSha256(document.SourceSha256) ??
                 ProjectLibraryBrowser.NormalizeSha256(snapshot.SourceSha256);
-            if (checksum is null && File.Exists(document.FilePath))
-            {
-                try { checksum = await ProjectContentChecksum.ComputeAsync(document.FilePath, ct); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-                    or ArgumentException or NotSupportedException or System.Security.SecurityException) { }
-            }
-            if (checksum is not null &&
-                (ProjectLibraryBrowser.NormalizeSha256(document.SourceSha256) != checksum ||
-                 ProjectLibraryBrowser.NormalizeSha256(snapshot.SourceSha256) != checksum))
-            {
-                document.SourceSha256 = checksum;
-                document.Snapshot = snapshot = snapshot with { SourceSha256 = checksum };
-                updates.Add(document);
-            }
             entries.Add(ProjectLibraryBrowser.FromFile(snapshot, document.SizeBytes,
                 document.LastModifiedUtc, checksum));
         }
@@ -300,7 +283,6 @@ public sealed partial class LibraryDocumentStore : IDisposable
         foreach (var duplicate in documents.Where(document => document.Snapshot is not null &&
                      !winnerPaths.Contains(NormalizePath(document.FilePath))))
             await DeleteProjectAsync(duplicate.Id, ct);
-        if (updates.Count > 0) await _store.BatchUpsert(updates, cancellationToken: ct);
     }
 
     public Task<IReadOnlyList<LibraryProjectAssetIndexDocument>> GetProjectAssetIndexesAsync(CancellationToken ct = default) =>
@@ -309,15 +291,135 @@ public sealed partial class LibraryDocumentStore : IDisposable
     /// <summary>Rebuilds search indexes from project snapshots already stored in this database, without reopening source files.</summary>
     public async Task<int> RebuildProjectAssetIndexesAsync(CancellationToken ct = default)
     {
-        var projects = await GetProjectsAsync(ct);
-        var indexes = projects.Where(project => project.Snapshot is not null)
-            .Select(project => BuildAssetIndexDocument(project.Snapshot!)).ToArray();
-        await _store.BatchUpsert(indexes, cancellationToken: ct);
-        return indexes.Length;
+        const int batchSize = 64;
+        long lastRowId = 0;
+        var indexedCount = 0;
+        while (true)
+        {
+            var cursor = lastRowId;
+            var batch = await Task.Run(() =>
+            {
+                if (!File.Exists(DatabasePath)) return (LastRowId: cursor, Indexes: new List<LibraryProjectAssetIndexDocument>());
+                using var connection = OpenReadOnlyDatabase();
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT rowid, Data FROM documents WHERE TypeName=$type AND rowid>$after ORDER BY rowid LIMIT $limit";
+                command.Parameters.AddWithValue("$type", nameof(LibraryProjectDocument));
+                command.Parameters.AddWithValue("$after", cursor);
+                command.Parameters.AddWithValue("$limit", batchSize);
+                using var reader = command.ExecuteReader();
+                var indexes = new List<LibraryProjectAssetIndexDocument>(batchSize);
+                var nextRowId = cursor;
+                while (reader.Read())
+                {
+                    ct.ThrowIfCancellationRequested();
+                    nextRowId = reader.GetInt64(0);
+                    var document = JsonSerializer.Deserialize<LibraryProjectDocument>(reader.GetString(1), AdminDocumentJsonOptions);
+                    if (document?.Snapshot is { } snapshot) indexes.Add(BuildAssetIndexDocument(snapshot));
+                }
+                return (LastRowId: nextRowId, Indexes: indexes);
+            }, ct);
+
+            if (batch.LastRowId == lastRowId) break;
+            lastRowId = batch.LastRowId;
+            if (batch.Indexes.Count == 0) continue;
+            await _store.BatchUpsert(batch.Indexes, cancellationToken: ct);
+            indexedCount += batch.Indexes.Count;
+        }
+        return indexedCount;
     }
 
     public Task<IReadOnlyList<LibraryProjectDocument>> GetProjectsAsync(CancellationToken ct = default) =>
         Task.Run(() => _store.Query<LibraryProjectDocument>().OrderBy(x => x.Name).ToList(ct), ct);
+
+    /// <summary>Ranks stored plug-in references while deserializing only one full project snapshot at a time.</summary>
+    public Task<LibraryPluginUsageIndex> GetLibraryPluginUsageIndexAsync(CancellationToken ct = default) =>
+        Task.Run(() =>
+        {
+            var accumulator = new LibraryPluginUsageIndexer.LibraryPluginUsageAccumulator();
+            if (!File.Exists(DatabasePath)) return accumulator.Build();
+            using var connection = OpenReadOnlyDatabase();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT Data FROM documents WHERE TypeName=$type";
+            command.Parameters.AddWithValue("$type", nameof(LibraryProjectDocument));
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                ct.ThrowIfCancellationRequested();
+                var document = JsonSerializer.Deserialize<LibraryProjectDocument>(reader.GetString(0), AdminDocumentJsonOptions);
+                if (document?.Snapshot is { } snapshot) accumulator.Add(snapshot);
+            }
+            return accumulator.Build();
+        }, ct);
+
+    private Task<IReadOnlyList<LibraryProjectDocument>> GetProjectHeadersAsync(CancellationToken ct) =>
+        Task.Run<IReadOnlyList<LibraryProjectDocument>>(() =>
+        {
+            if (!File.Exists(DatabasePath)) return [];
+            using var connection = OpenReadOnlyDatabase();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT json_set(Data,
+                    '$.sourceSha256', COALESCE(json_extract(Data, '$.sourceSha256'), json_extract(Data, '$.snapshot.sourceSha256')),
+                    '$.snapshot.tracks', json('[]'), '$.snapshot.plugins', json('[]'), '$.snapshot.routing', json('[]'),
+                    '$.snapshot.warnings', json('[]'), '$.snapshot.mediaReferences', json('[]'),
+                    '$.snapshot.timelineItems', json('[]'), '$.snapshot.midiNotes', json('[]'),
+                    '$.snapshot.nativeMetadataCandidates', json('[]'), '$.snapshot.nativeMixerObservations', json('[]'),
+                    '$.snapshot.eqBands', json('[]'), '$.snapshot.warpPoints', json('[]'),
+                    '$.snapshot.nativeMidiNoteCandidates', json('[]'), '$.snapshot.nativeAudioMediaCandidates', json('[]'),
+                    '$.snapshot.metadata', NULL)
+                FROM documents WHERE TypeName=$type
+                """;
+            command.Parameters.AddWithValue("$type", nameof(LibraryProjectDocument));
+            using var reader = command.ExecuteReader();
+            var projects = new List<LibraryProjectDocument>();
+            while (reader.Read())
+            {
+                ct.ThrowIfCancellationRequested();
+                var document = JsonSerializer.Deserialize<LibraryProjectDocument>(reader.GetString(0), AdminDocumentJsonOptions);
+                if (document is not null) projects.Add(document);
+            }
+            return projects;
+        }, ct);
+
+    /// <summary>
+    /// Builds the project-browser projection one JSON document at a time. The local
+    /// database stores full reader snapshots; keeping all serialized JSON strings
+    /// and all deserialized snapshots alive together makes large libraries costly.
+    /// </summary>
+    public Task<IReadOnlyList<ProjectLibraryEntry>> GetProjectLibraryEntriesAsync(CancellationToken ct = default) =>
+        Task.Run<IReadOnlyList<ProjectLibraryEntry>>(() =>
+        {
+            if (!File.Exists(DatabasePath)) return [];
+            using var connection = OpenReadOnlyDatabase();
+            using var command = connection.CreateCommand();
+            // The browser summary needs tracks/plugins for counts and search facets,
+            // but does not display these other full-detail arrays. Strip them in
+            // SQLite before allocating a managed JSON string or deserializing a row.
+            command.CommandText = """
+                SELECT json_set(Data,
+                    '$.sourceSha256', COALESCE(json_extract(Data, '$.sourceSha256'), json_extract(Data, '$.snapshot.sourceSha256')),
+                    '$.snapshot.mediaReferences', json('[]'), '$.snapshot.timelineItems', json('[]'),
+                    '$.snapshot.midiNotes', json('[]'), '$.snapshot.nativeMetadataCandidates', json('[]'),
+                    '$.snapshot.nativeMixerObservations', json('[]'), '$.snapshot.eqBands', json('[]'),
+                    '$.snapshot.warpPoints', json('[]'), '$.snapshot.nativeMidiNoteCandidates', json('[]'),
+                    '$.snapshot.nativeAudioMediaCandidates', json('[]'), '$.snapshot.metadata', NULL)
+                FROM documents WHERE TypeName=$type
+                """;
+            command.Parameters.AddWithValue("$type", nameof(LibraryProjectDocument));
+            using var reader = command.ExecuteReader();
+            var entries = new List<ProjectLibraryEntry>();
+            while (reader.Read())
+            {
+                ct.ThrowIfCancellationRequested();
+                var document = JsonSerializer.Deserialize<LibraryProjectDocument>(reader.GetString(0), AdminDocumentJsonOptions);
+                if (document?.Snapshot is not { } snapshot) continue;
+                var entry = ProjectLibraryBrowser.FromFile(snapshot, document.SizeBytes,
+                    document.LastModifiedUtc, document.SourceSha256);
+                entries.Add(ProjectLibraryBrowser.ToSummary(entry));
+            }
+            return entries.OrderBy(entry => entry.Project.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(entry => entry.Project.FilePath, StringComparer.OrdinalIgnoreCase).ToArray();
+        }, ct);
 
     /// <summary>Reads document counts from SQLite metadata without hydrating large JSON payloads or catalog images.</summary>
     public Task<LibraryDatabaseOverview> GetDatabaseOverviewAsync(CancellationToken ct = default) => Task.Run(() =>

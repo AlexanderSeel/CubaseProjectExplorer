@@ -140,6 +140,30 @@ public sealed class ProjectLibraryBrowserTests
     }
 
     [Fact]
+    public void BrowserSummaryRetainsCountsSearchAndFiltersWithoutDetailArrays()
+    {
+        var project = new ProjectSnapshot("song.cpr", "Song", "CPR", "Cubase 14", null,
+            EvidenceLevel.Candidate,
+            [new TrackInfo("track", "Bass Synth", "Instrument", null, null, null, null, null)],
+            [new PluginReference("uid", "Bass Engine", null, "VST3", "track", EvidenceLevel.Candidate)],
+            [], ["Incomplete structure"], SourceSha256: new string('A', 64));
+
+        var summary = ProjectLibraryBrowser.ToSummary(ProjectLibraryBrowser.FromFile(project));
+
+        Assert.True(summary.IsSummary);
+        Assert.Equal(1, summary.TrackRecordCount);
+        Assert.Equal(1, summary.PluginReferenceCount);
+        Assert.Equal(1, summary.CandidatePluginReferenceCount);
+        Assert.Equal(1, summary.ParserWarningCount);
+        Assert.Empty(summary.Project.Tracks);
+        Assert.Empty(summary.Project.Plugins);
+        Assert.Empty(summary.Project.Warnings);
+        Assert.Contains(ProjectLibraryBrowser.Filter([summary], new ProjectLibraryQuery(
+            Search: "Bass Engine", TrackType: "Instrument", WarningsOnly: true)), entry => entry == summary);
+        Assert.Equal(new string('A', 64), summary.SourceSha256);
+    }
+
+    [Fact]
     public void Empty_Filter_And_Unknown_Values_Are_Deterministic()
     {
         var list = new[] { Item("one.cpr", EvidenceLevel.Candidate) };

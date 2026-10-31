@@ -214,11 +214,11 @@ public sealed class DawprojectExtendedFieldsTests
     [Fact]
     public async Task ReadsLargeBoundedProjectXmlWithoutRepeatedWholeTreeScans()
     {
-        const int noteCount = 25_000;
+        const int noteCount = 100_000;
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".dawproject");
         try
         {
-            var xml = new StringBuilder(2_500_000);
+            var xml = new StringBuilder(8_000_000);
             xml.Append("<Project><Transport/><Structure><Track id=\"track\"/></Structure>")
                 .Append("<Arrangement><Lanes track=\"track\"><Notes track=\"track\">");
             for (var index = 0; index < noteCount; index++)

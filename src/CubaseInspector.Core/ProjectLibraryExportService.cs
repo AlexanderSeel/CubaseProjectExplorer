@@ -20,13 +20,14 @@ public static class ProjectLibraryExportService
                 p.Name, ExportPath(p.FilePath, folder), Path.GetExtension(p.FilePath).TrimStart('.').ToUpperInvariant(),
                 p.Format, p.Evidence.ToString(), p.CreatorVersion,
                 p.Bpm?.ToString("R", CultureInfo.InvariantCulture),
-                p.Tracks.Count.ToString(CultureInfo.InvariantCulture),
-                p.Plugins.Count.ToString(CultureInfo.InvariantCulture),
-                p.Warnings.Count.ToString(CultureInfo.InvariantCulture),
+                (entry.TrackRecordCount ?? p.Tracks.Count).ToString(CultureInfo.InvariantCulture),
+                (entry.PluginReferenceCount ?? p.Plugins.Count).ToString(CultureInfo.InvariantCulture),
+                (entry.ParserWarningCount ?? p.Warnings.Count).ToString(CultureInfo.InvariantCulture),
                 entry.SizeBytes?.ToString(CultureInfo.InvariantCulture),
                 entry.LastModifiedUtc?.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture),
-                string.Join("; ", ProjectFieldCoverage.Evaluate(p).Select(field =>
-                    field.Key + "=" + field.Value))
+                entry.IsSummary ? "Open project for field-level availability" :
+                    string.Join("; ", ProjectFieldCoverage.Evaluate(p).Select(field =>
+                        field.Key + "=" + field.Value))
             }.Select(CsvCell)));
         }
         return result.ToString();
@@ -53,8 +54,8 @@ public static class ProjectLibraryExportService
                 Clean(p.Name), Clean(Path.GetExtension(p.FilePath).TrimStart('.').ToUpperInvariant()),
                 Clean(p.Evidence.ToString()), Clean(p.CreatorVersion),
                 p.Bpm?.ToString("R", CultureInfo.InvariantCulture) ?? "Unknown",
-                p.Tracks.Count.ToString(CultureInfo.InvariantCulture),
-                p.Plugins.Count.ToString(CultureInfo.InvariantCulture),
+                (entry.TrackRecordCount ?? p.Tracks.Count).ToString(CultureInfo.InvariantCulture),
+                (entry.PluginReferenceCount ?? p.Plugins.Count).ToString(CultureInfo.InvariantCulture),
                 entry.SizeBytes?.ToString(CultureInfo.InvariantCulture) ?? "Unknown",
                 Clean(entry.LastModifiedUtc?.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture)),
                 Clean(ExportPath(p.FilePath, folder))
@@ -86,15 +87,17 @@ public static class ProjectLibraryExportService
                     creatorVersion = project.CreatorVersion,
                     tempoBpm = project.Bpm,
                     tempoState = coverage["Tempo"].ToString(),
-                    fieldAvailability = coverage.ToDictionary(field => field.Key,
+                    fieldAvailability = entry.IsSummary ? null : coverage.ToDictionary(field => field.Key,
                         field => field.Value.ToString(), StringComparer.Ordinal),
-                    trackRecords = project.Tracks.Count,
+                    fieldAvailabilityState = entry.IsSummary ? "Open project for field-level availability" : "Evaluated",
+                    trackRecords = entry.TrackRecordCount ?? project.Tracks.Count,
                     trackRecordEvidence = candidate ? "Candidate" : "ConfirmedExportRecords",
-                    pluginReferencesOrMarkers = project.Plugins.Count,
+                    pluginReferencesOrMarkers = entry.PluginReferenceCount ?? project.Plugins.Count,
                     pluginReferenceEvidence = candidate ? "CandidateMarkers" : "ExportReferences",
-                    routeCount = candidate ? (int?)null : project.Routing.Count,
-                    routeState = candidate ? "Unknown" : project.Routing.Count > 0 ? "Present" : "NotExported",
-                    parserWarnings = project.Warnings,
+                    routeCount = candidate ? (int?)null : entry.RoutingCount ?? project.Routing.Count,
+                    routeState = candidate ? "Unknown" : entry.IsSummary ? "Stored summary; inspect project for detail" : project.Routing.Count > 0 ? "Present" : "NotExported",
+                    parserWarnings = entry.IsSummary ? null : project.Warnings,
+                    parserWarningCount = entry.ParserWarningCount ?? project.Warnings.Count,
                     sizeBytes = entry.SizeBytes,
                     fileModifiedUtc = entry.LastModifiedUtc?.ToUniversalTime()
                 };

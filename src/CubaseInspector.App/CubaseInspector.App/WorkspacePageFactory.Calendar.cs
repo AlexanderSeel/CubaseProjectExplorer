@@ -21,7 +21,12 @@ internal sealed partial class WorkspacePageFactory
 
         Button ProjectButton(ProjectLibraryEntry entry)
         {
-            var button = Button(string.Empty, () => SelectProject(entry.Project));
+            var button = new Button { Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
+            button.Click += async (_, _) =>
+            {
+                await shell.Library.OpenProjectAsync(entry.Project.FilePath);
+                if (shell.HasProject) { shell.NavigateTo("Overview"); navigate("Overview"); }
+            };
             var row = new Grid { ColumnSpacing = 12 };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -37,13 +42,6 @@ internal sealed partial class WorkspacePageFactory
             button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
             ToolTipService.SetToolTip(button, entry.Project.FilePath);
             return button;
-        }
-
-        void SelectProject(ProjectSnapshot project)
-        {
-            shell.Library.SelectProject(project);
-            shell.NavigateTo("Overview");
-            navigate("Overview");
         }
 
         var unknownDateEntries = ProjectCalendarBrowser.WithoutKnownFileModifiedDate(entries);

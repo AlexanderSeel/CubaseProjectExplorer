@@ -41,7 +41,7 @@ public sealed partial class LibrarySearchViewModel(LibraryDocumentStore store) :
         await Task.Yield();
         try
         {
-            var projectsTask = store.GetProjectsAsync(cancellationToken);
+            var projectsTask = store.GetProjectLibraryEntriesAsync(cancellationToken);
             var assetsTask = store.GetProjectAssetIndexesAsync(cancellationToken);
             await Task.WhenAll(projectsTask, assetsTask);
             var projects = await projectsTask;
@@ -57,30 +57,27 @@ public sealed partial class LibrarySearchViewModel(LibraryDocumentStore store) :
         finally { IsBusy = false; }
     }
 
-    private static LibrarySearchDocument[] BuildIndex(IReadOnlyList<LibraryProjectDocument> projects,
+    private static LibrarySearchDocument[] BuildIndex(IReadOnlyList<ProjectLibraryEntry> projects,
         IReadOnlyList<LibraryProjectAssetIndexDocument> assets)
     {
         var documents = new List<LibrarySearchDocument>();
-        foreach (var saved in projects)
+        foreach (var entry in projects)
         {
-            var project = saved.Snapshot;
-            if (project is null) continue;
+            var project = entry.Project;
             var evidence = EvidencePresentation.Label(project.Evidence);
             documents.Add(new LibrarySearchDocument("Project", project.Name,
                 $"{project.Format} · {project.CreatorVersion ?? "Version unknown"}", project.Name,
-                project.FilePath, evidence, $"{project.Format} {project.CreatorVersion} {project.Bpm}", project));
+                project.FilePath, evidence,
+                $"{project.Format} {project.CreatorVersion} {project.Bpm} {string.Join(' ', entry.SearchableTrackNames ?? [])}", project));
 
-            var trackNames = project.Tracks.GroupBy(track => track.Id, StringComparer.Ordinal)
-                .Where(group => group.Count() == 1)
-                .ToDictionary(group => group.Key, group => group.Single().Name, StringComparer.Ordinal);
-            foreach (var plugin in project.Plugins)
+            foreach (var plugin in entry.SearchablePlugins ?? [])
             {
-                var owner = plugin.TrackId is { } id && trackNames.TryGetValue(id, out var trackName)
-                    ? trackName : "Track unknown";
                 documents.Add(new LibrarySearchDocument("Plug-in", plugin.Name,
-                    string.Join(" · ", new[] { plugin.Manufacturer, plugin.Format, plugin.Version, owner }.Where(value => !string.IsNullOrWhiteSpace(value))),
-                    project.Name, project.FilePath, EvidencePresentation.Label(plugin.Evidence),
-                    $"{plugin.Id} {plugin.Role} {plugin.CandidateOwnerName}", project, plugin.TrackId));
+                    string.IsNullOrWhiteSpace(plugin.Detail)
+                        ? "Stored plug-in marker/reference · inspect project for full details"
+                        : plugin.Detail + " · inspect project for full details", project.Name,
+                    project.FilePath, EvidencePresentation.Label(plugin.Evidence),
+                    plugin.Name + " " + plugin.SearchTerms, project));
             }
         }
 

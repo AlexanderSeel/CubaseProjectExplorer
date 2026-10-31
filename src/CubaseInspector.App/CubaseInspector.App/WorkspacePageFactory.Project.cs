@@ -22,6 +22,16 @@ internal sealed partial class WorkspacePageFactory
         vm.ResetMediaAuditForDifferentProject();
         var root = Page("Audio / MIDI I/O", shell.Workspace.IoSummary);
         root.Children.Add(Note("External media status means only that a file path exists. This check does not read audio, inspect embedded archive entries, prove loadability, or infer native CPR/BAK links."));
+        if (shell.Workspace.Project is { Evidence: EvidenceLevel.Candidate } nativeProject)
+        {
+            root.Children.Add(Note("The native project was re-read when opened. The observations below are raw reader candidates with source offsets; they do not establish Cubase routing, hardware ports, media ownership, or active state."));
+            var observations = CprIoObservationPresentation.Build(nativeProject);
+            var totalNativeObservations = (nativeProject.NativeAudioMediaCandidates?.Count ?? 0) +
+                (nativeProject.NativeMixerObservations?.Count ?? 0) + (nativeProject.NativeMetadataCandidates?.Count ?? 0);
+            root.Children.Add(observations.Count == 0
+                ? Empty("No supported native audio, mixer, or typed-field observations were found in this read. This does not prove those fields are absent from the project.")
+                : Section($"Native CPR observations · unverified · showing {observations.Count:N0} of {totalNativeObservations:N0}", observations));
+        }
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 8) };
         var check = Button("Check declared external media", async () => await vm.CheckMediaCommand.ExecuteAsync(null));

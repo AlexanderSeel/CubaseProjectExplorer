@@ -64,7 +64,9 @@ public sealed partial class ProjectWorkspaceViewModel : ObservableObject
             ? "Connections shown below come from exported project data. Hardware device mappings are not established."
             : "No routing connections were supplied by this project format.";
     public string IoSummary => Project?.Evidence == EvidenceLevel.Candidate
-        ? "Physical audio and MIDI hardware assignments are not decoded from this CPR/BAK data."
+        ? CprIoObservationPresentation.Build(Project, 1).Count > 0
+            ? $"{(Project.NativeAudioMediaCandidates?.Count ?? 0):N0} audio-path, {(Project.NativeMixerObservations?.Count ?? 0):N0} mixer, and {(Project.NativeMetadataCandidates?.Count ?? 0):N0} typed-field observations found; all remain unverified. Physical audio/MIDI hardware assignments are unknown."
+            : "The file was re-read on open, but this reader found no supported audio/I/O observations. Physical audio and MIDI hardware assignments remain unknown."
         : Project?.MediaReferences?.Count > 0
             ? "Declared media references are listed. This does not confirm that source media is present or usable."
             : "This project did not provide audio or MIDI port assignments.";

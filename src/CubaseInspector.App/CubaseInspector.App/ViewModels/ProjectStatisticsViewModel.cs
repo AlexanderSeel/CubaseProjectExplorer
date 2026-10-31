@@ -37,16 +37,13 @@ public sealed partial class ProjectStatisticsViewModel : ObservableObject
     {
         if (IsLibraryUsageBusy) return;
         IsLibraryUsageBusy = true;
-        LibraryUsageStatus = "Loading stored project snapshots…";
+        LibraryUsageStatus = "Streaming stored plug-in references…";
         try
         {
-            var documents = await _store.GetProjectsAsync();
-            var snapshots = documents.Where(document => document.Snapshot is not null)
-                .Select(document => document.Snapshot!).ToArray();
-            var index = await Task.Run(() => LibraryPluginUsageIndexer.Build(snapshots));
+            var index = await _store.GetLibraryPluginUsageIndexAsync();
             LibraryPluginUsage.ReplaceAll(index.ConfirmedReferences);
             LibraryCandidateMarkers.ReplaceAll(index.CandidateMarkers);
-            LibraryUsageStatus = snapshots.Length == 0
+            LibraryUsageStatus = index.StoredProjectCount == 0
                 ? "No saved project snapshots are available. Scan a folder or inspect a project first."
                 : $"{index.ConfirmedProjectCount:N0} confirmed projects among {index.StoredProjectCount:N0} saved snapshots · {index.CandidateReferenceCount:N0} candidate references kept separate ({index.CandidateWithoutTokenCount:N0} without a token) · {index.UnknownReferenceCount:N0} unknown-evidence references excluded. Ranked by exact displayed name, format and vendor fields; export-local IDs are not treated as cross-project identities or last-use times.";
         }

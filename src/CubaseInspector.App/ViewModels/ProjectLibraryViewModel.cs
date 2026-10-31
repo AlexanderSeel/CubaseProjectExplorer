@@ -17,15 +17,15 @@ public sealed class LibraryProjectRow(ProjectLibraryEntry entry)
     public string FileType => Path.GetExtension(entry.Project.FilePath).TrimStart('.').ToUpperInvariant();
     public string Version => entry.Project.CreatorVersion ?? "Unknown";
     public string Evidence => EvidencePresentation.Label(entry.Project.Evidence);
-    public string Tracks => entry.Project.Tracks.Count == 0
-        ? "Unknown" : entry.Project.Tracks.Count.ToString("N0") + " records";
-    public int? TrackCount => entry.Project.Tracks.Count == 0 ? null : entry.Project.Tracks.Count;
-    public int PluginReferenceCount => entry.Project.Plugins.Count;
+    public string Tracks => TrackCount is not int count || count == 0
+        ? "Unknown" : count.ToString("N0") + " records";
+    public int? TrackCount => entry.TrackRecordCount ?? (entry.Project.Tracks.Count == 0 ? null : entry.Project.Tracks.Count);
+    public int PluginReferenceCount => entry.PluginReferenceCount ?? entry.Project.Plugins.Count;
     public string Plugins => entry.Project.Evidence == EvidenceLevel.Candidate
         ? "Unverified CPR markers"
-        : entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Confirmed) + " confirmed · " +
-          entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Candidate) + " candidate · " +
-          entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Unknown) + " unknown";
+        : (entry.ConfirmedPluginReferenceCount ?? entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Confirmed)) + " confirmed · " +
+          (entry.CandidatePluginReferenceCount ?? entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Candidate)) + " candidate · " +
+          (entry.UnknownPluginReferenceCount ?? entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Unknown)) + " unknown";
     public string FileSize => entry.SizeBytes is long size ? FormatSize(size) : "Unknown";
     public string Modified => entry.LastModifiedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "Unknown";
 
@@ -113,10 +113,7 @@ public sealed partial class ProjectLibraryViewModel(
         Status = ProgressText;
         try
         {
-            var records = await documentStore.GetProjectsAsync();
-            var entries = await Task.Run(() => records.Where(record => record.Snapshot is not null)
-                .Select(record => ProjectLibraryBrowser.FromFile(record.Snapshot!,
-                    record.SizeBytes, record.LastModifiedUtc, record.SourceSha256)).ToArray());
+            var entries = await documentStore.GetProjectLibraryEntriesAsync();
             _allEntries.Clear();
             _allEntries.AddRange(ProjectLibraryBrowser.MergeScanResults(entries, []));
             RebuildEntryIndexes();
@@ -234,7 +231,8 @@ public sealed partial class ProjectLibraryViewModel(
             }
 
             var existingEntries = _allEntries.ToArray();
-            var scannedEntries = result.Value.Projects.Select(project => ProjectLibraryBrowser.FromFile(project)).ToArray();
+            var scannedEntries = result.Value.Projects.Select(project =>
+                ProjectLibraryBrowser.ToSummary(ProjectLibraryBrowser.FromFile(project))).ToArray();
             var mergedEntries = await Task.Run(() => ProjectLibraryBrowser.MergeScanResults(existingEntries, scannedEntries));
             _allEntries.Clear();
             _allEntries.AddRange(mergedEntries);
@@ -323,7 +321,7 @@ public sealed partial class ProjectLibraryViewModel(
             // lookup coherent before the first incremental update.
             RebuildEntryIndexes();
         }
-        var entry = ProjectLibraryBrowser.FromFile(project);
+        var entry = ProjectLibraryBrowser.ToSummary(ProjectLibraryBrowser.FromFile(project));
         var checksum = ProjectLibraryBrowser.NormalizeSha256(entry.SourceSha256);
         if (_entryIndexes.TryGetValue(project.FilePath, out var index))
         {

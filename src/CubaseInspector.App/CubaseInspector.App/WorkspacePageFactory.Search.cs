@@ -94,18 +94,15 @@ internal sealed partial class WorkspacePageFactory
             case "Plug-in":
                 if (result.Project is not null)
                 {
-                    shell.Library.SelectProject(result.Project);
-                    shell.NavigateTo("Plugins");
-                    navigate("Plugins");
+                    await shell.Library.OpenProjectAsync(result.Project.FilePath);
+                    if (shell.HasProject) { shell.NavigateTo("Plugins"); navigate("Plugins"); }
                 }
                 break;
             default:
                 if (result.Project is not null)
                 {
-                    shell.Library.SelectProject(result.Project);
-                    shell.NavigateTo("Overview");
-                    navigate("Overview");
-                    await Task.CompletedTask;
+                    await shell.Library.OpenProjectAsync(result.Project.FilePath);
+                    if (shell.HasProject) { shell.NavigateTo("Overview"); navigate("Overview"); }
                 }
                 break;
         }

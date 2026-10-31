@@ -70,6 +70,40 @@ public sealed class AnalyticsTests
     }
 
     [Fact]
+    public void LibraryUsage_AccumulatorCanBuildAcrossIncrementalBatches()
+    {
+        var projects = new[]
+        {
+            Snapshot("a.dawproject", plugins: [Plugin("one"), Plugin("two")]),
+            Snapshot("legacy.cpr", EvidenceLevel.Candidate, plugins:
+                [Plugin("marker", EvidenceLevel.Candidate) with { Name = "Name unavailable" },
+                 Plugin("marker", EvidenceLevel.Candidate) with { Name = "Later name" },
+                 Plugin("", EvidenceLevel.Candidate), Plugin("unknown", EvidenceLevel.Unknown)])
+        };
+        var accumulator = new LibraryPluginUsageIndexer.LibraryPluginUsageAccumulator();
+        accumulator.Add(projects[0]);
+        accumulator.Add(projects[1]);
+
+        var incremental = accumulator.Build();
+        var batch = LibraryPluginUsageIndexer.Build(projects);
+
+        Assert.Equal(batch.StoredProjectCount, incremental.StoredProjectCount);
+        Assert.Equal(batch.ConfirmedProjectCount, incremental.ConfirmedProjectCount);
+        Assert.Equal(batch.CandidateReferenceCount, incremental.CandidateReferenceCount);
+        Assert.Equal(batch.CandidateWithoutTokenCount, incremental.CandidateWithoutTokenCount);
+        Assert.Equal(batch.UnknownReferenceCount, incremental.UnknownReferenceCount);
+        var batchConfirmed = Assert.Single(batch.ConfirmedReferences);
+        var incrementalConfirmed = Assert.Single(incremental.ConfirmedReferences);
+        Assert.Equal(batchConfirmed with { ProjectPaths = [] }, incrementalConfirmed with { ProjectPaths = [] });
+        Assert.Equal(batchConfirmed.ProjectPaths, incrementalConfirmed.ProjectPaths);
+        var batchCandidate = Assert.Single(batch.CandidateMarkers);
+        var incrementalCandidate = Assert.Single(incremental.CandidateMarkers);
+        Assert.Equal(batchCandidate with { ProjectPaths = [] }, incrementalCandidate with { ProjectPaths = [] });
+        Assert.Equal(batchCandidate.ProjectPaths, incrementalCandidate.ProjectPaths);
+        Assert.Equal("Name unavailable", Assert.Single(incremental.CandidateMarkers).ExampleName);
+    }
+
+    [Fact]
     public void Statistics_ExcludeCandidateMarkers()
     {
         var stats = new ProjectStatisticsService().Summarize(Snapshot("a.cpr", plugins:

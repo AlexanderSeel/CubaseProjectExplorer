@@ -19,9 +19,9 @@ internal sealed partial class WorkspacePageFactory
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var noteRows = new ResettableObservableCollection<IndexedMidiNoteCandidate>();
-        NativeMidiNoteGroup? selected = null;
-        var compactPicker = new ComboBox { ItemsSource = mediaLibrary.NativeMidiGroups,
-            DisplayMemberPath = nameof(NativeMidiNoteGroup.DisplayName),
+        NativeMidiTrackGroup? selected = null;
+        var compactPicker = new ComboBox { ItemsSource = mediaLibrary.NativeMidiTrackGroups,
+            DisplayMemberPath = nameof(NativeMidiTrackGroup.DisplayName),
             HorizontalAlignment = HorizontalAlignment.Stretch, Visibility = Visibility.Collapsed,
             PlaceholderText = "Choose a project or part", Margin = new Thickness(0, 0, 0, 4) };
         AutomationProperties.SetName(compactPicker, "Select native MIDI project or part");
@@ -32,6 +32,9 @@ internal sealed partial class WorkspacePageFactory
         var timing = new TextBlock { Text = "Stored note positions · source details explain timing and part context",
             Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap };
         var evidence = new TextBlock { Foreground = Muted, TextWrapping = TextWrapping.Wrap, FontSize = 12 };
+        var partPicker = new ComboBox { DisplayMemberPath = nameof(NativeMidiNoteGroup.DisplayName),
+            PlaceholderText = "Choose a part", MinWidth = 240, HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetName(partPicker, "MIDI parts grouped under the possible track");
         var evidencePanel = new StackPanel { Spacing = 8 };
         evidencePanel.Children.Add(evidence);
         evidencePanel.Children.Add(new TextBlock { Text = "Values in the table are rounded for readability. Original precision and byte offsets remain in JSON inspection output. Native observations cannot be exported as Standard MIDI.",
@@ -62,14 +65,11 @@ internal sealed partial class WorkspacePageFactory
             BorderThickness = new Thickness(1), Child = plot });
         detail.Children.Add(timing); detail.Children.Add(notes); detail.Children.Add(selectedNote);
         detail.Children.Add(evidenceButton);
-        DataBrowserControl<NativeMidiNoteGroup>? groups = null;
-        Task ShowGroup(NativeMidiNoteGroup group)
+        DataBrowserControl<NativeMidiTrackGroup>? groups = null;
+        Task ShowPart(NativeMidiNoteGroup group)
         {
-            selected = group;
-            compactPicker.SelectedItem = group;
             title.Text = group.Name;
-            var projectContext = group.Name == group.ProjectName ? group.Context : group.ProjectName + " · " + group.Context;
-            context.Text = $"{projectContext}\n{group.NoteCount:N0} notes read · MIDI pitches {group.PitchRange}";
+            context.Text = $"{group.ProjectName} · {group.Context}\n{group.NoteCount:N0} notes read · MIDI pitches {group.PitchRange}";
             noteRows.ReplaceAll(group.Notes.Take(2000));
             plot.SetPreview(NativeMidiBrowser.Preview(group));
             evidence.Text = group.SourceLayout + "\n\n" + (group.Notes.FirstOrDefault()?.Warning ?? "No source evidence available.");
@@ -78,41 +78,56 @@ internal sealed partial class WorkspacePageFactory
             selectedNote.Text = "Select a note to inspect its source offset.";
             return Task.CompletedTask;
         }
-        var groupColumns = new DataBrowserColumn<NativeMidiNoteGroup>[]
+        Task ShowTrack(NativeMidiTrackGroup group)
         {
-            new("Project / part", "Name", group => group.Name, group => group.Name, 2.8),
-            new("Track context", "Context", group => group.CandidateTrackName ?? "Not assigned", group => group.Context, 1),
-            new("Notes", "Count", group => group.NoteCount.ToString("N0"), group => group.NoteCount, 0.45)
+            selected = group;
+            compactPicker.SelectedItem = group;
+            title.Text = group.DisplayName;
+            context.Text = $"{group.ProjectName} · {group.Context}\n{group.PartCount:N0} possible parts · {group.NoteCount:N0} notes";
+            partPicker.ItemsSource = group.Parts;
+            partPicker.SelectedItem = group.Parts.FirstOrDefault();
+            return group.Parts.Count > 0 ? ShowPart(group.Parts[0]) : Task.CompletedTask;
+        }
+        partPicker.SelectionChanged += (_, _) =>
+        {
+            if (partPicker.SelectedItem is NativeMidiNoteGroup part) _ = ShowPart(part);
         };
-        groups = new DataBrowserControl<NativeMidiNoteGroup>(groupColumns, mediaLibrary.NativeMidiGroups,
+        detail.Children.Insert(2, partPicker);
+        var groupColumns = new DataBrowserColumn<NativeMidiTrackGroup>[]
+        {
+            new("Project / possible track", "DisplayName", group => group.DisplayName, group => group.DisplayName, 2.8),
+            new("Parts", "PartCount", group => group.PartCount.ToString("N0"), group => group.PartCount, 0.6),
+            new("Notes", "NoteCount", group => group.NoteCount.ToString("N0"), group => group.NoteCount, 0.7)
+        };
+        groups = new DataBrowserControl<NativeMidiTrackGroup>(groupColumns, mediaLibrary.NativeMidiTrackGroups,
             ["None", "Project", "Layout"], "None", (group, mode) => mode switch
-            { "Project" => group.ProjectName, "Layout" => group.SourceLayout, _ => "" }, _ => { },
-            ShowGroup, _ => null, minimumRowsHeight: 240, maximumRowsHeight: 600);
+            { "Project" => group.ProjectName, "Layout" => string.Join(", ", group.Parts.Select(part => part.SourceLayout).Distinct()), _ => "" }, _ => { },
+            ShowTrack, _ => null, minimumRowsHeight: 240, maximumRowsHeight: 600);
         layout.Children.Add(groups); Grid.SetColumn(detail, 1); layout.Children.Add(detail);
         Grid.SetColumnSpan(compactPicker, 2); layout.Children.Add(compactPicker);
         compactPicker.SelectionChanged += (_, _) =>
         {
-            if (compactPicker.SelectedItem is NativeMidiNoteGroup group && !ReferenceEquals(group, selected))
-            { groups.SelectItem(group); _ = ShowGroup(group); }
+            if (compactPicker.SelectedItem is NativeMidiTrackGroup group && !ReferenceEquals(group, selected))
+            { groups.SelectItem(group); _ = ShowTrack(group); }
         };
         var empty = Empty("Choose Load saved index or Use open project above to inspect MIDI notes.");
         host.Children.Add(empty); host.Children.Add(layout);
         void Refresh()
         {
-            var hasRows = mediaLibrary.NativeMidiGroups.Count > 0;
+            var hasRows = mediaLibrary.NativeMidiTrackGroups.Count > 0;
             layout.Visibility = hasRows ? Visibility.Visible : Visibility.Collapsed;
             empty.Visibility = hasRows ? Visibility.Collapsed : Visibility.Visible;
             if (empty.Child is TextBlock text) text.Text = mediaLibrary.IsIndexLoading ? "Follow the index activity above. Cancel to browse records read so far."
                 : mediaLibrary.MidiSearch.Length > 0
                 ? "No native notes match this search. Try a project, possible track or part name, or MIDI pitch."
                 : "No native note groups in this view. Load a saved scope, use the open project, or rebuild its index above.";
-            var next = mediaLibrary.NativeMidiGroups.FirstOrDefault(group => group.Key == selected?.Key)
-                ?? mediaLibrary.NativeMidiGroups.FirstOrDefault();
-            if (next is not null) { groups.SelectItem(next); _ = ShowGroup(next); }
+            var next = mediaLibrary.NativeMidiTrackGroups.FirstOrDefault(group => group.Key == selected?.Key)
+                ?? mediaLibrary.NativeMidiTrackGroups.FirstOrDefault();
+            if (next is not null) { groups.SelectItem(next); _ = ShowTrack(next); }
             else { selected = null; noteRows.Clear(); plot.SetPreview(null); }
         }
         NotifyCollectionChangedEventHandler changed = (_, _) => Refresh();
-        mediaLibrary.NativeMidiGroups.CollectionChanged += changed;
+        mediaLibrary.NativeMidiTrackGroups.CollectionChanged += changed;
         PropertyChangedEventHandler busyChanged = (_, args) =>
         {
             if (args.PropertyName == nameof(mediaLibrary.IsBusy)) Refresh();
@@ -128,7 +143,7 @@ internal sealed partial class WorkspacePageFactory
         };
         layout.SizeChanged += resized;
         Refresh();
-        cleanup = () => { mediaLibrary.NativeMidiGroups.CollectionChanged -= changed;
+        cleanup = () => { mediaLibrary.NativeMidiTrackGroups.CollectionChanged -= changed;
             mediaLibrary.PropertyChanged -= busyChanged; layout.SizeChanged -= resized; };
         return host;
     }

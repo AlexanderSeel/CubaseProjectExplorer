@@ -20,8 +20,36 @@ public sealed record NativeMidiNoteGroup(string Key, string ProjectName, string 
     public static string Format(double value) => value.ToString("0.###", CultureInfo.CurrentCulture);
 }
 
+/// <summary>Possible track-level grouping based only on shared enclosing CPR offsets.</summary>
+public sealed record NativeMidiTrackGroup(string Key, string ProjectName, string ProjectPath,
+    string DisplayName, string Context, long? CandidateTrackOffset,
+    IReadOnlyList<NativeMidiNoteGroup> Parts)
+{
+    public int NoteCount => Parts.Sum(part => part.NoteCount);
+    public int PartCount => Parts.Count;
+}
+
 public static class NativeMidiBrowser
 {
+    public static IReadOnlyList<NativeMidiTrackGroup> GroupByPossibleTrack(IEnumerable<NativeMidiNoteGroup> parts) =>
+        parts.GroupBy(part => (part.ProjectPath, CandidateTrackOffset: part.Notes.FirstOrDefault()?.CandidateTrackOffset))
+            .Select(group =>
+            {
+                var first = group.First();
+                var orderedParts = group.OrderBy(part => part.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+                var hasTrackOffset = group.Key.CandidateTrackOffset is long;
+                var name = hasTrackOffset
+                    ? first.CandidateTrackName ?? $"Possible track at 0x{group.Key.CandidateTrackOffset:X}"
+                    : "Track association unavailable";
+                return new NativeMidiTrackGroup(
+                    $"{first.ProjectPath}\0{group.Key.CandidateTrackOffset?.ToString() ?? "unassigned"}",
+                    first.ProjectName, first.ProjectPath, name,
+                    hasTrackOffset ? $"Shared enclosing track offset 0x{group.Key.CandidateTrackOffset:X} · structural association" : "No enclosing track offset was available",
+                    group.Key.CandidateTrackOffset, Array.AsReadOnly(orderedParts));
+            })
+            .OrderBy(group => group.ProjectName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(group => group.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray();
+
     public static IReadOnlyList<NativeMidiNoteGroup> Group(IEnumerable<IndexedMidiNoteCandidate> notes) =>
         notes.Where(note => note.Evidence == EvidenceLevel.Candidate)
             .GroupBy(note => (note.ProjectPath, note.CandidatePartOffset, note.CandidateTrackOffset,

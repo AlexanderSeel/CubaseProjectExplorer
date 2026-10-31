@@ -288,57 +288,65 @@ internal sealed partial class WorkspacePageFactory
         }
 
         root.Children.Add(Note(project.Evidence == EvidenceLevel.Candidate
-            ? "Native CPR/BAK entries below are parser observations. Candidate fields are not confirmed Cubase tracks, plug-in instances, or signal connections."
-            : "This report describes fields declared by the structured project export. Missing fields remain unknown; the source project is unchanged."));
-        var summary = DetailCard("REPORT SUBJECT", ("Project", project.Name), ("Source", project.FilePath),
-            ("Format", project.Format), ("Saved by", project.CreatorVersion ?? "Unknown"),
-            ("Evidence", EvidencePresentation.Label(project.Evidence)),
-            ("Tempo", project.Bpm is double bpm ? bpm.ToString("0.##") + " BPM" : "Unknown"),
-            ("Time signature", project.TimeSignatureNumerator is int numerator && project.TimeSignatureDenominator is int denominator
-                ? $"{numerator}/{denominator}" : "Unknown"));
+            ? "This is a reader's interpretation of native CPR/BAK evidence. The report keeps source offsets and clearly separates observations from established Cubase meaning."
+            : "This report summarizes fields declared by the structured project export. Missing fields remain unknown; the source project is unchanged."));
+
+        var summary = DetailCard("SESSION SNAPSHOT", ("Project", project.Name), ("Format / saved by", project.Format + " · " + (project.CreatorVersion ?? "version unknown")),
+            ("Tempo", project.Bpm is double bpm ? bpm.ToString("0.##") + " BPM" : "Not supplied"),
+            ("Meter", project.TimeSignatureNumerator is int numerator && project.TimeSignatureDenominator is int denominator ? $"{numerator}/{denominator}" : "Not supplied"),
+            ("Reader evidence", EvidencePresentation.Label(project.Evidence)), ("Source", project.FilePath));
         root.Children.Add(summary);
 
         var metrics = new Grid { ColumnSpacing = 10, RowSpacing = 10, Margin = new Thickness(0, 4, 0, 10) };
-        for (var column = 0; column < 3; column++)
-            metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (var column = 0; column < 3; column++) metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         for (var row = 0; row < 2; row++) metrics.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var metricRows = new[]
+        var values = new[]
         {
-            ("TRACK RECORDS", project.Tracks.Count.ToString("N0")),
-            ("PLUGIN REFERENCES", project.Plugins.Count.ToString("N0")),
-            ("ROUTING EDGES", project.Routing.Count.ToString("N0")),
-            ("MIDI NOTES", (project.MidiNotes?.Count ?? 0).ToString("N0")),
-            ("MEDIA REFERENCES", (project.MediaReferences?.Count ?? 0).ToString("N0")),
-            ("WARNINGS", project.Warnings.Count.ToString("N0"))
+            ("TRACK RECORDS", project.Tracks.Count), ("PLUG-IN REFERENCES", project.Plugins.Count),
+            ("ROUTES", project.Routing.Count), ("EXPORTED MIDI NOTES", project.MidiNotes?.Count ?? 0),
+            ("AUDIO REFERENCES", project.MediaReferences?.Count ?? 0), ("READER WARNINGS", project.Warnings.Count)
         };
-        for (var index = 0; index < metricRows.Length; index++)
+        for (var index = 0; index < values.Length; index++)
         {
-            var card = Metric(metricRows[index].Item1, metricRows[index].Item2);
-            Grid.SetColumn(card, index % 3);
-            Grid.SetRow(card, index / 3);
-            metrics.Children.Add(card);
+            var metric = Metric(values[index].Item1, values[index].Item2.ToString("N0"));
+            Grid.SetColumn(metric, index % 3); Grid.SetRow(metric, index / 3); metrics.Children.Add(metric);
         }
-        root.Children.Add(metrics);
+        var coverageFields = ProjectFieldCoverage.Evaluate(project);
+        var overview = new StackPanel { Spacing = 10 };
+        overview.Children.Add(metrics);
+        overview.Children.Add(DetailCard("READER COVERAGE", ("Fields with values", coverageFields.Count(item => item.Value > 0).ToString("N0")),
+            ("Fields absent", coverageFields.Count(item => item.Value == 0).ToString("N0")),
+            ("Known warnings", project.Warnings.Count.ToString("N0")), ("Detailed source fields", "See Evidence & source tab")));
+        overview.Children.Add(Note("Use the other tabs to review arrangement content, studio connections, media paths and exact parser evidence. Export Markdown for the complete bounded report."));
 
-        var coverage = ProjectFieldCoverage.Evaluate(project)
-            .Select(field => $"{field.Key} · {field.Value}");
-        root.Children.Add(Section("Field availability", Bounded(coverage, ProjectFieldCoverage.Evaluate(project).Count)));
-        root.Children.Add(Section("Track and channel records", Bounded(project.Tracks.Select(track =>
+        var arrangement = new StackPanel { Spacing = 10 };
+        arrangement.Children.Add(Section("Tracks and channels", Bounded(project.Tracks.Select(track =>
             $"{track.Name} · {track.Kind} · {track.Evidence} · source offset {track.SourceOffset?.ToString() ?? "unknown"}"), project.Tracks.Count)));
-        root.Children.Add(Section("Plug-in references", Bounded(project.Plugins.Select(plugin =>
+        arrangement.Children.Add(Section("Plug-in references", Bounded(project.Plugins.Select(plugin =>
             $"{plugin.Name} · {plugin.Format} · {plugin.Evidence} · vendor {plugin.Manufacturer ?? "unknown"}"), project.Plugins.Count)));
-        root.Children.Add(Section("MIDI note events", Bounded((project.MidiNotes ?? []).Select(note =>
-            $"Track {note.TrackId} · time {note.Time:0.###} {note.TimeUnit ?? "unit unknown"} · duration {note.Duration:0.###} · key {note.Key} · velocity {note.Velocity?.ToString("0.###") ?? "unknown"}"), project.MidiNotes?.Count ?? 0)));
-        root.Children.Add(Section("Native MIDI candidates", Bounded((project.NativeMidiNoteCandidates ?? []).Select(note =>
-            $"Position {note.PositionTicks:0.###} · length {note.DurationTicks:0.###} · pitch {note.MidiPitch} · velocity {note.Velocity} · offset 0x{note.FileOffset:X} · {note.Evidence}"), project.NativeMidiNoteCandidates?.Count ?? 0)));
-        root.Children.Add(Section("Media references", Bounded((project.MediaReferences ?? []).Select(item =>
+
+        var mediaMidi = new StackPanel { Spacing = 10 };
+        mediaMidi.Children.Add(Section("Exported MIDI events", Bounded((project.MidiNotes ?? []).Select(note =>
+            $"Track {note.TrackId} · {note.Time:0.###} {note.TimeUnit ?? "unit unknown"} · length {note.Duration:0.###} · pitch {note.Key} · velocity {note.Velocity?.ToString("0.###") ?? "unknown"}"), project.MidiNotes?.Count ?? 0)));
+        mediaMidi.Children.Add(Section("Native MIDI observations", Bounded((project.NativeMidiNoteCandidates ?? []).Select(note =>
+            $"Possible track {note.CandidateTrackName ?? "unknown"} · part {note.CandidatePartName ?? "unknown"} · position {note.PositionTicks:0.###} · length {note.DurationTicks:0.###} · pitch {note.MidiPitch} · offset 0x{note.FileOffset:X}"), project.NativeMidiNoteCandidates?.Count ?? 0)));
+        mediaMidi.Children.Add(Section("Audio references", Bounded((project.MediaReferences ?? []).Select(item =>
             $"{item.Path} · {item.External switch { true => "external", false => "embedded", _ => "location unknown" }} · {item.Channels?.ToString() ?? "?"} channels · {item.SampleRate?.ToString("N0") ?? "?"} Hz"), project.MediaReferences?.Count ?? 0)));
-        root.Children.Add(Section("Timeline clips and markers", Bounded((project.TimelineItems ?? []).Select(item =>
-            $"{item.Kind} · {item.Name ?? "(unnamed)"} · time {item.Time:0.###} · duration {item.Duration?.ToString("0.###") ?? "unknown"}"), project.TimelineItems?.Count ?? 0)));
-        root.Children.Add(Section("Routing", Bounded(project.Routing.Select(edge =>
+
+        var connections = new StackPanel { Spacing = 10 };
+        connections.Children.Add(Section("Routing records", Bounded(project.Routing.Select(edge =>
             $"{edge.FromChannelId} → {edge.ToChannelId} · {edge.Kind} · level {edge.Level?.ToString("0.###") ?? "unknown"}"), project.Routing.Count)));
-        root.Children.Add(Section("Warnings and limitations", Bounded(project.Warnings, project.Warnings.Count)));
-        root.Children.Add(Note("The Markdown export contains the detailed report. The in-app preview limits each list to 100 rows to keep large projects responsive."));
+        connections.Children.Add(Section("Timeline clips and markers", Bounded((project.TimelineItems ?? []).Select(item =>
+            $"{item.Kind} · {item.Name ?? "(unnamed)"} · {item.Time:0.###} · duration {item.Duration?.ToString("0.###") ?? "unknown"}"), project.TimelineItems?.Count ?? 0)));
+
+        var evidenceDetails = new StackPanel { Spacing = 10 };
+        evidenceDetails.Children.Add(Section("Field availability", Bounded(coverageFields.Select(field => $"{field.Key} · {field.Value}"), coverageFields.Count)));
+        evidenceDetails.Children.Add(Section("Reader warnings and limitations", Bounded(project.Warnings, project.Warnings.Count)));
+        evidenceDetails.Children.Add(Section("Source metadata observations", Bounded((project.NativeMetadataCandidates ?? []).Select(item =>
+            $"{item.Field} · {item.Value} · offset {item.ArchiveOffset} · {item.Status}"), project.NativeMetadataCandidates?.Count ?? 0)));
+        evidenceDetails.Children.Add(Note("Each detail list shows up to 100 rows. Markdown export retains the full report. CPR ownership, timing and routing interpretations remain explicit reader evidence."));
+        root.Children.Add(DashboardTabs(("Session overview", overview), ("Tracks & plug-ins", arrangement),
+            ("Audio & MIDI", mediaMidi), ("Connections & timeline", connections), ("Evidence & source", evidenceDetails)));
         var status = new TextBlock { Text = shell.Tools.Status, TextWrapping = TextWrapping.Wrap,
             Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] };
         root.Children.Add(status);

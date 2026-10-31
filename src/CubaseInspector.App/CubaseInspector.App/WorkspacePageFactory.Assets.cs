@@ -291,7 +291,8 @@ internal sealed partial class WorkspacePageFactory
         search.Text = mediaLibrary.MidiSearch;
         search.TextChanged += (_, _) => mediaLibrary.MidiSearch = search.Text;
         actions.Children.Add(search); AddPageActions(root, actions);
-        root.Children.Add(MediaIndexActivityPanel());
+        var browserPanel = new StackPanel { Spacing = 10 };
+        var activityPanel = new StackPanel { Spacing = 10, Children = { MediaIndexActivityPanel() } };
         var summary = new TextBlock { Margin = new Thickness(0, 8, 0, 6), Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] };
         var loadRing = new ProgressRing { Width = 18, Height = 18, IsActive = mediaLibrary.IsBusy,
             Visibility = mediaLibrary.IsBusy ? Visibility.Visible : Visibility.Collapsed };
@@ -308,7 +309,7 @@ internal sealed partial class WorkspacePageFactory
             }
         };
         mediaLibrary.PropertyChanged += statusChanged;
-        root.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { loadRing, summary } });
+        browserPanel.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { loadRing, summary } });
         var layout = new Grid { ColumnSpacing = 12 };
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.15, GridUnitType.Star) });
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -433,7 +434,7 @@ internal sealed partial class WorkspacePageFactory
         sourceRow.Children.Add(new TextBlock { Text = "Source", Foreground = Muted, VerticalAlignment = VerticalAlignment.Center });
         sourceRow.Children.Add(source);
         var exportedEmpty = Empty("No exported MIDI tracks match this view. Choose CPR note observations to inspect notes read from native files, or index a DAWproject export.");
-        root.Children.Add(sourceRow); root.Children.Add(nativePanel); root.Children.Add(layout); root.Children.Add(exportedEmpty);
+        browserPanel.Children.Add(sourceRow); browserPanel.Children.Add(nativePanel); browserPanel.Children.Add(layout); browserPanel.Children.Add(exportedEmpty);
         var initialSourceChosen = mediaLibrary.NativeMidiGroups.Count + mediaLibrary.MidiTracks.Count > 0;
         void UpdateSource()
         {
@@ -457,6 +458,7 @@ internal sealed partial class WorkspacePageFactory
             if (args.PropertyName is nameof(mediaLibrary.MidiSummary) or nameof(mediaLibrary.IsBusy)) UpdateSource();
         };
         mediaLibrary.PropertyChanged += sourceChanged;
+        root.Children.Add(DashboardTabs(("MIDI browser", browserPanel), ("Index activity", activityPanel)));
         UpdateSource();
         root.Unloaded += (_, _) =>
         {

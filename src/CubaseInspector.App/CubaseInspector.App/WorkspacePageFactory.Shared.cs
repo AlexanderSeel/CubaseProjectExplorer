@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Windows.UI;
 
@@ -40,6 +41,45 @@ internal sealed partial class WorkspacePageFactory
             Padding = new Thickness(0, 0, 0, 12), Child = headerGrid });
         _pageToolbars[root] = toolbar;
         return root;
+    }
+
+    private static Grid DashboardTabs(params (string Title, UIElement Content)[] sections)
+    {
+        var tabs = new Grid { RowSpacing = 10 };
+        tabs.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        tabs.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var commands = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var contentHost = new Grid();
+        Grid.SetRow(commands, 0);
+        Grid.SetRow(contentHost, 1);
+        tabs.Children.Add(commands);
+        tabs.Children.Add(contentHost);
+        var buttons = new List<Button>();
+        var selected = 0;
+        void Show(int index)
+        {
+            selected = index;
+            contentHost.Children.Clear();
+            var content = sections[index].Content;
+            contentHost.Children.Add(content);
+            for (var i = 0; i < buttons.Count; i++)
+            {
+                buttons[i].IsEnabled = i != index;
+                AutomationProperties.SetName(buttons[i], $"{sections[i].Title} tab{(i == index ? ", selected" : "")}");
+            }
+        }
+        foreach (var (title, _) in sections)
+        {
+            var index = buttons.Count;
+            var button = new Button { Content = title, Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"],
+                IsEnabled = index != selected };
+            button.Click += (_, _) => Show(index);
+            buttons.Add(button);
+            commands.Children.Add(button);
+        }
+        tabs.SizeChanged += (_, args) => commands.Orientation = args.NewSize.Width < 560 ? Orientation.Vertical : Orientation.Horizontal;
+        Show(0);
+        return tabs;
     }
 
     private void AddPageActions(StackPanel page, params UIElement[] actions)

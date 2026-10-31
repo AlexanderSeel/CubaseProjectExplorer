@@ -230,7 +230,8 @@ public sealed partial class MediaLibraryViewModel
                     row.CandidatePartName + " " + row.SourceLayout + " " + row.Pitch, midiQuery)).ToArray();
                 ct.ThrowIfCancellationRequested();
                 var groups = NativeMidiBrowser.Group(noteRows).Take(BrowserRowLimit).ToArray();
-                return (audioRows, nativeRows, midiRows, noteRows, groups);
+                var trackGroups = NativeMidiBrowser.GroupByPossibleTrack(groups);
+                return (audioRows, nativeRows, midiRows, noteRows, groups, trackGroups);
             }, ct);
             ct.ThrowIfCancellationRequested();
             if (request != _browserRequest) return;
@@ -239,6 +240,7 @@ public sealed partial class MediaLibraryViewModel
             MidiTracks.ReplaceAll(result.midiRows);
             NativeMidiCandidates.ReplaceAll(result.noteRows.Take(BrowserRowLimit));
             NativeMidiGroups.ReplaceAll(result.groups);
+            NativeMidiTrackGroups.ReplaceAll(result.trackGroups);
             OnPropertyChanged(nameof(SampleSummary));
             OnPropertyChanged(nameof(MidiSummary));
         }

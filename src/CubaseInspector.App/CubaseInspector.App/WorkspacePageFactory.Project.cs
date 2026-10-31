@@ -21,12 +21,14 @@ internal sealed partial class WorkspacePageFactory
         var vm = shell.Tools;
         vm.ResetMediaAuditForDifferentProject();
         var root = Page("Audio / MIDI I/O", shell.Workspace.IoSummary);
+        var studioPanel = new StackPanel { Spacing = 10 };
         if (shell.Workspace.Project is { } selectedProject)
-            root.Children.Add(StudioIoView(selectedProject));
-        else root.Children.Add(Empty("Open a project to inspect saved ports, audio references and MIDI streams."));
-        root.Children.Add(new TextBlock { Text = "EXTERNAL MEDIA CHECKLIST", Margin = new Thickness(0, 20, 0, 8),
+            studioPanel.Children.Add(StudioIoView(selectedProject));
+        else studioPanel.Children.Add(Empty("Open a project to inspect saved ports, audio references and MIDI streams."));
+        var mediaPanel = new StackPanel { Spacing = 10 };
+        mediaPanel.Children.Add(new TextBlock { Text = "EXTERNAL MEDIA CHECKLIST", Margin = new Thickness(0, 8, 0, 4),
             Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] });
-        root.Children.Add(Note("Choose Check declared external media to inspect referenced-file presence and prepare a handoff checklist."));
+        mediaPanel.Children.Add(Note("Check project-declared paths against disk and prepare a handoff checklist. This reads the referenced file locations; it does not change the project."));
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 8) };
         var check = Button("Check declared external media", async () => await vm.CheckMediaCommand.ExecuteAsync(null));
         var export = Button("Export handoff checklist…", async () => await vm.ExportMediaAuditCommand.ExecuteAsync(null));
@@ -34,14 +36,14 @@ internal sealed partial class WorkspacePageFactory
         export.IsEnabled = vm.HasCurrentMediaAudit && !vm.IsBusy;
         actions.Children.Add(check);
         actions.Children.Add(export);
-        root.Children.Add(actions);
+        mediaPanel.Children.Add(actions);
 
         var summary = new TextBlock { Text = vm.MediaAuditSummary, Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"],
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 4) };
         var status = new TextBlock { Text = vm.MediaAuditStatus, Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"],
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
-        root.Children.Add(summary);
-        root.Children.Add(status);
+        mediaPanel.Children.Add(summary);
+        mediaPanel.Children.Add(status);
         var rows = new ListView { ItemsSource = vm.MediaAuditRows, SelectionMode = ListViewSelectionMode.None,
             HorizontalContentAlignment = HorizontalAlignment.Stretch, MaxHeight = 560 };
         rows.ItemTemplate = new DataTemplate(() =>
@@ -50,14 +52,14 @@ internal sealed partial class WorkspacePageFactory
             text.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath(".") });
             return text;
         });
-        root.Children.Add(rows);
+        mediaPanel.Children.Add(rows);
         var hasStructuredMediaEvidence = shell.Workspace.Project is { Evidence: EvidenceLevel.Confirmed } project &&
             System.IO.Path.GetExtension(project.FilePath).Equals(".dawproject", StringComparison.OrdinalIgnoreCase);
         var empty = Empty(vm.HasMediaAudit
             ? hasStructuredMediaEvidence ? "No audio media references were declared in this export." : "Media references are unavailable or not decoded for this project format."
             : "Run the explicit external-media check to build a handoff checklist. Embedded audio is not inspected.");
         empty.Visibility = vm.MediaAuditRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        root.Children.Add(empty);
+        mediaPanel.Children.Add(empty);
         void UpdateMediaAuditState()
         {
             empty.Visibility = vm.MediaAuditRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -81,6 +83,7 @@ internal sealed partial class WorkspacePageFactory
         };
         vm.PropertyChanged += handler;
         root.Unloaded += (_, _) => vm.PropertyChanged -= handler;
+        root.Children.Add(DashboardTabs(("Studio patchbay", studioPanel), ("Media handoff", mediaPanel)));
         return root;
     }
 

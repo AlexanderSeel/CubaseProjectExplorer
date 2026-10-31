@@ -61,6 +61,7 @@ public sealed partial class MediaLibraryViewModel(
     public ResettableObservableCollection<MidiTrackLibraryRow> MidiTracks { get; } = [];
     public ResettableObservableCollection<IndexedMidiNoteCandidate> NativeMidiCandidates { get; } = [];
     public ResettableObservableCollection<NativeMidiNoteGroup> NativeMidiGroups { get; } = [];
+    public ResettableObservableCollection<NativeMidiTrackGroup> NativeMidiTrackGroups { get; } = [];
     public ObservableCollection<MediaDuplicateGroup> IdenticalSampleGroups { get; } = [];
     public IReadOnlyList<string> SampleTypes { get; private set; } = ["All"];
     public IReadOnlyList<SampleProjectScopeOption> SampleProjects { get; private set; } = [];

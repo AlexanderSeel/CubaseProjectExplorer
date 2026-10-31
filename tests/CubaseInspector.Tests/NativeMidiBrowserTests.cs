@@ -40,4 +40,30 @@ public sealed class NativeMidiBrowserTests
         Assert.Contains("RIFF packed MMidiPart", group.SourceLayout);
         Assert.Contains("typed-attributes", group.SourceLayout);
     }
+
+    [Fact]
+    public void PartsWithSharedEnclosingTrackOffsetArePresentedUnderOnePossibleTrack()
+    {
+        var parts = NativeMidiBrowser.Group([Note(10), Note(20), Note(30) with { CandidateTrackOffset = 9 }]);
+        var tracks = NativeMidiBrowser.GroupByPossibleTrack(parts);
+
+        Assert.Equal(2, tracks.Count);
+        var sharedTrack = Assert.Single(tracks, track => track.CandidateTrackOffset == 5);
+        Assert.Equal(2, sharedTrack.PartCount);
+        Assert.Equal(2, sharedTrack.NoteCount);
+        Assert.Contains("structural association", sharedTrack.Context);
+        Assert.Single(Assert.Single(tracks, track => track.CandidateTrackOffset == 9).Parts);
+    }
+
+    [Fact]
+    public void MissingTrackOffsetsStayInAnExplicitUnassignedGroup()
+    {
+        var parts = NativeMidiBrowser.Group([Note(10) with { CandidateTrackOffset = null }, Note(20) with { CandidateTrackOffset = null }]);
+        var track = Assert.Single(NativeMidiBrowser.GroupByPossibleTrack(parts));
+
+        Assert.Null(track.CandidateTrackOffset);
+        Assert.Equal(2, track.PartCount);
+        Assert.Equal("Track association unavailable", track.DisplayName);
+        Assert.Contains("No enclosing track offset", track.Context);
+    }
 }

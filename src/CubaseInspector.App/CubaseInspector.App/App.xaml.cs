@@ -5,6 +5,8 @@ using CubaseInspector.App.ViewModels;
 using CubaseInspector.Infrastructure;
 using System.IO;
 using System.Diagnostics;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 
 namespace CubaseInspector.App;
 
@@ -86,14 +88,43 @@ public partial class App : Application
             MainWindow.Content = rootFrame;
         }
 
+        // Show the native window before constructing the first workspace page. Page creation can
+        // synchronously hydrate view models and must not leave a live process with a hidden window.
+        MainWindow.Activate();
         if (rootFrame.Content == null)
         {
-            // When the navigation stack isn't restored navigate to the first page,
-            // configuring the new page by passing required information as a navigation
-            // parameter
-            rootFrame.Navigate(typeof(MainPage), Host.Services.GetRequiredService<AppShellViewModel>());
+            try
+            {
+                rootFrame.Navigate(typeof(MainPage), Host.Services.GetRequiredService<AppShellViewModel>());
+            }
+            catch (Exception exception)
+            {
+                Trace.TraceError("CPE first-page startup failed: {0}", exception);
+                MainWindow.Content = CreateStartupError(exception);
+            }
         }
-        // Ensure the current window is active
-        MainWindow.Activate();
+    }
+
+    private static UIElement CreateStartupError(Exception exception)
+    {
+        var message = new TextBlock
+        {
+            Text = "Cubase Project Explorer could not open its start page. The window is available, and the error details are shown below.",
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 18,
+            Margin = new Thickness(0, 0, 0, 16)
+        };
+        var details = new TextBlock
+        {
+            Text = exception.ToString(),
+            TextWrapping = TextWrapping.Wrap,
+            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+            FontSize = 12
+        };
+        return new ScrollViewer
+        {
+            Padding = new Thickness(32),
+            Content = new StackPanel { Spacing = 12, Children = { message, details } }
+        };
     }
 }

@@ -209,15 +209,26 @@ public sealed partial class ProjectLibraryViewModel(
         ProgressText = "Preparing folder scan…";
         var uiProgress = new Progress<ScanProgress>(update =>
         {
-            ProgressText = update.BytesProcessed is long processed && update.TotalBytes is long total
-                ? $"Hashing {Path.GetFileName(update.CurrentPath)} · {FormatBytes(processed)} of {FormatBytes(total)}"
-                : update.Stage switch
+            var totalFiles = Math.Max(0, update.Total);
+            var completedFiles = Math.Clamp(update.Completed, 0, totalFiles);
+            var currentFile = Path.GetFileName(update.CurrentPath);
+            var fileNumber = Math.Min(completedFiles + 1, totalFiles);
+            var fileFraction = update.BytesProcessed is long processed && update.TotalBytes is long totalBytes && totalBytes > 0
+                ? Math.Clamp(processed / (double)totalBytes, 0, 1) : 0;
+
+            ProgressText = update.Stage switch
             {
-                ScanStage.Discovering => "Finding project files · " + update.CurrentPath,
-                ScanStage.Hashing => $"Hashing {update.Completed:N0} of {update.Total:N0} · {Path.GetFileName(update.CurrentPath)}",
-                _ => $"Inspecting {update.Completed:N0} of {update.Total:N0} · {Path.GetFileName(update.CurrentPath)}"
+                ScanStage.Discovering => $"Finding projects · {update.Completed:N0} folders checked · {update.Total:N0} found",
+                ScanStage.Hashing when update.BytesProcessed is long bytes && update.TotalBytes is long byteTotal && byteTotal > 0
+                    => $"Project {fileNumber:N0} of {totalFiles:N0} · Hashing {currentFile} · {FormatBytes(bytes)} of {FormatBytes(byteTotal)}",
+                ScanStage.Hashing => $"Project {fileNumber:N0} of {totalFiles:N0} · Preparing checksum · {currentFile}",
+                _ when totalFiles == 0 => "No project files found · finishing scan…",
+                _ when completedFiles >= totalFiles => $"Finished {totalFiles:N0} projects · {currentFile}",
+                _ => $"Project {fileNumber:N0} of {totalFiles:N0} · Reading {currentFile}"
             };
-            if (update.Total > 0) Progress = Math.Clamp(update.Completed * 100d / update.Total, 0, 100);
+
+            if (totalFiles > 0)
+                Progress = Math.Clamp((completedFiles + fileFraction) * 100d / totalFiles, 0, 100);
         });
         // Progress<T> posts to the UI context. Coalesce worker reports so a scan of
         // thousands of files does not queue thousands of UI callbacks and redraws.
@@ -238,6 +249,8 @@ public sealed partial class ProjectLibraryViewModel(
             var existingEntries = _allEntries.Where(entry => IsEnabledType(entry.Project.FilePath, selectedTypes)).ToArray();
             var scannedEntries = result.Value.ProjectSummaries ?? result.Value.Projects.Select(project =>
                 ProjectLibraryBrowser.ToSummary(ProjectLibraryBrowser.FromFile(project))).ToArray();
+            Progress = 0;
+            ProgressText = $"Organizing {scannedEntries.Count:N0} project results…";
             var mergedEntries = await Task.Run(() => ProjectLibraryBrowser.MergeScanResults(existingEntries, scannedEntries));
             _allEntries.Clear();
             _allEntries.AddRange(mergedEntries);
@@ -253,6 +266,7 @@ public sealed partial class ProjectLibraryViewModel(
             // cancellation pressed during persistence itself is honored between batches.
             try
             {
+                Progress = 0;
                 ProgressText = $"Saving {_allEntries.Count:N0} scan results to the library…";
                 var token = _scanCancellation.IsCancellationRequested
                     ? CancellationToken.None : _scanCancellation.Token;

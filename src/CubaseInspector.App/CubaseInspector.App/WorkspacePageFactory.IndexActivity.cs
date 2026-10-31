@@ -95,7 +95,9 @@ internal sealed partial class WorkspacePageFactory
             progress.Value = vm.IndexProgress;
             current.Text = Path.GetFileName(vm.IndexCurrentProject);
             ToolTipService.SetToolTip(current, vm.IndexCurrentProject);
-            counts.Text = $"{vm.IndexProcessed:N0}/{vm.IndexTotal:N0} projects · {vm.IndexElapsed} elapsed · {vm.IndexSkipped:N0} skipped · Projects: {vm.IndexScope}";
+            counts.Text = vm.IndexTotal > 0
+                ? $"{vm.IndexProcessed:N0} of {vm.IndexTotal:N0} projects · {vm.IndexProgress:0.#}% · {vm.IndexElapsed} elapsed · {vm.IndexSkipped:N0} skipped · Projects: {vm.IndexScope}"
+                : $"Preparing project list · {vm.IndexElapsed} elapsed · Projects: {vm.IndexScope}";
             outcome.Text = vm.IndexOutcome;
             analyze.IsEnabled = scope.IsEnabled = !shell.IsAnyBusy;
             cancel.Visibility = vm.IsIndexLoading ? Visibility.Visible : Visibility.Collapsed;

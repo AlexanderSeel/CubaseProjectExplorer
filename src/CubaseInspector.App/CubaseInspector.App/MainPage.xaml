@@ -66,8 +66,13 @@
         <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
       <StackPanel Spacing="3">
-        <TextBlock x:Name="ScanProgressLabel" FontSize="11" TextTrimming="CharacterEllipsis"
-                   AutomationProperties.LiveSetting="Polite" />
+        <Grid ColumnSpacing="8">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+          <TextBlock x:Name="ScanProgressLabel" FontSize="11" TextTrimming="CharacterEllipsis"
+                     AutomationProperties.LiveSetting="Polite" />
+          <TextBlock x:Name="ScanProgressPercent" Grid.Column="1" FontSize="11"
+                     Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+        </Grid>
         <ProgressBar x:Name="ScanProgressBar" Minimum="0" Maximum="100" Height="5"
                      HorizontalAlignment="Stretch" />
       </StackPanel>
@@ -125,6 +130,8 @@
                    VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
         <ProgressBar x:Name="ActivityProgressBar" Width="132" Height="5" Minimum="0" Maximum="100"
                      VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="Background task progress" />
+        <TextBlock x:Name="ActivityPercentText" FontSize="11" MinWidth="36" TextAlignment="Right"
+                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
         <Button x:Name="ActivityCancelButton" Content="Cancel" Padding="8,2" MinHeight="24"
                 VerticalAlignment="Center" Visibility="Collapsed" Click="ActivityCancel_Click" />
       </StackPanel>

@@ -124,6 +124,8 @@ public sealed partial class MainPage : Page
         ToolTipService.SetToolTip(ScanProgressLabel, ScanProgressLabel.Text);
         ScanProgressBar.Value = library.Progress;
         ScanProgressBar.IsIndeterminate = library.IsBusy && library.Progress <= 0;
+        ScanProgressPercent.Text = library.IsBusy && library.Progress > 0
+            ? $"{library.Progress:0}%" : string.Empty;
         CancelScanButton.Visibility = library.IsScanning ? Visibility.Visible : Visibility.Collapsed;
         if (_analyzeButton is not null) _analyzeButton.IsEnabled = _shell is { IsAnyBusy: false };
         if (_scanButton is not null) _scanButton.IsEnabled = !library.IsBusy;
@@ -231,10 +233,15 @@ public sealed partial class MainPage : Page
             activityDetails += $"\n{_shell.MediaLibrary.IndexCurrentProject}\n{_shell.MediaLibrary.IndexOutcome}";
         ToolTipService.SetToolTip(BusyText, activityDetails);
         var scan = !_startupHydrating && _shell.Library.IsScanning;
-        var analysis = _shell.MediaLibrary.IsIndexLoading;
+        var analysis = _shell.MediaLibrary.IsIndexLoading || _shell.MediaLibrary.IsIndexFiltering;
         ActivityProgressBar.Visibility = scan || analysis ? Visibility.Visible : Visibility.Collapsed;
-        ActivityProgressBar.IsIndeterminate = scan ? _shell.Library.Progress <= 0 : analysis && _shell.MediaLibrary.IndexTotal <= 0;
+        ActivityProgressBar.IsIndeterminate = scan ? _shell.Library.Progress <= 0
+            : _shell.MediaLibrary.IsIndexFiltering || analysis && _shell.MediaLibrary.IndexTotal <= 0;
         ActivityProgressBar.Value = scan ? _shell.Library.Progress : _shell.MediaLibrary.IndexProgress;
+        ActivityPercentText.Text = scan && _shell.Library.Progress > 0
+            ? $"{_shell.Library.Progress:0}%"
+            : _shell.MediaLibrary.IsIndexLoading && _shell.MediaLibrary.IndexTotal > 0
+                ? $"{_shell.MediaLibrary.IndexProgress:0}%" : string.Empty;
         var canCancelAnalysis = analysis && !_shell.MediaLibrary.IsIndexCancelling;
         ActivityCancelButton.Visibility = canCancelAnalysis || scan ? Visibility.Visible : Visibility.Collapsed;
         ActivityCancelButton.IsEnabled = canCancelAnalysis || scan;
@@ -244,7 +251,10 @@ public sealed partial class MainPage : Page
     private static string ActivityStatus(AppShellViewModel shell)
     {
         if (shell.MediaLibrary.IsIndexLoading)
-            return $"{FriendlyAnalysisStage(shell.MediaLibrary.IndexStage)} · {shell.MediaLibrary.IndexProcessed:N0}/{shell.MediaLibrary.IndexTotal:N0} · {shell.MediaLibrary.IndexElapsed}";
+            return shell.MediaLibrary.IndexTotal > 0
+                ? $"{FriendlyAnalysisStage(shell.MediaLibrary.IndexStage)} · {shell.MediaLibrary.IndexProcessed:N0} of {shell.MediaLibrary.IndexTotal:N0} · {shell.MediaLibrary.IndexElapsed}"
+                : $"{FriendlyAnalysisStage(shell.MediaLibrary.IndexStage)} · {shell.MediaLibrary.IndexElapsed}";
+        if (shell.MediaLibrary.IsIndexFiltering) return "Organizing audio and MIDI results…";
         if (shell.Library.IsScanning)
             return string.IsNullOrWhiteSpace(shell.Library.ProgressText) ? "Scanning projects…" : shell.Library.ProgressText;
         if (shell.MediaLibrary.IsMidiPreviewBusy) return "Preparing MIDI preview…";

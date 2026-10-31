@@ -21,6 +21,12 @@ public static class CprBinaryFieldCandidateDecoder
         "MTempoTrackEvent serialization version 3, single-entry 54-byte layout; " +
         "big-endian candidate; field semantics unverified; suffix attributes remain opaque; " +
         "docs/research/CUBASE15_SERIALIZER_ANALYSIS.md";
+    private const string TimeSignatureSource =
+        "Cubase15.exe reader 0x1431d3b70 / writer 0x1431d3c40; " +
+        "SHA-256 b4a9c748537ead87981aebe18a01aae3acba8bfc76d1c1150c0054de75515aa0; " +
+        "MTimeSignatureEvent serialization version 2 fixed 20-byte prefix; " +
+        "big-endian candidate; field semantics unverified; named attributes remain opaque; " +
+        "docs/research/CUBASE15_SERIALIZER_ANALYSIS.md";
 
     public static IReadOnlyList<CprBinaryFieldCandidate> Read(CprClassRecordCandidate record,
         ReadOnlySpan<byte> archiveData, long archiveFileOffset)
@@ -30,13 +36,32 @@ public static class CprBinaryFieldCandidateDecoder
             record.ClassVersion == 0 && record.BodyBytes == 24;
         var isTempoTrack = string.Equals(record.ClassName, "MTempoTrackEvent", StringComparison.Ordinal) &&
             record.ClassVersion == 3 && record.BodyBytes == 54;
-        if ((!isTempoEvent && !isTempoTrack) || archiveData.Length < record.BodyBytes ||
+        var isTimeSignature = string.Equals(record.ClassName, "MTimeSignatureEvent", StringComparison.Ordinal) &&
+            record.ClassVersion == 2 && record.BodyBytes >= 20;
+        if ((!isTempoEvent && !isTempoTrack && !isTimeSignature) || archiveData.Length < record.BodyBytes ||
             archiveFileOffset < 0 || archiveFileOffset > long.MaxValue - archiveData.Length ||
             record.BodyFileOffset < archiveFileOffset)
             return [];
         var relative = record.BodyFileOffset - archiveFileOffset;
         if (relative > archiveData.Length - record.BodyBytes) return [];
         var body = archiveData.Slice((int)relative, (int)record.BodyBytes);
+
+        if (isTimeSignature)
+        {
+            // IDA shows one u64 followed by six u16 values, then named
+            // attributes for version > 1. Keep only the fixed prefix opaque.
+            var fields = new CprBinaryFieldCandidate[7];
+            fields[0] = Field("body+0", "u64-be", BinaryPrimitives.ReadUInt64BigEndian(body[..8])
+                .ToString(CultureInfo.InvariantCulture), record.BodyFileOffset, body[..8], TimeSignatureSource);
+            for (var index = 0; index < 6; index++)
+            {
+                var offset = 8 + index * 2;
+                fields[index + 1] = Field($"body+{offset}", "u16-be",
+                    BinaryPrimitives.ReadUInt16BigEndian(body.Slice(offset, 2)).ToString(CultureInfo.InvariantCulture),
+                    record.BodyFileOffset + offset, body.Slice(offset, 2), TimeSignatureSource);
+            }
+            return Array.AsReadOnly(fields);
+        }
 
         if (isTempoTrack)
         {

@@ -23,6 +23,12 @@ TARGETS = {
     "event-attribute-reader": "sub_141B74340",
     "event-flags-reader": "sub_1439DF250",
     "archive-class-reader": "sub_1445EA890",
+    "tempo-track-reader": "sub_1431E2E00",
+    "tempo-track-writer": "sub_1431E30F0",
+    "time-signature-reader": "sub_1431D3B70",
+    "time-signature-writer": "sub_1431D3C40",
+    "marker-reader": "sub_1426FC400",
+    "marker-writer": "sub_1426FC470",
 }
 
 

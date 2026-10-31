@@ -138,6 +138,47 @@ public sealed class CprBinaryFieldCandidateDecoderTests
             Assert.Empty(CprBinaryFieldCandidateDecoder.Read(unsupported, TempoTrackBody(), 1000));
     }
 
+    [Fact]
+    public void ReadsOnlyAnonymousTimeSignatureFixedPrefixAndLeavesNamedAttributesOpaque()
+    {
+        var bytes = new byte[27]; // Fixed 20-byte prefix plus seven opaque attribute bytes.
+        BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(0, 8), 0x0102030405060708);
+        for (var index = 0; index < 6; index++)
+            BinaryPrimitives.WriteUInt16BigEndian(bytes.AsSpan(8 + index * 2, 2), (ushort)(index + 1));
+        bytes.AsSpan(20).Fill(0xFE);
+        var record = Record(1007) with
+        {
+            ClassName = "MTimeSignatureEvent", ClassVersion = 2, BodyBytes = bytes.Length
+        };
+        var archive = new byte[40];
+        bytes.CopyTo(archive, 7);
+        var fields = CprBinaryFieldCandidateDecoder.Read(record, archive, 1000);
+
+        Assert.Collection(fields,
+            field => CheckSignature(field, "body+0", "u64-be", "72623859790382856", 1007, "0102030405060708"),
+            field => CheckSignature(field, "body+8", "u16-be", "1", 1015, "0001"),
+            field => CheckSignature(field, "body+10", "u16-be", "2", 1017, "0002"),
+            field => CheckSignature(field, "body+12", "u16-be", "3", 1019, "0003"),
+            field => CheckSignature(field, "body+14", "u16-be", "4", 1021, "0004"),
+            field => CheckSignature(field, "body+16", "u16-be", "5", 1023, "0005"),
+            field => CheckSignature(field, "body+18", "u16-be", "6", 1025, "0006"));
+        Assert.Equal(20, fields.Sum(field => field.ByteCount));
+        Assert.All(fields, field => Assert.Contains("named attributes remain opaque", field.Source));
+    }
+
+    [Theory]
+    [InlineData(1, 20)]
+    [InlineData(3, 20)]
+    [InlineData(2, 19)]
+    public void RejectsUnverifiedTimeSignatureVersionsAndTruncatedPrefix(int version, int bodyBytes)
+    {
+        var record = Record() with
+        {
+            ClassName = "MTimeSignatureEvent", ClassVersion = (ushort)version, BodyBytes = bodyBytes
+        };
+        Assert.Empty(CprBinaryFieldCandidateDecoder.Read(record, new byte[20], 1000));
+    }
+
     [Theory]
     [InlineData(999, 1000, 24)]
     [InlineData(1001, 1000, 24)]
@@ -175,6 +216,22 @@ public sealed class CprBinaryFieldCandidateDecoderTests
         Assert.Equal(hex.Length / 2, field.ByteCount);
         Assert.Equal(EvidenceLevel.Candidate, field.Evidence);
         Assert.Contains(reader, field.Source);
+        Assert.Contains("b4a9c748537ead87981aebe18a01aae3acba8bfc76d1c1150c0054de75515aa0", field.Source);
+        Assert.Contains("CUBASE15_SERIALIZER_ANALYSIS.md", field.Source);
+        Assert.Contains("big-endian candidate", field.Source);
+        Assert.Contains("semantics unverified", field.Source);
+    }
+
+    private static void CheckSignature(CprBinaryFieldCandidate field, string name, string type,
+        string value, long offset, string hex)
+    {
+        Assert.Equal(name, field.Field);
+        Assert.Equal(type, field.StorageType);
+        Assert.Equal(value, field.Value);
+        Assert.Equal(offset, field.FileOffset);
+        Assert.Equal(hex, field.RawHex);
+        Assert.Equal(EvidenceLevel.Candidate, field.Evidence);
+        Assert.Contains("0x1431d3b70", field.Source);
         Assert.Contains("b4a9c748537ead87981aebe18a01aae3acba8bfc76d1c1150c0054de75515aa0", field.Source);
         Assert.Contains("CUBASE15_SERIALIZER_ANALYSIS.md", field.Source);
         Assert.Contains("big-endian candidate", field.Source);

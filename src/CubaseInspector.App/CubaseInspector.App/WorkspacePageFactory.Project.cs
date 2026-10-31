@@ -21,11 +21,13 @@ internal sealed partial class WorkspacePageFactory
     {
         var vm = shell.Tools;
         vm.ResetMediaAuditForDifferentProject();
-        var root = Page("Audio / MIDI I/O", shell.Workspace.IoSummary);
+        var root = Page("Studio map", shell.Workspace.Project is null
+            ? "See how your project is connected, then check audio paths and MIDI parts."
+            : "Follow tracks through plug-ins, buses and outputs. Switch to Media paths to check the samples and MIDI in this project.");
         var studioPanel = new StackPanel { Spacing = 10 };
         if (shell.Workspace.Project is { } selectedProject)
             studioPanel.Children.Add(StudioIoView(selectedProject));
-        else studioPanel.Children.Add(Empty("Analyze a project to see its ports, audio files and MIDI parts."));
+        else studioPanel.Children.Add(Empty("Choose Analyze to open a project, then follow its tracks, effects, buses and outputs here."));
         var mediaPanel = new StackPanel { Spacing = 10 };
         mediaPanel.Children.Add(new TextBlock { Text = "EXTERNAL MEDIA CHECKLIST", Margin = new Thickness(0, 8, 0, 4),
             Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] });
@@ -84,7 +86,7 @@ internal sealed partial class WorkspacePageFactory
         };
         vm.PropertyChanged += handler;
         root.Unloaded += (_, _) => vm.PropertyChanged -= handler;
-        root.Children.Add(DashboardTabs(("Studio patchbay", studioPanel), ("Media handoff", mediaPanel)));
+        root.Children.Add(DashboardTabs(("Signal flow", studioPanel), ("Media paths", mediaPanel)));
         return root;
     }
 
@@ -111,7 +113,7 @@ internal sealed partial class WorkspacePageFactory
         for (var i = 0; i < 3; i++) cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var metrics = new[] { ("TEMPO", vm.Bpm), ("TIME SIGNATURE", vm.TimeSignature), ("TRACK RECORDS", vm.TrackCount), ("PLUGIN REFERENCES", vm.PluginCount), ("ROUTES", vm.RouteCount) };
+        var metrics = new[] { ("TEMPO", vm.Bpm), ("TIME SIGNATURE", vm.TimeSignature), ("TRACKS", vm.TrackCount), ("PLUG-INS", vm.PluginCount), ("CONNECTIONS", vm.RouteCount) };
         for (var i = 0; i < metrics.Length; i++)
         {
             var card = Metric(metrics[i].Item1, metrics[i].Item2);
@@ -123,7 +125,7 @@ internal sealed partial class WorkspacePageFactory
         details.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         details.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         details.Children.Add(DetailCard("SOURCE", ("Format", vm.Format), ("Saved by", vm.SavedBy), ("Source quality", vm.Evidence), ("Warnings", vm.WarningCount)));
-        var next = DetailCard("WORKSPACES", ("Tracks & Channels", "Inspect track records and evidence"), ("Plug-ins", vm.PluginEvidence), ("Routing", vm.RoutingSummary), ("Audio / MIDI I/O", vm.IoSummary));
+        var next = DetailCard("EXPLORE THIS PROJECT", ("Tracks & Channels", "Review tracks, mix settings and audio"), ("Plug-ins", vm.PluginEvidence), ("Routing", vm.RoutingSummary), ("Studio map", vm.IoSummary));
         Grid.SetColumn(next, 1); details.Children.Add(next); root.Children.Add(details);
         var coveragePanel = new Border { Background = Surface, Padding = new Thickness(12) };
         var coverageRows = vm.Project is null
@@ -156,9 +158,9 @@ internal sealed partial class WorkspacePageFactory
         var project = shell.Workspace.Project;
         var mixerTrackObservations = project is null ? Array.Empty<TrackInfo>() : CprSignalFlowPresentation.Create(project).Tracks
             .Where(item => item.SourceRecordClass == "CPR named record" && item.ParentTrackId is not null).ToArray();
-        var root = Page("Tracks & Channels", "Browse the tracks, channels, and saved mixer settings in this session.");
-        var search = FilterTextBox("Search tracks or channels", 240);
-        var kinds = new[] { "All" }.Concat(shell.Workspace.Tracks.Select(track => track.Kind)
+        var root = Page("Tracks & Channels", "Review the arrangement, saved mix settings, and audio used by each track.");
+        var search = FilterTextBox("Search track or type", 240);
+        var kinds = new[] { "All" }.Concat(shell.Workspace.Tracks.Select(TrackDisplayRow.TypeFor)
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(kind => kind, StringComparer.OrdinalIgnoreCase)).ToArray();
         var kindFilter = Combo("Track type", kinds, 150);
         search.Width = 260;
@@ -175,12 +177,23 @@ internal sealed partial class WorkspacePageFactory
         {
             selected.Visibility = Visibility.Collapsed;
             var query = search.Text.Trim(); var kind = kindFilter.SelectedItem?.ToString() ?? "All";
-            IEnumerable<TrackInfo> items = shell.Workspace.Tracks.Where(track =>
-                (kind == "All" || track.Kind.Equals(kind, StringComparison.OrdinalIgnoreCase)) &&
-                (query.Length == 0 || track.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                 track.Kind.Contains(query, StringComparison.OrdinalIgnoreCase) || (track.ChannelId?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false)));
-            items = items.OrderBy(track => track.Name, StringComparer.OrdinalIgnoreCase);
-            rows.ReplaceAll(items.Select(TrackDisplayRow.From));
+            var allDisplayTracks = shell.Workspace.Tracks.OrderBy(track => track.Name, StringComparer.OrdinalIgnoreCase)
+                .Select((track, index) => (Track: track, Row: TrackDisplayRow.From(track, index + 1)))
+                .ToArray();
+            var displayTracks = allDisplayTracks.Where(item =>
+                (kind == "All" || item.Row.Type.Equals(kind, StringComparison.OrdinalIgnoreCase)) &&
+                (query.Length == 0 || item.Row.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                 item.Row.Type.Contains(query, StringComparison.OrdinalIgnoreCase))).ToArray();
+            var channelNames = displayTracks.Where(item => TrackDisplayRow.HasSourceValue(item.Track.ChannelId))
+                .GroupBy(item => item.Track.ChannelId!, StringComparer.Ordinal)
+                .Where(group => group.Count() == 1)
+                .ToDictionary(group => group.Key, group => group.Single().Row.Name, StringComparer.Ordinal);
+            rows.ReplaceAll(displayTracks.Select(item => item.Row with
+            {
+                Destination = TrackDisplayRow.HasSourceValue(item.Track.DestinationChannelId) &&
+                    channelNames.TryGetValue(item.Track.DestinationChannelId!, out var destination)
+                        ? destination : TrackDisplayRow.HasSourceValue(item.Track.DestinationChannelId) ? "Output not found" : "—"
+            }));
             empty.Visibility = rows.Count == 0 && shell.Workspace.Tracks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             count.Text = $"{rows.Count:N0} of {shell.Workspace.Tracks.Count:N0} tracks";
         }
@@ -190,10 +203,11 @@ internal sealed partial class WorkspacePageFactory
             detail.Children.Clear();
             detail.Children.Add(new TextBlock { Text = row.Name, FontSize = 17,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-            detail.Children.Add(new TextBlock { Text = $"{row.Type} · Channel {row.Channel} · Output {row.Destination}",
+            detail.Children.Add(new TextBlock { Text = $"{row.Type} · Output {row.Destination}",
                 FontSize = 12, TextWrapping = TextWrapping.Wrap });
-            detail.Children.Add(new TextBlock { Text = $"Volume {row.SavedValue} · {row.Status}",
-                Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], TextWrapping = TextWrapping.Wrap });
+            if (row.MixSummary != "—")
+                detail.Children.Add(new TextBlock { Text = row.MixSummary,
+                    Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], TextWrapping = TextWrapping.Wrap });
             if (project is not null && row.Source is { Evidence: EvidenceLevel.Candidate } source)
             {
                 var mixerRecords = mixerTrackObservations
@@ -261,16 +275,14 @@ internal sealed partial class WorkspacePageFactory
         var browser = new DataBrowserControl<TrackDisplayRow>(
             [new("Track", "Name", row => row.Name, row => row.Name),
              new("Type", "Type", row => row.Type, row => row.Type),
-             new("Channel", "Channel", row => row.Channel, row => row.Channel),
              new("Output", "Destination", row => row.Destination, row => row.Destination),
-             new("Level · mute · solo", "SavedValue", row => row.SavedValue + " · " + row.Status, row => row.SavedValue),
-             new("Details", "Evidence", row => row.Evidence, row => row.Evidence)],
-            rows, ["None", "Type", "Evidence"], "None",
-            (row, mode) => mode switch { "Type" => row.Type, "Evidence" => row.Evidence, _ => "" },
+             new("Mix", "MixSummary", row => row.MixSummary, row => row.MixSummary)],
+            rows, ["None", "Type"], "None",
+            (row, mode) => mode switch { "Type" => row.Type, _ => "" },
             _ => { }, row => { ShowTrackDetails(row); return Task.CompletedTask; }, row =>
             {
                 var menu = new MenuFlyout();
-                var inspect = new MenuFlyoutItem { Text = "Analyze track" };
+                var inspect = new MenuFlyoutItem { Text = "Track details" };
                 inspect.Click += (_, _) => ShowTrackDetails(row);
                 menu.Items.Add(inspect);
                 var media = new MenuFlyoutItem { Text = "Find track audio" };
@@ -314,15 +326,11 @@ internal sealed partial class WorkspacePageFactory
             // projected into ValueN. Binding directly to PluginGroupCardRow leaves
             // every custom card label blank.
             title.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Value0") });
-            var vendor = new TextBlock { FontSize = 12, Foreground = Muted, TextTrimming = TextTrimming.CharacterEllipsis };
-            vendor.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Value1") });
-            var formatText = new TextBlock { FontSize = 11, Foreground = Muted, TextTrimming = TextTrimming.CharacterEllipsis };
-            formatText.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Value2") });
             var uses = new TextBlock { FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
             uses.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Value3") });
             var locations = new TextBlock { FontSize = 11, Foreground = Muted, TextTrimming = TextTrimming.CharacterEllipsis };
-            locations.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Value5") });
-            var body = new StackPanel { Spacing = 5, Children = { title, vendor, formatText, uses, locations } };
+            locations.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Value4") });
+            var body = new StackPanel { Spacing = 7, Children = { title, uses, locations } };
             var row = new Grid { ColumnSpacing = 12, Children = { art, body } };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -409,7 +417,7 @@ internal sealed partial class WorkspacePageFactory
             shell.PluginInventory.Search = card.Name; navigate("Inventory");
         }
         var checkCatalog = Button("Find product info", async () => await FindProductInfoAsync());
-        var researchKvr = Button("Open on KVR", async () => await OpenProductPageAsync());
+        var researchKvr = Button("Search KVR", async () => await OpenProductPageAsync());
         actionRow.Children.Add(checkCatalog); actionRow.Children.Add(researchKvr);
         var moreActions = new Button { Content = "More", Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
         var moreMenu = new MenuFlyout();
@@ -445,12 +453,14 @@ internal sealed partial class WorkspacePageFactory
             selectedCard = card;
             if (card is null) { details.Visibility = Visibility.Collapsed; return; }
             detailTitle.Text = card.Name;
-            detailSummary.Text = $"{card.Vendor} · {card.Format} · {card.Uses}";
+            detailSummary.Text = string.Join(" · ", new[] { card.Vendor, card.Format, card.Uses }
+                .Where(value => !string.IsNullOrWhiteSpace(value)));
             productInfo.Text = "Choose Find product info to see a saved description.";
             ShowProductArtwork(card.Artwork);
             usageRows.Clear();
             foreach (var use in card.Group.Uses)
-                usageRows.Add(use.Location);
+                usageRows.Add(use.Reference.Evidence == EvidenceLevel.Confirmed
+                    ? use.Location : "Project location not identified");
             details.Visibility = Visibility.Visible;
             eqRows.Clear();
             foreach (var band in project?.EqBands ?? [])
@@ -465,10 +475,9 @@ internal sealed partial class WorkspacePageFactory
              new("Vendor", "Vendor", row => row.Vendor, row => row.Vendor),
              new("Format", "Format", row => row.Format, row => row.Format),
              new("Uses", "Uses", row => row.Uses, row => row.Group.Observations),
-             new("Evidence", "Evidence", row => row.Reliability, row => row.Reliability),
              new("Locations", "Locations", row => row.Locations, row => row.Locations)],
-            cards, ["None", "Format", "Vendor", "Evidence"], "None",
-            (row, mode) => mode switch { "Format" => row.Format, "Vendor" => row.Vendor, "Evidence" => row.Reliability, _ => "" },
+            cards, ["None", "Format", "Vendor"], "None",
+            (row, mode) => mode switch { "Format" => row.Format, "Vendor" => row.Vendor, _ => "" },
             _ => { }, row => { SelectGroup(row); return Task.CompletedTask; },
             row =>
             {

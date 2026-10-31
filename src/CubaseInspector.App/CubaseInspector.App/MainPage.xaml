@@ -95,17 +95,20 @@
                     SelectionChanged="Navigation_SelectionChanged" CompactModeThresholdWidth="700"
                     ExpandedModeThresholdWidth="1100" OpenPaneLength="240" CompactPaneLength="54">
       <NavigationView.MenuItems>
+        <NavigationViewItemHeader Content="LIBRARY" />
         <NavigationViewItem Content="Project Library" Tag="Projects" Icon="Home" />
         <NavigationViewItem Content="Search everything" Tag="Search" Icon="Find" />
         <NavigationViewItem Content="Project Calendar" Tag="Calendar" Icon="Calendar" />
+        <NavigationViewItemHeader Content="PROJECT" />
         <NavigationViewItem Content="Overview" Tag="Overview" Icon="View" />
         <NavigationViewItem Content="Tracks &amp; Channels" Tag="Tracks" Icon="List" />
         <NavigationViewItem Content="Plug-ins" Tag="Plugins" Icon="Library" />
         <NavigationViewItem Content="Routing" Tag="Routing" Icon="Rotate" />
-        <NavigationViewItem Content="Audio / MIDI I/O" Tag="IO" Icon="Microphone" />
+        <NavigationViewItem Content="Studio map" Tag="IO" Icon="Microphone" />
         <NavigationViewItem Content="Audio" Tag="Samples" Icon="Find" />
-        <NavigationViewItem Content="MIDI tracks" Tag="Midi" Icon="MusicInfo" />
-        <NavigationViewItem Content="Statistics" Tag="Statistics" Icon="AllApps" />
+        <NavigationViewItem Content="MIDI" Tag="Midi" Icon="MusicInfo" />
+        <NavigationViewItemHeader Content="TOOLS" />
+        <NavigationViewItem Content="Insights" Tag="Statistics" Icon="AllApps" />
         <NavigationViewItemSeparator />
         <NavigationViewItem Content="Compare projects" Tag="Compare" Icon="Switch" />
         <NavigationViewItem Content="Local plug-in inventory" Tag="Inventory" Icon="Find" />

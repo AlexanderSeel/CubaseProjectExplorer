@@ -19,20 +19,20 @@ internal sealed partial class WorkspacePageFactory
         var root = new StackPanel { Spacing = 12 };
         var metrics = new Grid { ColumnSpacing = 12 };
         for (var index = 0; index < 3; index++) metrics.ColumnDefinitions.Add(new ColumnDefinition());
-        var values = new[] { ("SAVED PORTS", diagram.SavedPorts.ToString("N0")), ("AUDIO REFERENCES", diagram.AudioPaths.ToString("N0")), ("MIDI NOTES", diagram.MidiNotes.ToString("N0")) };
+        var values = new[] { ("PORTS", diagram.SavedPorts.ToString("N0")), ("AUDIO FILES", diagram.AudioPaths.ToString("N0")), ("MIDI NOTES", diagram.MidiNotes.ToString("N0")) };
         for (var index = 0; index < values.Length; index++)
         {
             var metric = Metric(values[index].Item1, values[index].Item2);
             Grid.SetColumn(metric, index); metrics.Children.Add(metric);
         }
         root.Children.Add(metrics);
-        var search = FilterTextBox("Find a port, channel, audio file or MIDI stream", 320);
-        var picker = new ComboBox { DisplayMemberPath = nameof(StudioIoNode.Name), Width = 300, PlaceholderText = "Select a studio node" };
-        AutomationProperties.SetName(picker, "Studio diagram selected node");
+        var search = FilterTextBox("Find a track, effect, bus or file", 320);
+        var picker = new ComboBox { DisplayMemberPath = nameof(StudioIoNode.Name), Width = 300, PlaceholderText = "Choose a track or connection" };
+        AutomationProperties.SetName(picker, "Choose a track or connection in the studio map");
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { search, picker } };
         root.Children.Add(toolbar);
         var canvas = new Canvas { Width = 1040, Height = 510 };
-        AutomationProperties.SetName(canvas, "Studio patchbay showing selected node and its saved input and output relationships");
+        AutomationProperties.SetName(canvas, "Studio map showing the selected track and its saved effects, buses and outputs");
         var viewport = new ScrollViewer { Content = canvas, Height = 530, ZoomMode = ZoomMode.Enabled,
             MinZoomFactor = .45f, MaxZoomFactor = 1.5f, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -55,7 +55,7 @@ internal sealed partial class WorkspacePageFactory
             await load;
         }));
         root.Children.Add(navigation);
-        root.Children.Add(new TextBlock { Text = "Solid lines: declared relationships. Dashed lines: CPR reader interpretations. Each node and connector shows its evidence level; open Trace full chain for MIDI, inserts, buses/FX and output paths. CPR insert slots and saved EQ values are exposed where readable, while EQ placement and send tap timing remain unknown. Port and driver descriptions come from the saved file. The diagram includes up to 2,000 media/MIDI groups per section; open their workspace for filtering and detailed inspection.",
+        root.Children.Add(new TextBlock { Text = "Choose a track to follow its saved effects, buses and outputs. Dashed links are the reader's best interpretation; use the info button on a selected item for source details. Open Audio or MIDI to preview the project's media and notes. Hardware connections and some processing order may not be saved or decoded.",
             Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap });
         string? selectedId = null;
         var choosing = false;

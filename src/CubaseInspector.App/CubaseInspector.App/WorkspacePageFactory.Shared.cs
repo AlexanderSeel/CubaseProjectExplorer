@@ -7,8 +7,8 @@ namespace CubaseInspector.App;
 
 internal sealed partial class WorkspacePageFactory
 {
-    private static readonly Thickness PageInset = new(0);
-    private static readonly Thickness SectionInset = new(16);
+    private static readonly Thickness PageInset = new(0, 2, 0, 16);
+    private static readonly Thickness SectionInset = new(18);
     private static SolidColorBrush ResourceBrush(string key) => (SolidColorBrush)Application.Current.Resources[key];
     private static readonly SolidColorBrush Surface = ResourceBrush("InspectorSurfaceBrush");
     private static readonly SolidColorBrush Accent = ResourceBrush("InspectorAccentBrush");
@@ -19,19 +19,20 @@ internal sealed partial class WorkspacePageFactory
 
     private StackPanel Page(string title, string subtitle)
     {
-        var root = new StackPanel { Spacing = 10, Margin = PageInset };
-        var heading = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        var root = new StackPanel { Spacing = 16, Margin = PageInset, MaxWidth = 1680,
+            HorizontalAlignment = HorizontalAlignment.Center };
+        var heading = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         heading.Children.Add(new TextBlock { Text = title, Style = (Style)Application.Current.Resources["InspectorPageTitleStyle"],
             TextTrimming = TextTrimming.CharacterEllipsis });
         heading.Children.Add(new TextBlock { Text = subtitle, Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"],
             TextWrapping = TextWrapping.Wrap, MaxWidth = 760 });
-        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6,
+        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8,
             HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
         var toolbarViewport = new ScrollViewer { Content = toolbar, MaxWidth = 760,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalAlignment = VerticalAlignment.Center };
-        var headerGrid = new Grid { ColumnSpacing = 16, MinHeight = 64 };
+        var headerGrid = new Grid { ColumnSpacing = 24, MinHeight = 76 };
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         headerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -51,7 +52,7 @@ internal sealed partial class WorkspacePageFactory
             toolbar.Orientation = args.NewSize.Width < 520 ? Orientation.Vertical : Orientation.Horizontal;
         };
         root.Children.Add(new Border { BorderBrush = Divider, BorderThickness = new Thickness(0, 0, 0, 1),
-            Padding = new Thickness(0, 0, 0, 12), Child = headerGrid });
+            Padding = new Thickness(0, 0, 0, 14), Child = headerGrid });
         _pageToolbars[root] = toolbar;
         return root;
     }
@@ -129,16 +130,18 @@ internal sealed partial class WorkspacePageFactory
 
     private Border Metric(string label, string value) => new()
     {
-        Background = Surface, CornerRadius = new CornerRadius(6), Padding = SectionInset,
+        Background = Surface, BorderBrush = Divider, BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(10), Padding = SectionInset,
         Child = new StackPanel { Spacing = 4, Children = { new TextBlock { Text = label, Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
             new TextBlock { Text = value, FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap } } }
     };
 
     private Border Note(string text) => new() { Background = Notice, BorderBrush = Accent,
-        BorderThickness = new Thickness(2, 0, 0, 0), Padding = new Thickness(12, 10), Margin = new Thickness(0, 5, 0, 8),
+        CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), Padding = new Thickness(14, 12), Margin = new Thickness(0, 2, 0, 2),
         Child = new TextBlock { Text = text, Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], TextWrapping = TextWrapping.Wrap } };
 
-    private Border Empty(string text) => new() { Background = Surface, Padding = new Thickness(18), Margin = new Thickness(0, 8, 0, 0),
+    private Border Empty(string text) => new() { Background = Surface, BorderBrush = Divider, BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(10), Padding = new Thickness(20), Margin = new Thickness(0, 4, 0, 0),
         Child = new TextBlock { Text = text, Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], Foreground = Muted } };
 
     private StackPanel DetailCard(string heading, params (string Name, string Value)[] rows)

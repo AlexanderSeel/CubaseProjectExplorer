@@ -10,36 +10,40 @@
         <!-- Load Uno.UI.Toolkit resources -->
         <ToolkitResources xmlns="using:Uno.Toolkit.UI" />
       </ResourceDictionary.MergedDictionaries>
-      <SolidColorBrush x:Key="InspectorSurfaceBrush" Color="#FF23272D" />
-      <SolidColorBrush x:Key="InspectorAccentBrush" Color="#FF4191F5" />
-      <SolidColorBrush x:Key="InspectorTextSecondaryBrush" Color="#FFB4BCC7" />
-      <SolidColorBrush x:Key="InspectorDividerBrush" Color="#FF373D45" />
-      <SolidColorBrush x:Key="InspectorNoticeBrush" Color="#FF203043" />
+      <SolidColorBrush x:Key="InspectorSurfaceBrush" Color="#FF292F36" />
+      <SolidColorBrush x:Key="InspectorAccentBrush" Color="#FF74B7E7" />
+      <SolidColorBrush x:Key="InspectorTextSecondaryBrush" Color="#FFBAC3CE" />
+      <SolidColorBrush x:Key="InspectorDividerBrush" Color="#FF3B444E" />
+      <SolidColorBrush x:Key="InspectorNoticeBrush" Color="#FF263542" />
 
       <Style x:Key="InspectorPageTitleStyle" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="24" />
+        <Setter Property="FontSize" Value="28" />
         <Setter Property="FontWeight" Value="SemiBold" />
       </Style>
       <Style x:Key="InspectorSectionTitleStyle" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontSize" Value="15" />
         <Setter Property="FontWeight" Value="SemiBold" />
       </Style>
       <Style x:Key="InspectorBodyTextStyle" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="13" />
       </Style>
       <Style x:Key="InspectorMetadataTextStyle" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="12" />
         <Setter Property="Foreground" Value="{StaticResource InspectorTextSecondaryBrush}" />
       </Style>
       <Style x:Key="InspectorCommandButtonStyle" TargetType="Button">
-        <Setter Property="MinHeight" Value="32" />
-        <Setter Property="Margin" Value="0,2,0,2" />
+        <Setter Property="MinHeight" Value="36" />
+        <Setter Property="Padding" Value="14,5" />
+        <Setter Property="CornerRadius" Value="7" />
+        <Setter Property="Margin" Value="0,1,0,1" />
       </Style>
       <Style x:Key="InspectorFilterTextBoxStyle" TargetType="TextBox">
-        <Setter Property="MinHeight" Value="32" />
+        <Setter Property="MinHeight" Value="36" />
+        <Setter Property="CornerRadius" Value="7" />
       </Style>
       <Style x:Key="InspectorFilterComboBoxStyle" TargetType="ComboBox">
-        <Setter Property="MinHeight" Value="32" />
+        <Setter Property="MinHeight" Value="36" />
+        <Setter Property="CornerRadius" Value="7" />
       </Style>
 
     </ResourceDictionary>

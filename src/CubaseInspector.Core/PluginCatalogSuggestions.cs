@@ -41,24 +41,24 @@ public static class PluginCatalogSuggestions
 /// <summary>Explicit external research links, not scraped metadata or an official provider API.</summary>
 public static class ExternalPluginDiscovery
 {
-    /// <summary>Opens KVR's own product database with the selected name in its search query.</summary>
+    /// <summary>Finds KVR product pages by name using a web search restricted to KVR's product URL space.</summary>
     public static string? KvrSearchUrl(string? pluginName, string? vendor)
     {
         if (string.IsNullOrWhiteSpace(pluginName)) return null;
         if (pluginName.Length > 128 || pluginName.Any(char.IsControl) ||
             vendor is { Length: > 100 } || vendor?.Any(char.IsControl) == true) return null;
         var term = pluginName.Trim();
-        var maker = string.IsNullOrWhiteSpace(vendor) ? "" : vendor.Trim();
         if (term.Length < 2) return null;
-        var query = term + (maker.Length == 0 ? "" : " " + maker);
-        return "https://www.kvraudio.com/plugins?search=" + Uri.EscapeDataString(query);
+        var maker = string.IsNullOrWhiteSpace(vendor) ? "" : vendor.Trim();
+        var query = "site:kvraudio.com/product \"" + term + "\"" + (maker.Length == 0 ? "" : " \"" + maker + "\"");
+        return "https://www.google.com/search?q=" + Uri.EscapeDataString(query);
     }
 
     public static string? SearchUrl(string provider, string? pluginName, string? vendor)
     {
         var domain = provider switch
         {
-            "KVR" => "kvraudio.com",
+            "KVR" => "kvraudio.com/product",
             "VST3s" => "vst3s.com",
             _ => null
         };

@@ -386,7 +386,7 @@ internal sealed partial class WorkspacePageFactory
         studio.Children.Add(Answer("How do I hear a project sample?",
             "Open Audio, choose a file, and select Preview. Supported WAV files show a waveform you can click to seek, with play, pause, and transport controls. If the stored location no longer works, the preview reports that and leaves the project untouched."));
         studio.Children.Add(Answer("How do I find out what a plug-in is?",
-            "Select a plug-in to see its name, maker when available, and where it appears. Find product info checks the saved catalog; Open on KVR goes to a product listing or a name search; Find on this computer checks your local plug-in collection. Product listings and names do not prove that the same version is installed or ready to open."));
+            "Select a plug-in to see its name, maker when available, and where it appears. Find product info checks the saved catalog; Search KVR opens a name-targeted web search limited to KVR product pages, or opens a saved KVR product link when available; Find on this computer checks your local plug-in collection. Product listings and names do not prove that the same version is installed or ready to open."));
         studio.Children.Add(Answer("Where are technical details?",
             "Select the `(i)` button beside an item for its exact source fields. The Help & reader FAQ explains file-format terms, why some relationships are uncertain, and which parts of native project reading are still being researched."));
 

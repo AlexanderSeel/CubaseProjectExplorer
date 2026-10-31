@@ -120,12 +120,13 @@ public class PluginCatalogSuggestionsTests
     }
 
     [Fact]
-    public void KvrResearchOpensKvrDatabaseWithEscapedProductAndVendor()
+    public void KvrResearchSearchesKvrProductPagesWithEscapedProductAndVendor()
     {
         var url = ExternalPluginDiscovery.KvrSearchUrl("Pro-Q 3 & Echo", "Fab Filter");
-        Assert.StartsWith("https://www.kvraudio.com/plugins?search=", url);
-        Assert.Contains("%26", url);
-        Assert.Contains("Fab%20Filter", url);
+        Assert.StartsWith("https://www.google.com/search?q=", url);
+        Assert.Contains("site%3Akvraudio.com%2Fproduct", url);
+        Assert.Contains("%22Pro-Q%203%20%26%20Echo%22", url);
+        Assert.Contains("%22Fab%20Filter%22", url);
         Assert.Null(ExternalPluginDiscovery.KvrSearchUrl("\ninvalid", null));
     }
 }

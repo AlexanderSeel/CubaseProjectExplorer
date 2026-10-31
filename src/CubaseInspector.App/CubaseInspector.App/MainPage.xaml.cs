@@ -174,7 +174,7 @@ public sealed partial class MainPage : Page
         UpdateNavigationControls();
         UpdateBusyIndicator();
         StatusText.Text = page == "Projects" ? _shell.Library.Status
-            : _shell.HasProject ? $"{_shell.Workspace.ProjectName} · {_shell.Workspace.TrackCount} track records · {_shell.Workspace.SavedBy}" : "No project selected";
+            : _shell.HasProject ? $"{_shell.Workspace.ProjectName} · {_shell.Workspace.TrackCount} tracks · {_shell.Workspace.SavedBy}" : "No project selected";
     }
 
     private void Back_Click(object sender, RoutedEventArgs e)
@@ -213,10 +213,10 @@ public sealed partial class MainPage : Page
 
     private static string PageLabel(string page) => page switch
     {
-        "Projects" => "Project Library", "Search" => "Search everything", "Calendar" => "Project Calendar", "IO" => "Audio / MIDI I/O",
+        "Projects" => "Project Library", "Search" => "Search everything", "Calendar" => "Project Calendar", "IO" => "Studio map",
         "Inventory" => "Local plug-in inventory", "Catalog" => "Plug-in catalog", "Preflight" => "Dependency preflight",
         "Overview" => "Studio overview", "Tools" => "Reports & tools", "Database" => "Library database", "Compare" => "Compare projects",
-        "Samples" => "Audio", "Midi" => "MIDI tracks", "Help" => "Help & reader FAQ",
+        "Samples" => "Audio", "Midi" => "MIDI", "Statistics" => "Insights", "Help" => "Help & reader FAQ",
         _ => page
     };
 

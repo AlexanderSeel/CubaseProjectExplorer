@@ -15,7 +15,11 @@ internal sealed partial class WorkspacePageFactory
 {
     private UIElement SamplesPage()
     {
-        var root = Page("Find audio", "Find, preview, and organize audio used in your projects.");
+        var activeProject = shell.Workspace.Project;
+        var root = Page("Audio", activeProject is null
+            ? "Open a project to browse and preview its audio."
+            : $"Browse and preview audio used in {activeProject.Name}.");
+        if (activeProject is not null) mediaLibrary.SetSampleProjectScope(activeProject.FilePath);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var search = FilterTextBox("Search filename, folder, project, track…", 300);
         search.Text = mediaLibrary.Search;
@@ -429,13 +433,26 @@ internal sealed partial class WorkspacePageFactory
             mediaLibrary.PropertyChanged -= previewChanged;
             mediaLibrary.NativeSampleCandidates.CollectionChanged -= nativeSamplesChanged;
         };
-        root.Loaded += (_, _) => _ = mediaLibrary.LoadAsync();
+        root.Loaded += (_, _) =>
+        {
+            if (activeProject is null)
+            {
+                mediaLibrary.SetSampleProjectScope(null);
+                mediaLibrary.Status = "Open a project to see its audio. Choose Analyze to inspect one project or the whole library.";
+            }
+            else if (!string.Equals(mediaLibrary.IndexProjectPath, activeProject.FilePath, StringComparison.OrdinalIgnoreCase) ||
+                     !string.Equals(mediaLibrary.IndexStage, "Index ready", StringComparison.Ordinal))
+                _ = mediaLibrary.LoadOpenProjectAsync(activeProject);
+        };
         return root;
     }
 
     private UIElement MidiTracksPage()
     {
-        var root = Page("MIDI tracks", "Browse note parts and tracks from your projects, then preview or export what is supported.");
+        var activeProject = shell.Workspace.Project;
+        var root = Page("MIDI", activeProject is null
+            ? "Open a project to browse its MIDI tracks and notes."
+            : $"Browse MIDI tracks and notes in {activeProject.Name}.");
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var search = FilterTextBox("Search project, part or pitch…", 300);
         search.Text = mediaLibrary.MidiSearch;
@@ -609,7 +626,14 @@ internal sealed partial class WorkspacePageFactory
         };
         mediaLibrary.PropertyChanged += sourceChanged;
         root.Children.Add(DashboardTabs(("MIDI browser", browserPanel), ("Analysis", activityPanel)));
-        root.Loaded += (_, _) => _ = mediaLibrary.LoadAsync();
+        root.Loaded += (_, _) =>
+        {
+            if (activeProject is null)
+                mediaLibrary.Status = "Open a project to see its MIDI. Choose Analyze to inspect one project or the whole library.";
+            else if (!string.Equals(mediaLibrary.IndexProjectPath, activeProject.FilePath, StringComparison.OrdinalIgnoreCase) ||
+                     !string.Equals(mediaLibrary.IndexStage, "Index ready", StringComparison.Ordinal))
+                _ = mediaLibrary.LoadOpenProjectAsync(activeProject);
+        };
         UpdateSource();
         root.Unloaded += (_, _) =>
         {

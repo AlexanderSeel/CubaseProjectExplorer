@@ -61,7 +61,7 @@ public sealed partial class ProjectWorkspaceViewModel : ObservableObject
         : Project?.Routing.Count > 0
             ? "Connections shown below come from exported project data. Hardware device mappings are not established."
             : "No routing connections were supplied by this project format.";
-    public string IoSummary => "Explore saved ports, channels, audio references and MIDI streams. Select a studio node to view its relationships and source values.";
+    public string IoSummary => "Follow how the project connects tracks, plug-ins, buses and outputs. Find audio paths and MIDI parts in the media view.";
 
     private string? CandidateValue(params string[] fields)
     {

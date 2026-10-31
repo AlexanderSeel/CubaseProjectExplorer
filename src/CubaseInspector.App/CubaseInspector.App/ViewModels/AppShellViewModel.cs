@@ -145,7 +145,7 @@ public sealed partial class AppShellViewModel : ObservableObject
             if (string.IsNullOrWhiteSpace(projectPath))
             {
                 Status = "Analyzing audio and MIDI across the library…";
-                await MediaLibrary.RebuildIndexScopeAsync(null);
+                await MediaLibrary.RebuildIndexScopeAsync(null, _preferences.ProjectScanTypes);
                 Status = MediaLibrary.Status;
                 return;
             }
@@ -172,7 +172,7 @@ public sealed partial class AppShellViewModel : ObservableObject
             }
 
             Status = $"Analyzing {Path.GetFileNameWithoutExtension(projectPath)}…";
-            await MediaLibrary.RebuildIndexScopeAsync(projectPath);
+            await MediaLibrary.RebuildIndexScopeAsync(projectPath, _preferences.ProjectScanTypes);
             Status = MediaLibrary.Status;
         }
         finally { IsBusy = false; }

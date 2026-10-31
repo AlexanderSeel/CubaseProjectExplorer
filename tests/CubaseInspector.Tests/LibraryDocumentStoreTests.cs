@@ -1,5 +1,6 @@
 using CubaseInspector.Core;
 using CubaseInspector.Infrastructure;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace CubaseInspector.Tests;
@@ -37,7 +38,7 @@ public sealed class LibraryDocumentStoreTests
     }
 
     [Fact]
-    public async Task LibraryProjectionReadsFullDocumentsIndividuallyAndRetainsBrowserEvidence()
+    public async Task LibraryProjectionReadsCompactRowsAndRetainsBrowserEvidence()
     {
         var directory = Directory.CreateTempSubdirectory("cpe-library-projection-");
         var database = Path.Combine(directory.FullName, "library.db");
@@ -58,6 +59,10 @@ public sealed class LibraryDocumentStoreTests
             Assert.Equal(1, summary.TrackRecordCount);
             Assert.Equal(1, summary.PluginReferenceCount);
             Assert.Equal(1, summary.ParserWarningCount);
+            Assert.Empty(summary.Project.Tracks);
+            Assert.Empty(summary.Project.Plugins);
+            Assert.Empty(summary.Project.Routing);
+            Assert.Empty(summary.Project.Warnings);
             Assert.Contains(summary.SearchablePlugins!, plugin => plugin.Name == "Bass Engine");
             Assert.Single(persisted.Snapshot!.Tracks);
             Assert.Single(persisted.Snapshot.Plugins);
@@ -86,6 +91,38 @@ public sealed class LibraryDocumentStoreTests
 
             Assert.Equal("song.cpr", Path.GetFileName(Assert.Single(enabled).Project.FilePath));
             Assert.Equal(2, all.Count);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task LibraryProjectionKeepsArraysForLegacyDocumentsWithoutCompactCounts()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-library-legacy-projection-");
+        var database = Path.Combine(directory.FullName, "library.db");
+        try
+        {
+            using var store = new LibraryDocumentStore(database);
+            var project = new ProjectSnapshot("C:/Sessions/legacy.cpr", "legacy", "CPR", "12", null,
+                EvidenceLevel.Confirmed,
+                [new TrackInfo("track", "Keys", "Instrument", null, null, null, null, null)],
+                [new PluginReference("uid", "Keys", null, "VST3", "track", EvidenceLevel.Confirmed)],
+                [], []);
+            await store.SaveScanAsync("C:/Sessions", new FolderReport([project], [], false, 1, 1));
+
+            using (var connection = new SqliteConnection($"Data Source={database};Pooling=False"))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "UPDATE documents SET Data=json_remove(Data, '$.trackRecordCount') WHERE TypeName=$type;";
+                command.Parameters.AddWithValue("$type", nameof(LibraryProjectDocument));
+                Assert.Equal(1, await command.ExecuteNonQueryAsync());
+            }
+
+            var entry = Assert.Single(await store.GetProjectLibraryEntriesAsync());
+            Assert.Equal(1, entry.TrackRecordCount);
+            Assert.Equal(1, entry.PluginReferenceCount);
+            Assert.Contains(entry.SearchablePlugins!, facet => facet.Name == "Keys");
         }
         finally { directory.Delete(recursive: true); }
     }

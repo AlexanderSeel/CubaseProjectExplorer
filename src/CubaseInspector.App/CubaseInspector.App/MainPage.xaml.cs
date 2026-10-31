@@ -17,17 +17,14 @@ public sealed partial class MainPage : Page
     private AppShellViewModel? _shell;
     private ProjectLibraryViewModel? _progressLibrary;
     private Button? _analyzeButton;
-    private Button? _scanButton;
     private PluginInventoryViewModel? _progressInventory;
     private readonly NavigationHistory _history = new("Overview");
-    private bool _startupHydrating;
     private bool _rendering;
 
     public MainPage()
     {
         InitializeComponent();
         _analyzeButton = AnalyzeProjectButton;
-        _scanButton = ScanFolderButton;
         RequestedTheme = ElementTheme.Dark;
     }
 
@@ -43,9 +40,7 @@ public sealed partial class MainPage : Page
         if (_progressInventory is not null) _progressInventory.PropertyChanged -= InventoryProgressChanged;
         _progressInventory = _shell.PluginInventory;
         _progressInventory.PropertyChanged += InventoryProgressChanged;
-        _startupHydrating = true;
         _progressLibrary.Status = "Loading indexed projects…";
-        UpdateScanProgress();
         _shell.SetTheme(_shell.Theme);
         RequestedTheme = _shell.Theme switch { "Light" => ElementTheme.Light, "System" => ElementTheme.Default, _ => ElementTheme.Dark };
         StatusText.Text = _progressLibrary.Status;
@@ -60,8 +55,6 @@ public sealed partial class MainPage : Page
         try
         {
             await library.LoadSavedProjectsAsync(shell.ProjectScanTypes);
-            await shell.LibraryAdmin.RefreshCommand.ExecuteAsync(null);
-            StatusText.Text = library.Status;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -70,7 +63,6 @@ public sealed partial class MainPage : Page
         }
         finally
         {
-            _startupHydrating = false;
             UpdateBusyIndicator();
         }
     }
@@ -91,8 +83,6 @@ public sealed partial class MainPage : Page
         Render("Projects");
     }
 
-    private void CancelScan_Click(object sender, RoutedEventArgs e) => _shell?.Library.CancelScanCommand.Execute(null);
-
     private void ActivityCancel_Click(object sender, RoutedEventArgs e)
     {
         if (_shell?.MediaLibrary.IsIndexLoading == true)
@@ -109,32 +99,19 @@ public sealed partial class MainPage : Page
             nameof(ProjectLibraryViewModel.IsBusy) or nameof(ProjectLibraryViewModel.Progress) or
             nameof(ProjectLibraryViewModel.ProgressText) or nameof(ProjectLibraryViewModel.Status))
         {
-            UpdateScanProgress();
+            UpdateBusyIndicator();
             if (_progressLibrary is not null && !_progressLibrary.IsScanning)
                 StatusText.Text = _progressLibrary.Status;
         }
     }
 
-    private void UpdateScanProgress()
-    {
-        if (_shell is null) return;
-        var library = _shell.Library;
-        ScanProgressPanel.Visibility = library.IsBusy ? Visibility.Visible : Visibility.Collapsed;
-        ScanProgressLabel.Text = string.IsNullOrWhiteSpace(library.ProgressText) ? library.Status : library.ProgressText;
-        ToolTipService.SetToolTip(ScanProgressLabel, ScanProgressLabel.Text);
-        ScanProgressBar.Value = library.Progress;
-        ScanProgressBar.IsIndeterminate = library.IsBusy && library.Progress <= 0;
-        ScanProgressPercent.Text = library.IsBusy && library.Progress > 0
-            ? $"{library.Progress:0}%" : string.Empty;
-        CancelScanButton.Visibility = library.IsScanning ? Visibility.Visible : Visibility.Collapsed;
-        if (_analyzeButton is not null) _analyzeButton.IsEnabled = _shell is { IsAnyBusy: false };
-        if (_scanButton is not null) _scanButton.IsEnabled = !library.IsBusy;
-    }
-
     private void InventoryProgressChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (_progressInventory is not null && args.PropertyName is nameof(PluginInventoryViewModel.Status) or nameof(PluginInventoryViewModel.IsBusy))
+        {
             StatusText.Text = _progressInventory.Status;
+            UpdateBusyIndicator();
+        }
     }
 
     private void Navigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
@@ -224,7 +201,9 @@ public sealed partial class MainPage : Page
     {
         if (_shell is null) return;
         var busy = _shell.IsAnyBusy;
+        StatusText.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
         if (_analyzeButton is not null) _analyzeButton.IsEnabled = !busy;
+        ScanFolderButton.IsEnabled = !busy;
         BusyIndicatorPanel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         BusySpinner.IsActive = busy;
         BusyText.Text = busy ? ActivityStatus(_shell) : string.Empty;
@@ -232,11 +211,12 @@ public sealed partial class MainPage : Page
         if (_shell.MediaLibrary.IsIndexLoading)
             activityDetails += $"\n{_shell.MediaLibrary.IndexCurrentProject}\n{_shell.MediaLibrary.IndexOutcome}";
         ToolTipService.SetToolTip(BusyText, activityDetails);
-        var scan = !_startupHydrating && _shell.Library.IsScanning;
+        var scan = _shell.Library.IsScanning;
+        var startupLoad = _shell.Library.IsLoading;
         var analysis = _shell.MediaLibrary.IsIndexLoading || _shell.MediaLibrary.IsIndexFiltering;
-        ActivityProgressBar.Visibility = scan || analysis ? Visibility.Visible : Visibility.Collapsed;
-        ActivityProgressBar.IsIndeterminate = scan ? _shell.Library.Progress <= 0
-            : _shell.MediaLibrary.IsIndexFiltering || analysis && _shell.MediaLibrary.IndexTotal <= 0;
+        ActivityProgressBar.Visibility = scan || startupLoad || analysis ? Visibility.Visible : Visibility.Collapsed;
+        ActivityProgressBar.IsIndeterminate = startupLoad || (scan ? _shell.Library.Progress <= 0
+            : _shell.MediaLibrary.IsIndexFiltering || analysis && _shell.MediaLibrary.IndexTotal <= 0);
         ActivityProgressBar.Value = scan ? _shell.Library.Progress : _shell.MediaLibrary.IndexProgress;
         ActivityPercentText.Text = scan && _shell.Library.Progress > 0
             ? $"{_shell.Library.Progress:0}%"

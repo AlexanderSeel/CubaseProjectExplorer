@@ -33,10 +33,10 @@ internal sealed partial class WorkspacePageFactory
             metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         for (var row = 0; row < 2; row++)
             metrics.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var projectMetric = Metric("INDEXED PROJECTS", "0");
-        var visibleMetric = Metric("VISIBLE IN LIBRARY", "0");
-        var issueMetric = Metric("LATEST SCAN ISSUES", "0");
-        var typeMetric = Metric("PROJECT FORMATS", "No projects indexed");
+        var projectMetric = Metric("INDEXED PROJECTS", "—");
+        var visibleMetric = Metric("VISIBLE IN LIBRARY", "—");
+        var issueMetric = Metric("LATEST SCAN ISSUES", "—");
+        var typeMetric = Metric("PROJECT FORMATS", "—");
         AddMetric(0, 0, projectMetric);
         AddMetric(1, 0, visibleMetric);
         AddMetric(0, 1, issueMetric);
@@ -87,32 +87,32 @@ internal sealed partial class WorkspacePageFactory
         void Refresh()
         {
             var all = library.AllEntries;
+            var startupLoading = library.IsLoading && all.Count == 0;
             var formats = all.Select(entry => Path.GetExtension(entry.Project.FilePath).TrimStart('.').ToUpperInvariant())
                 .Where(value => value.Length > 0).GroupBy(value => value, StringComparer.OrdinalIgnoreCase)
                 .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.Key + " " + group.Count().ToString("N0"));
-            SetMetric(projectMetric, all.Count.ToString("N0"));
-            SetMetric(visibleMetric, library.Projects.Count.ToString("N0"));
-            SetMetric(issueMetric, library.ScanIssueCount.ToString("N0"));
+            SetMetric(projectMetric, startupLoading ? "—" : all.Count.ToString("N0"));
+            SetMetric(visibleMetric, startupLoading ? "—" : library.Projects.Count.ToString("N0"));
+            SetMetric(issueMetric, startupLoading ? "—" : library.ScanIssueCount.ToString("N0"));
             SetMetric(typeMetric, formats.Any() ? string.Join(" · ", formats)
-                : library.IsLoading ? "Loading project formats…" : "No projects indexed");
-            status.Text = library.IsLoading ? "Loading saved projects…" : library.IsScanning || library.IsFiltering
+                : startupLoading ? "—" : "No projects indexed");
+            health.Visibility = startupLoading ? Visibility.Collapsed : Visibility.Visible;
+            recentPanel.Visibility = startupLoading ? Visibility.Collapsed : Visibility.Visible;
+            status.Text = library.IsScanning || library.IsFiltering
                 ? string.IsNullOrWhiteSpace(library.ProgressText) ? library.Status : library.ProgressText
                 : library.Status;
             folder.Text = string.IsNullOrWhiteSpace(library.LastScannedFolder)
                 ? "Last scan folder: not recorded"
                 : "Last scan folder: " + library.LastScannedFolder;
-            healthNote.Text = library.IsLoading ? "The dashboard stays available while the saved library loads."
-                : library.ScanIssueCount == 0
+            healthNote.Text = library.ScanIssueCount == 0
                 ? "No issues recorded for the latest completed scan."
                 : $"{library.ScanIssueCount:N0} files failed or were only partially read. Open Project Library → Scan issues for details.";
             recentRows.Children.Clear();
             var recent = all.OrderByDescending(entry => entry.LastModifiedUtc).Take(8).ToArray();
             if (recent.Length == 0)
             {
-                recentRows.Children.Add(Empty(library.IsLoading
-                    ? "Loading saved projects… You can browse other pages while the local library hydrates."
-                    : "Your library is empty. Scan a project folder or open a project to get started."));
+                recentRows.Children.Add(Empty("Your library is empty. Scan a project folder or open a project to get started."));
             }
             else
             {

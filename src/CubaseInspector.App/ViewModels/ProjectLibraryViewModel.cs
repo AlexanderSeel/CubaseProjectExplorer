@@ -270,7 +270,15 @@ public sealed partial class ProjectLibraryViewModel(
                 ProgressText = $"Saving {_allEntries.Count:N0} scan results to the library…";
                 var token = _scanCancellation.IsCancellationRequested
                     ? CancellationToken.None : _scanCancellation.Token;
-                await documentStore.SaveScanAsync(path, result.Value, token);
+                var saveProgress = new Progress<LibrarySaveProgress>(update =>
+                {
+                    ProgressText = update.Total > 0
+                        ? $"{update.Stage} · {update.Completed:N0} of {update.Total:N0}"
+                        : update.Stage;
+                    Progress = update.Total > 0
+                        ? Math.Clamp(update.Completed * 100d / update.Total, 0, 100) : 0;
+                });
+                await documentStore.SaveScanAsync(path, result.Value, token, saveProgress);
             }
             catch (OperationCanceledException)
             { persistenceNote = " · library save cancelled; some completed records may already be saved"; }

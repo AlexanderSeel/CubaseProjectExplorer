@@ -38,7 +38,6 @@
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="54" />
-      <RowDefinition Height="Auto" />
       <RowDefinition Height="42" />
       <RowDefinition Height="*" />
       <RowDefinition Height="36" />
@@ -59,28 +58,7 @@
         <Button x:Name="ScanFolderButton" Content="Scan folder" Click="ScanFolder_Click" />
       </StackPanel>
     </Grid>
-    <Grid x:Name="ScanProgressPanel" Grid.Row="1" Visibility="Collapsed" Padding="16,5"
-          Background="{ThemeResource LayerFillColorDefaultBrush}">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*" />
-        <ColumnDefinition Width="Auto" />
-      </Grid.ColumnDefinitions>
-      <StackPanel Spacing="3">
-        <Grid ColumnSpacing="8">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-          <TextBlock x:Name="ScanProgressLabel" FontSize="11" TextTrimming="CharacterEllipsis"
-                     AutomationProperties.LiveSetting="Polite" />
-          <TextBlock x:Name="ScanProgressPercent" Grid.Column="1" FontSize="11"
-                     Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
-        </Grid>
-        <ProgressBar x:Name="ScanProgressBar" Minimum="0" Maximum="100" Height="5"
-                     HorizontalAlignment="Stretch" />
-      </StackPanel>
-      <Button x:Name="CancelScanButton" Grid.Column="1" Content="Cancel scan" Margin="12,0,0,0"
-              VerticalAlignment="Center" Click="CancelScan_Click"
-              AutomationProperties.Name="Cancel folder scan" />
-    </Grid>
-    <Grid Grid.Row="2" Padding="12,0" ColumnSpacing="8" Background="{ThemeResource LayerFillColorDefaultBrush}">
+    <Grid Grid.Row="1" Padding="12,0" ColumnSpacing="8" Background="{ThemeResource LayerFillColorDefaultBrush}">
       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
       <Button x:Name="BackButton" Content="&#xE72B;" FontFamily="Segoe MDL2 Assets" Width="32" Height="30" Padding="0"
               ToolTipService.ToolTip="Back" AutomationProperties.Name="Back" Click="Back_Click" />
@@ -90,7 +68,7 @@
         <StackPanel x:Name="BreadcrumbHost" Orientation="Horizontal" VerticalAlignment="Center" Spacing="4" />
       </ScrollViewer>
     </Grid>
-    <NavigationView x:Name="Navigation" Grid.Row="3" IsBackButtonVisible="Collapsed"
+    <NavigationView x:Name="Navigation" Grid.Row="2" IsBackButtonVisible="Collapsed"
                     IsSettingsVisible="False" PaneDisplayMode="Left" IsPaneToggleButtonVisible="True"
                     SelectionChanged="Navigation_SelectionChanged" CompactModeThresholdWidth="700"
                     ExpandedModeThresholdWidth="1100" OpenPaneLength="240" CompactPaneLength="54">
@@ -122,7 +100,7 @@
       </NavigationView.MenuItems>
       <Grid x:Name="PageHost" Padding="24,20" />
     </NavigationView>
-    <Grid Grid.Row="4" Padding="12,0" Background="{ThemeResource LayerFillColorDefaultBrush}">
+    <Grid Grid.Row="3" Padding="12,0" Background="{ThemeResource LayerFillColorDefaultBrush}">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
       <TextBlock x:Name="StatusText" VerticalAlignment="Center" FontSize="11" MaxWidth="420"
                  TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CubaseInspector.Core;
 
 namespace CubaseInspector.Infrastructure;
 
@@ -51,7 +52,7 @@ public sealed partial class LibraryDocumentStore
         return processed;
     }, ct);
 
-    private int CountAssetDocuments(string type, string? projectPath = null)
+    private int CountAssetDocuments(string type, string? projectPath = null, ProjectScanTypes? projectTypes = null)
     {
         if (!File.Exists(DatabasePath)) return 0;
         using var connection = OpenReadOnlyDatabase();
@@ -61,10 +62,22 @@ public sealed partial class LibraryDocumentStore
             if (Convert.ToInt32(schema.ExecuteScalar()) == 0) return 0;
         }
         using var command = connection.CreateCommand();
+        var filterByPath = !string.IsNullOrWhiteSpace(projectPath);
+        var filterByTypes = !filterByPath && projectTypes is not null &&
+            string.Equals(type, nameof(LibraryProjectDocument), StringComparison.Ordinal);
+        var typeFilter = projectTypes ?? ProjectScanTypes.All;
         command.CommandText = "SELECT COUNT(*) FROM documents WHERE TypeName=$type" +
-            (string.IsNullOrWhiteSpace(projectPath) ? "" : " AND Id=$id");
+            (filterByPath ? " AND Id=$id" : filterByTypes ? " AND (($scanCpr=1 AND lower(json_extract(Data,'$.filePath')) LIKE '%.cpr')" +
+                " OR ($scanBak=1 AND lower(json_extract(Data,'$.filePath')) LIKE '%.bak')" +
+                " OR ($scanDawproject=1 AND lower(json_extract(Data,'$.filePath')) LIKE '%.dawproject'))" : "");
         command.Parameters.AddWithValue("$type", type);
-        if (!string.IsNullOrWhiteSpace(projectPath)) command.Parameters.AddWithValue("$id", StableId(projectPath));
+        if (filterByPath) command.Parameters.AddWithValue("$id", StableId(projectPath!));
+        else if (filterByTypes)
+        {
+            command.Parameters.AddWithValue("$scanCpr", typeFilter.Cpr ? 1 : 0);
+            command.Parameters.AddWithValue("$scanBak", typeFilter.Bak ? 1 : 0);
+            command.Parameters.AddWithValue("$scanDawproject", typeFilter.Dawproject ? 1 : 0);
+        }
         return Convert.ToInt32(command.ExecuteScalar());
     }
 }

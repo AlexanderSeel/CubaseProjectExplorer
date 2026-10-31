@@ -62,13 +62,13 @@ public sealed partial class MediaLibraryViewModel
         await RunIndexOperationAsync(false);
     }
 
-    public async Task RebuildIndexScopeAsync(string? projectPath)
+    public async Task RebuildIndexScopeAsync(string? projectPath, ProjectScanTypes? projectTypes = null)
     {
         if (IsBusy) return;
         IndexProjectPath = projectPath ?? "";
         SampleProjectPath = IndexProjectPath;
         OnPropertyChanged(nameof(IndexScope));
-        await RunIndexOperationAsync(true);
+        await RunIndexOperationAsync(true, projectTypes: projectTypes);
     }
 
     public async Task LoadOpenProjectAsync(ProjectSnapshot project)
@@ -81,7 +81,8 @@ public sealed partial class MediaLibraryViewModel
         await RunIndexOperationAsync(false, project);
     }
 
-    private async Task RunIndexOperationAsync(bool rebuild, ProjectSnapshot? openProject = null)
+    private async Task RunIndexOperationAsync(bool rebuild, ProjectSnapshot? openProject = null,
+        ProjectScanTypes? projectTypes = null)
     {
         var request = ++_indexRequest;
         IsBusy = IsIndexLoading = true;
@@ -126,7 +127,7 @@ public sealed partial class MediaLibraryViewModel
             }
             else
             {
-                if (rebuild) await store.RebuildProjectAssetIndexesAsync(ct, progress, IndexProjectPath);
+                if (rebuild) await store.RebuildProjectAssetIndexesAsync(ct, progress, IndexProjectPath, projectTypes);
                 IndexStage = "Reading saved asset indexes";
                 await store.VisitProjectAssetIndexesAsync(document => accumulator.Add(document, ct), progress, IndexProjectPath, ct);
             }

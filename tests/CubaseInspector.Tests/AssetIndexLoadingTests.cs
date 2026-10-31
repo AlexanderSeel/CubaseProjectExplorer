@@ -85,6 +85,33 @@ public sealed class AssetIndexLoadingTests
     }
 
     [Fact]
+    public async Task RebuildHonorsSelectedProjectTypesForWholeLibraryScopes()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-asset-type-filter-");
+        try
+        {
+            using var store = new LibraryDocumentStore(Path.Combine(directory.FullName, "library.db"));
+            var cpr = Project(0) with
+            {
+                FilePath = "C:/Sessions/selected.cpr", Name = "selected", Format = "CPR"
+            };
+            var dawproject = Project(1);
+            await store.SaveScanAsync("C:/Sessions", new([cpr, dawproject], [], false, 2, 2));
+            var reports = new List<LibraryAssetIndexProgress>();
+
+            var rebuilt = await store.RebuildProjectAssetIndexesAsync(
+                progress: new Reports(reports.Add),
+                projectTypes: new ProjectScanTypes(Cpr: true, Bak: false, Dawproject: false));
+
+            Assert.Equal(1, rebuilt);
+            Assert.Equal(1, reports[0].Total);
+            Assert.Contains(reports, report => report.CurrentProject == cpr.FilePath);
+            Assert.DoesNotContain(reports, report => report.CurrentProject == dawproject.FilePath);
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Fact]
     public async Task EmptyLibraryReturnsAnEmptyRead()
     {
         var directory = Directory.CreateTempSubdirectory("cpe-asset-empty-");

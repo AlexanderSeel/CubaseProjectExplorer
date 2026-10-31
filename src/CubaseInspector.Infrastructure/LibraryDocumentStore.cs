@@ -98,6 +98,7 @@ public sealed record LibraryDatabaseOverview(
     long DatabaseBytes, long JournalBytes);
 
 public sealed record LibraryDatabaseCleanupResult(int DuplicateProjectsRemoved, int OrphanedAssetIndexesRemoved);
+public sealed record LibrarySaveProgress(string Stage, int Completed, int Total);
 public sealed record LibraryDatabaseTableInfo(string Name, long RowCount, IReadOnlyList<string> Columns)
 {
     public string ColumnsSummary => string.Join(", ", Columns);
@@ -131,13 +132,16 @@ public sealed partial class LibraryDocumentStore : IDisposable
     // Scan reconciliation includes path/hash deduplication and may touch thousands of
     // existing records. Start the complete operation on a worker so its synchronous
     // setup and continuation work never runs on a desktop UI synchronization context.
-    public Task SaveScanAsync(string folder, FolderReport report, CancellationToken ct = default) =>
-        Task.Run(() => SaveScanCoreAsync(folder, report, ct), ct);
+    public Task SaveScanAsync(string folder, FolderReport report, CancellationToken ct = default,
+        IProgress<LibrarySaveProgress>? progress = null) =>
+        Task.Run(() => SaveScanCoreAsync(folder, report, ct, progress), ct);
 
-    private async Task SaveScanCoreAsync(string folder, FolderReport report, CancellationToken ct)
+    private async Task SaveScanCoreAsync(string folder, FolderReport report, CancellationToken ct,
+        IProgress<LibrarySaveProgress>? progress)
     {
         var now = DateTime.UtcNow;
         var folderId = StableId(folder);
+        progress?.Report(new("Preparing saved project summaries", 0, 0));
         var existingProjects = await GetProjectHeadersAsync(ct, report.ProjectTypes);
         var existingDocumentsByPath = existingProjects
             .ToDictionary(project => NormalizePath(project.FilePath), StringComparer.OrdinalIgnoreCase);
@@ -219,10 +223,10 @@ public sealed partial class LibraryDocumentStore : IDisposable
         {
             await DeleteProjectAsync(duplicate.Id, ct);
         }
-        await BatchUpsertInChunksAsync(documentsToSave, ct);
+        await BatchUpsertInChunksAsync(documentsToSave, ct, progress, "Saving project summaries");
         if (report.ProjectAssetIndexes is null && assetIndexesToSave.Count == 0)
             assetIndexesToSave.AddRange(scannedWinners.Select(BuildAssetIndexDocument));
-        await BatchUpsertInChunksAsync(assetIndexesToSave, ct);
+        await BatchUpsertInChunksAsync(assetIndexesToSave, ct, progress, "Saving audio and MIDI indexes");
         await _store.Upsert(new LibraryScanFolderDocument
         {
             Id = folderId, Path = folder, LastScannedUtc = now,
@@ -232,9 +236,15 @@ public sealed partial class LibraryDocumentStore : IDisposable
         await CheckpointWalAfterScanAsync(ct);
     }
 
-    private async Task BatchUpsertInChunksAsync<T>(IReadOnlyList<T> documents, CancellationToken ct) where T : class
+    private async Task BatchUpsertInChunksAsync<T>(IReadOnlyList<T> documents, CancellationToken ct,
+        IProgress<LibrarySaveProgress>? progress = null, string stage = "Saving library records") where T : class
     {
         const int batchSize = 32;
+        if (documents.Count == 0)
+        {
+            progress?.Report(new(stage, 0, 0));
+            return;
+        }
         for (var offset = 0; offset < documents.Count; offset += batchSize)
         {
             ct.ThrowIfCancellationRequested();
@@ -242,11 +252,23 @@ public sealed partial class LibraryDocumentStore : IDisposable
             var batch = new T[count];
             for (var index = 0; index < count; index++) batch[index] = documents[offset + index];
             await _store.BatchUpsert(batch, cancellationToken: ct);
+            progress?.Report(new(stage, offset + count, documents.Count));
         }
     }
 
     private async Task CheckpointWalAfterScanAsync(CancellationToken ct)
     {
+        // Truncating a multi-gigabyte WAL here extends the visible "saving" stage
+        // by copying every remaining frame and then shrinking the file. SQLite's
+        // autocheckpoint remains enabled during writes; only do explicit cleanup
+        // when the WAL is small enough for this foreground operation.
+        var walPath = DatabasePath + "-wal";
+        try
+        {
+            if (File.Exists(walPath) && new FileInfo(walPath).Length > 64L * 1024 * 1024) return;
+        }
+        catch (IOException) { return; }
+
         await Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
@@ -354,10 +376,12 @@ public sealed partial class LibraryDocumentStore : IDisposable
 
     /// <summary>Rebuilds search indexes in bounded batches, re-reading source files for compact scan snapshots.</summary>
     public async Task<int> RebuildProjectAssetIndexesAsync(CancellationToken ct = default,
-        IProgress<LibraryAssetIndexProgress>? progress = null, string? projectPath = null)
+        IProgress<LibraryAssetIndexProgress>? progress = null, string? projectPath = null,
+        ProjectScanTypes? projectTypes = null)
     {
         const int batchSize = 8;
-        var total = await Task.Run(() => CountAssetDocuments(nameof(LibraryProjectDocument), projectPath), ct);
+        var selectedTypes = projectTypes ?? ProjectScanTypes.All;
+        var total = await Task.Run(() => CountAssetDocuments(nameof(LibraryProjectDocument), projectPath, selectedTypes), ct);
         if (total == 0) return 0;
         var processed = 0;
         var skipped = 0;
@@ -373,12 +397,22 @@ public sealed partial class LibraryDocumentStore : IDisposable
                 using var connection = OpenReadOnlyDatabase();
                 using var command = connection.CreateCommand();
                 command.CommandText = "SELECT rowid, Data FROM documents WHERE TypeName=$type AND rowid>$after " +
-                    (string.IsNullOrWhiteSpace(projectPath) ? "" : "AND Id=$id ") +
+                    (string.IsNullOrWhiteSpace(projectPath)
+                        ? "AND (($scanCpr=1 AND lower(json_extract(Data,'$.filePath')) LIKE '%.cpr') " +
+                          "OR ($scanBak=1 AND lower(json_extract(Data,'$.filePath')) LIKE '%.bak') " +
+                          "OR ($scanDawproject=1 AND lower(json_extract(Data,'$.filePath')) LIKE '%.dawproject')) "
+                        : "AND Id=$id ") +
                     "ORDER BY rowid LIMIT $limit";
                 command.Parameters.AddWithValue("$type", nameof(LibraryProjectDocument));
                 command.Parameters.AddWithValue("$after", cursor);
                 command.Parameters.AddWithValue("$limit", batchSize);
                 if (!string.IsNullOrWhiteSpace(projectPath)) command.Parameters.AddWithValue("$id", StableId(projectPath));
+                else
+                {
+                    command.Parameters.AddWithValue("$scanCpr", selectedTypes.Cpr ? 1 : 0);
+                    command.Parameters.AddWithValue("$scanBak", selectedTypes.Bak ? 1 : 0);
+                    command.Parameters.AddWithValue("$scanDawproject", selectedTypes.Dawproject ? 1 : 0);
+                }
                 using var reader = command.ExecuteReader();
                 var projects = new List<LibraryProjectDocument>(batchSize);
                 var nextRowId = cursor;
@@ -459,17 +493,11 @@ public sealed partial class LibraryDocumentStore : IDisposable
             using var connection = OpenReadOnlyDatabase();
             using var command = connection.CreateCommand();
             command.CommandText = """
-                SELECT json_set(Data,
-                    '$.sourceSha256', COALESCE(json_extract(Data, '$.sourceSha256'), json_extract(Data, '$.snapshot.sourceSha256')),
-                    '$.snapshot.tracks', json('[]'), '$.snapshot.plugins', json('[]'), '$.snapshot.routing', json('[]'),
-                    '$.snapshot.warnings', json('[]'), '$.snapshot.mediaReferences', json('[]'),
-                    '$.snapshot.timelineItems', json('[]'), '$.snapshot.midiNotes', json('[]'),
-                    '$.snapshot.nativeMetadataCandidates', json('[]'), '$.snapshot.nativeMixerObservations', json('[]'),
-                    '$.snapshot.eqBands', json('[]'), '$.snapshot.warpPoints', json('[]'),
-                    '$.snapshot.nativeMidiNoteCandidates', json('[]'), '$.snapshot.nativeAudioMediaCandidates', json('[]'),
-                    '$.snapshot.metadata', NULL,
-                    '$.searchablePlugins', json('[]'), '$.searchableTrackNames', json('[]'), '$.trackKinds', json('[]'))
-                FROM documents WHERE TypeName=$type AND (
+                SELECT json_extract(Data,
+                    '$.id', '$.filePath', '$.name', '$.format', '$.creatorVersion',
+                    '$.description', '$.artworkPath', '$.sourceUrl', '$.isManual', '$.sourceSha256',
+                    '$.snapshot.sourceSha256', '$.snapshot.evidence')
+                FROM documents WHERE TypeName=$type AND json_type(Data, '$.snapshot')='object' AND (
                     ($scanAll=1) OR
                     ($scanCpr=1 AND lower(json_extract(Data, '$.filePath')) LIKE '%.cpr') OR
                     ($scanBak=1 AND lower(json_extract(Data, '$.filePath')) LIKE '%.bak') OR
@@ -485,8 +513,28 @@ public sealed partial class LibraryDocumentStore : IDisposable
             while (reader.Read())
             {
                 ct.ThrowIfCancellationRequested();
-                var document = JsonSerializer.Deserialize<LibraryProjectDocument>(reader.GetString(0), AdminDocumentJsonOptions);
-                if (document is not null) projects.Add(document);
+                using var fieldsDocument = JsonDocument.Parse(reader.GetString(0));
+                var fields = fieldsDocument.RootElement;
+                var filePath = StringAt(fields, 1) ?? string.Empty;
+                var name = StringAt(fields, 2) ?? Path.GetFileNameWithoutExtension(filePath);
+                var format = StringAt(fields, 3) ?? Path.GetExtension(filePath).TrimStart('.');
+                var sourceSha256 = StringAt(fields, 9) ?? StringAt(fields, 10);
+                var snapshot = new ProjectSnapshot(filePath, name, format, StringAt(fields, 4), null,
+                    EvidenceAt(fields, 11), [], [], [], [], SourceSha256: sourceSha256);
+                projects.Add(new LibraryProjectDocument
+                {
+                    Id = StringAt(fields, 0) ?? string.Empty,
+                    FilePath = filePath,
+                    Name = name,
+                    Format = format,
+                    CreatorVersion = StringAt(fields, 4),
+                    Description = StringAt(fields, 5),
+                    ArtworkPath = StringAt(fields, 6),
+                    SourceUrl = StringAt(fields, 7),
+                    IsManual = BoolAt(fields, 8),
+                    SourceSha256 = sourceSha256,
+                    Snapshot = snapshot
+                });
             }
             return projects;
         }, ct);
@@ -504,17 +552,22 @@ public sealed partial class LibraryDocumentStore : IDisposable
             projectTypes ??= ProjectScanTypes.All;
             using var connection = OpenReadOnlyDatabase();
             using var command = connection.CreateCommand();
-            // The browser summary needs tracks/plugins for counts and search facets,
-            // but does not display these other full-detail arrays. Strip them in
-            // SQLite before allocating a managed JSON string or deserializing a row.
+            // Return only the browser fields from SQLite's JSON reader instead of
+            // rewriting each complete document with json_set. This avoids creating a
+            // second large JSON string for projects with large serialized snapshots.
+            // Legacy rows return their original Data in column 1 for fallback parsing.
             command.CommandText = """
-                SELECT json_set(Data,
-                    '$.sourceSha256', COALESCE(json_extract(Data, '$.sourceSha256'), json_extract(Data, '$.snapshot.sourceSha256')),
-                    '$.snapshot.mediaReferences', json('[]'), '$.snapshot.timelineItems', json('[]'),
-                    '$.snapshot.midiNotes', json('[]'), '$.snapshot.nativeMetadataCandidates', json('[]'),
-                    '$.snapshot.nativeMixerObservations', json('[]'), '$.snapshot.eqBands', json('[]'),
-                    '$.snapshot.warpPoints', json('[]'), '$.snapshot.nativeMidiNoteCandidates', json('[]'),
-                    '$.snapshot.nativeAudioMediaCandidates', json('[]'), '$.snapshot.metadata', NULL)
+                SELECT json_extract(Data,
+                    '$.id', '$.filePath', '$.name', '$.format', '$.creatorVersion', '$.lastScannedUtc',
+                    '$.description', '$.artworkPath', '$.sourceUrl', '$.isManual', '$.sizeBytes',
+                    '$.lastModifiedUtc', '$.sourceSha256', '$.snapshot.evidence', '$.snapshot.bpm',
+                    '$.snapshot.timeSignatureNumerator', '$.snapshot.timeSignatureDenominator',
+                    '$.snapshot.hasTempoAutomation', '$.snapshot.sourceSha256',
+                    '$.trackRecordCount', '$.pluginReferenceCount', '$.confirmedPluginReferenceCount',
+                    '$.candidatePluginReferenceCount', '$.unknownPluginReferenceCount',
+                    '$.parserWarningCount', '$.routingCount', '$.trackKinds',
+                    '$.searchableTrackNames', '$.searchablePlugins'),
+                    CASE WHEN json_type(Data, '$.trackRecordCount') = 'integer' THEN NULL ELSE Data END
                 FROM documents WHERE TypeName=$type AND (
                     ($scanCpr=1 AND lower(json_extract(Data, '$.filePath')) LIKE '%.cpr') OR
                     ($scanBak=1 AND lower(json_extract(Data, '$.filePath')) LIKE '%.bak') OR
@@ -529,8 +582,52 @@ public sealed partial class LibraryDocumentStore : IDisposable
             while (reader.Read())
             {
                 ct.ThrowIfCancellationRequested();
-                var document = JsonSerializer.Deserialize<LibraryProjectDocument>(reader.GetString(0), AdminDocumentJsonOptions);
-                if (document?.Snapshot is not { } snapshot) continue;
+                if (!reader.IsDBNull(1))
+                {
+                    var legacy = JsonSerializer.Deserialize<LibraryProjectDocument>(reader.GetString(1), AdminDocumentJsonOptions);
+                    if (legacy?.Snapshot is not null) entries.Add(ToBrowserEntry(legacy));
+                    continue;
+                }
+
+                using var projection = JsonDocument.Parse(reader.GetString(0));
+                if (projection.RootElement.ValueKind != JsonValueKind.Array) continue;
+                var fields = projection.RootElement;
+                var filePath = StringAt(fields, 1) ?? string.Empty;
+                var name = StringAt(fields, 2) ?? Path.GetFileNameWithoutExtension(filePath);
+                var format = StringAt(fields, 3) ?? Path.GetExtension(filePath).TrimStart('.');
+                var evidence = EvidenceAt(fields, 13);
+                var sourceSha256 = StringAt(fields, 12) ?? StringAt(fields, 18);
+                var snapshot = new ProjectSnapshot(filePath, name, format, StringAt(fields, 4),
+                    NullableDoubleAt(fields, 14), evidence, [], [], [], [],
+                    NullableIntAt(fields, 15), NullableIntAt(fields, 16),
+                    HasTempoAutomation: BoolAt(fields, 17), SourceSha256: sourceSha256);
+                var document = new LibraryProjectDocument
+                {
+                    Id = StringAt(fields, 0) ?? string.Empty,
+                    FilePath = filePath,
+                    Name = name,
+                    Format = format,
+                    CreatorVersion = StringAt(fields, 4),
+                    LastScannedUtc = DateTimeAt(fields, 5) ?? default,
+                    Description = StringAt(fields, 6),
+                    ArtworkPath = StringAt(fields, 7),
+                    SourceUrl = StringAt(fields, 8),
+                    IsManual = BoolAt(fields, 9),
+                    SizeBytes = NullableLongAt(fields, 10),
+                    LastModifiedUtc = DateTimeOffsetAt(fields, 11),
+                    SourceSha256 = sourceSha256,
+                    Snapshot = snapshot,
+                    TrackRecordCount = NullableIntAt(fields, 19),
+                    PluginReferenceCount = NullableIntAt(fields, 20),
+                    ConfirmedPluginReferenceCount = NullableIntAt(fields, 21),
+                    CandidatePluginReferenceCount = NullableIntAt(fields, 22),
+                    UnknownPluginReferenceCount = NullableIntAt(fields, 23),
+                    ParserWarningCount = NullableIntAt(fields, 24),
+                    RoutingCount = NullableIntAt(fields, 25),
+                    TrackKinds = ArrayAt<string>(fields, 26),
+                    SearchableTrackNames = ArrayAt<string>(fields, 27),
+                    SearchablePlugins = ArrayAt<ProjectPluginSearchFacet>(fields, 28)
+                };
                 entries.Add(ToBrowserEntry(document));
             }
             return entries.OrderBy(entry => entry.Project.Name, StringComparer.OrdinalIgnoreCase)
@@ -1007,6 +1104,43 @@ public sealed partial class LibraryDocumentStore : IDisposable
             document.ParserWarningCount ?? 0, document.RoutingCount ?? 0,
             document.TrackKinds?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             document.SearchableTrackNames ?? [], document.SearchablePlugins ?? []);
+    }
+
+    private static string? StringAt(JsonElement fields, int index) =>
+        fields[index].ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
+            ? null : fields[index].GetString();
+
+    private static int? NullableIntAt(JsonElement fields, int index) =>
+        fields[index].ValueKind is JsonValueKind.Number ? fields[index].GetInt32() : null;
+
+    private static long? NullableLongAt(JsonElement fields, int index) =>
+        fields[index].ValueKind is JsonValueKind.Number ? fields[index].GetInt64() : null;
+
+    private static double? NullableDoubleAt(JsonElement fields, int index) =>
+        fields[index].ValueKind is JsonValueKind.Number ? fields[index].GetDouble() : null;
+
+    private static bool BoolAt(JsonElement fields, int index) =>
+        fields[index].ValueKind is JsonValueKind.True;
+
+    private static DateTime? DateTimeAt(JsonElement fields, int index) =>
+        fields[index].ValueKind is JsonValueKind.String ? fields[index].GetDateTime() : null;
+
+    private static DateTimeOffset? DateTimeOffsetAt(JsonElement fields, int index) =>
+        fields[index].ValueKind is JsonValueKind.String ? fields[index].GetDateTimeOffset() : null;
+
+    private static T[]? ArrayAt<T>(JsonElement fields, int index) =>
+        fields[index].ValueKind is JsonValueKind.Array
+            ? fields[index].Deserialize<T[]>(AdminDocumentJsonOptions) : null;
+
+    private static EvidenceLevel EvidenceAt(JsonElement fields, int index)
+    {
+        var value = fields[index];
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var ordinal) &&
+            Enum.IsDefined(typeof(EvidenceLevel), ordinal))
+            return (EvidenceLevel)ordinal;
+        if (value.ValueKind == JsonValueKind.String && Enum.TryParse<EvidenceLevel>(value.GetString(), true, out var parsed))
+            return parsed;
+        return EvidenceLevel.Unknown;
     }
 
     private static void ApplyBrowserSummary(LibraryProjectDocument document, ProjectLibraryEntry entry)

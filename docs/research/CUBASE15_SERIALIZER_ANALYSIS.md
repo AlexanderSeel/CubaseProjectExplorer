@@ -99,6 +99,21 @@ valuable validation inputs: record their `PAppVersion`, class names/revisions,
 and decoded fields, then compare the reader's output to Cubase 15's visible
 project state. Keep the originals read-only and test on copies.
 
+### Track controls: mute, solo and volume are not yet native fields
+
+The ASM export contains `Mute`, `Solo`, `Bypass`, `Pan` and `Volume` strings in
+multiple routines. One located block (IDA export lines 4,542,033–4,542,115)
+constructs command/control-name objects for `Stop`, `Play`, `Record`, `Monitor`,
+`Cycle`, `Mute`, `Solo`, automation modes, `Bypass`, `Meter`, `Clip`, `Active`,
+`Pan`, and related actions. Another routine at lines 4,568,438–4,568,447 looks up
+a value named `Volume` through an object interface. These are useful research
+leads, but string presence and an object getter do not establish that the same
+names are serialized on track/channel records, nor do they disclose units,
+inheritance or effective mute/solo behavior. Do not show mute, solo or fader
+values from CPR data until a serializer callback and bounded on-disk object
+context are matched to controlled Cubase projects. In particular, a plug-in
+parameter named `Volume` must not be mistaken for a channel fader.
+
 ### Read-only cross-version corpus check (2026-10-31)
 
 The user authorized read-only analysis of the local project library and song

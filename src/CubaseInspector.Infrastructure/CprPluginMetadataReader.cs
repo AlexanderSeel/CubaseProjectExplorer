@@ -45,18 +45,18 @@ public static class CprPluginMetadataReader
                 candidate = new PluginReference(id!, originalName ?? name!, null,
                     "CPR UID (format unverified)", null, EvidenceLevel.Candidate,
                     Role: originalName is not null
-                        ? $"CPR Original Plugin Name at 0x{sourceOffset:X} (renamed display: {name})"
-                        : $"CPR Plugin Name at 0x{sourceOffset:X}", SourceByteOffset: sourceOffset);
+                        ? $"Cubase Plugin UID and typed Plugin Name fields at 0x{sourceOffset:X}; original name retained (renamed display: {name})"
+                        : $"Cubase Plugin UID and typed Plugin Name fields at 0x{sourceOffset:X}", SourceByteOffset: sourceOffset);
             else if (TryUidOnly(region, offset) is { } storedUid)
                 candidate = new PluginReference(storedUid, "Name not decoded", null,
                     "CPR UID (name not decoded)", null, EvidenceLevel.Candidate,
-                    Role: $"Candidate UID token at 0x{sourceOffset:X}; no typed Plugin Name recovered",
+                    Role: $"Cubase Plugin UID field at 0x{sourceOffset:X}; no typed Plugin Name recovered",
                     SourceByteOffset: sourceOffset);
             else
                 candidate = new PluginReference($"offset-{sourceOffset:X}",
                     $"Unresolved plugin UID @ 0x{sourceOffset:X}", null,
                     "CPR UID (unresolved)", null, EvidenceLevel.Candidate,
-                    Role: "Metadata token layout not recognized", SourceByteOffset: sourceOffset);
+                    Role: "Plugin UID marker found; typed property layout not recognized", SourceByteOffset: sourceOffset);
             result.Add(candidate);
         }
         return result;

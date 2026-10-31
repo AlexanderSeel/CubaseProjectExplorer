@@ -41,6 +41,18 @@ public static class PluginCatalogSuggestions
 /// <summary>Explicit external research links, not scraped metadata or an official provider API.</summary>
 public static class ExternalPluginDiscovery
 {
+    /// <summary>Opens KVR's own product database with the selected name in its search query.</summary>
+    public static string? KvrSearchUrl(string? pluginName, string? vendor)
+    {
+        if (string.IsNullOrWhiteSpace(pluginName)) return null;
+        var term = pluginName.Trim();
+        var maker = string.IsNullOrWhiteSpace(vendor) ? "" : vendor.Trim();
+        if (term.Length > 128 || term.Length < 2 || term.Any(char.IsControl) ||
+            maker.Length > 100 || maker.Any(char.IsControl)) return null;
+        var query = term + (maker.Length == 0 ? "" : " " + maker);
+        return "https://www.kvraudio.com/plugins?search=" + Uri.EscapeDataString(query);
+    }
+
     public static string? SearchUrl(string provider, string? pluginName, string? vendor)
     {
         var domain = provider switch

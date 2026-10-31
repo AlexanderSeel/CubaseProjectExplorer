@@ -193,7 +193,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
             }
             if (arrangement is null)
                 warnings.Add("PArrangement ARCH not located; no arrangement-specific track/MIDI evidence available.");
-            warnings.Add("Class record names/counts are structural evidence only, not verified track/plugin identities.");
+            warnings.Add("Serialized class names/counts are direct structural observations. Only names in the Cubase serializer class map receive a track/lane kind; this does not establish visible-track status, ownership, hierarchy, or semantic completeness.");
             if (namedRecordCandidates.Count > 0)
                 warnings.Add($"Cubase 12 named-record grammar: {namedRecordCandidates.Count} channel-shaped candidate record sequence(s); values are source-level observations, not verified channel semantics.");
             if (metadataCandidates.Count > 0)
@@ -382,8 +382,11 @@ public sealed class CprStructureInspector : ICprStructureInspector
                 var nextPart = name == "MMidiPart"
                     ? (ReadBoundedName(bytes, bodyStart, bodyEnd), archiveFileOffset + position)
                     : activePart;
-                if (name is "MAudioTrackEvent" or "MMidiTrackEvent" or "MInstrumentTrackEvent"
-                    or "MFolderTrack" or "MSamplerTrackEvent" or "MDeviceTrackEvent")
+                // These serialized lane/event class names occur in Cubase 15
+                // serializer/load paths (see the checked-in
+                // IDA export and CPR format research). Keep the exact class
+                // identity; do not merge them by name or nearby offset.
+                if (CprTrackRecordKinds.IsTrackRecord(name))
                 {
                     if (hints.Count < 4096)
                     {
@@ -741,17 +744,18 @@ public sealed class CprStructureInspector : ICprStructureInspector
         }
         if (report.Arrangement is not null)
         {
-            b.AppendLine().AppendLine("## Arrangement record classes (candidate structure)")
+            b.AppendLine().AppendLine("## Arrangement record classes")
                 .AppendLine("Scanned bytes: " + report.Arrangement.BytesScanned +
                     "; incomplete: " + report.Arrangement.Partial)
                 .AppendLine().AppendLine("| Record class | Observed headers |").AppendLine("|---|---:|");
             foreach (var entry in report.Arrangement.ClassCounts)
                 b.AppendLine("| " + entry.Key + " | " + entry.Value + " |");
-            b.AppendLine().AppendLine("### Candidate track records (unverified)")
-                .AppendLine("| Record class | Candidate name | ARCH-relative offset | Name source |")
-                .AppendLine("|---|---|---:|---|");
+            b.AppendLine().AppendLine("### Track and lane class instances")
+                .AppendLine("The class name matches a type used by Cubase serialization code. Names and visible-track hierarchy come from bounded containment and are not guaranteed.")
+                .AppendLine("| Kind | Record class | Observed name | ARCH-relative offset | Name source |")
+                .AppendLine("|---|---|---|---:|---|");
             foreach (var hint in report.Arrangement.TrackHints)
-                b.AppendLine("| " + hint.RecordClass + " | " +
+                b.AppendLine("| " + (CprTrackRecordKinds.KindFor(hint.RecordClass) ?? "Unknown") + " | " + hint.RecordClass + " | " +
                     (hint.Name?.Replace("|", "\\|").Replace("\r", " ").Replace("\n", " ") ?? "Unknown") +
                     " | " + hint.ArchiveOffset + " | " + EscapeTable(hint.NameSource ?? "Unknown source") + " |");
         }

@@ -55,7 +55,7 @@ public sealed class CprEvidenceReader : IProjectReader
         var warnings = new List<string>
         {
             "CPR inspection retains supported track, MIDI, media-path, mixer, insert, EQ and routing observations for review. Native ownership, timing, parameter meaning, EQ placement, send tap order, plugin state and version-wide layouts are not confirmed; use source fields and offsets to judge each interpretation.",
-            "CPR plugin UID/name tokens are candidate metadata, not verified VST2/VST3 identities, assignments, installation, or plugin-instance counts."
+            "Cubase 15.0.40's APluginSlot load path looks up Plugin/Plugin UID and Original Plugin Name properties. Extracted UID/name values are stored CPR data; VST2/VST3 format, installed identity, owner assignment, state and instance count still require separate evidence."
         };
         if (Path.GetExtension(path).Equals(".bak", StringComparison.OrdinalIgnoreCase))
             warnings.Add("CPR backup (.bak) opened read-only; it may be incomplete after a crash, and no recovery or repair is attempted.");
@@ -81,9 +81,9 @@ public sealed class CprEvidenceReader : IProjectReader
                     structural.Value.Arrangement.RecordsFound +
                     (structural.Value.Arrangement.Partial ? " (partial)." : "."));
             if (structural.Value.Arrangement is not null)
-                warnings.Add("Unverified candidate track records: " +
+            warnings.Add("Cubase native track/lane class records found: " +
                     structural.Value.Arrangement.TrackHints.Count +
-                    "; displayed as explicitly candidate-level track hints, not confirmed tracks.");
+                    "; their exact class names are recognized from the Cubase 15.0.40 executable, while extracted names, visibility and parent hierarchy may be incomplete.");
             warnings.AddRange(structural.Value.Warnings);
             if (structural.Value.MetadataCandidates is { Count: > 0 } metadataCandidates)
             {
@@ -95,8 +95,9 @@ public sealed class CprEvidenceReader : IProjectReader
         }
         else if (isRiff) warnings.Add("RIFF/NUND structural check unavailable: " + structural.Error?.Code);
 
-        // Decode only bounded typed metadata in the same Plugin UID property window.
-        // Never infer plugin instances, tracks, VST format, routing or installation.
+        // Decode bounded UID/name property tokens. ASM confirms the native
+        // property vocabulary, but this byte-window reader has not located a
+        // complete APluginSlot body or proven its owner/state.
         var namedCount = plugins.Count(p => !p.Name.StartsWith("Name not decoded", StringComparison.Ordinal) &&
             !p.Id.StartsWith("offset-", StringComparison.Ordinal));
         var uidOnlyCount = plugins.Count(p => p.Name == "Name not decoded");
@@ -104,7 +105,7 @@ public sealed class CprEvidenceReader : IProjectReader
             warnings.Add($"CPR plugin UID metadata: {namedCount} named UID token(s), " +
                 $"{uidOnlyCount} UID-only token(s), " +
                 $"{plugins.Count - namedCount - uidOnlyCount} unresolved offset marker(s). " +
-                "All are candidates; token occurrences are not confirmed Cubase insert instances.");
+                "Cubase ASM confirms these stored property names; UID format, complete slot boundaries, track owner, state and insert-instance count are not decoded here.");
         var locatedCandidates = plugins.Count(plugin => !string.IsNullOrWhiteSpace(plugin.CandidateOwnerName));
         if (locatedCandidates > 0)
             warnings.Add($"{locatedCandidates} plug-in name marker(s) overlap CPR named track records. The nearby record label is shown; Cubase plug-in ownership is unverified.");
@@ -124,22 +125,14 @@ public sealed class CprEvidenceReader : IProjectReader
         else
             warnings.Add("Saved-by version unavailable. This can occur with early SX/SL and unknown CPR archives; " +
                 "do not assume the file's age or infer SX from a small version number.");
-        // A record-class/name hint is useful for inventory, but never proof of a complete
-        // Cubase track or device channel; keep project and per-track evidence at Candidate.
+        // The ASM-backed class map identifies the stored class as a Cubase lane/track
+        // record. Name extraction, visible-track status, parentage and mixer-channel
+        // ownership remain provisional, so the normalized project stays candidate-level.
         var trackHints = structural.IsSuccess ? structural.Value?.Arrangement?.TrackHints : null;
         var tracks = trackHints is null ? new List<TrackInfo>() : trackHints.Select(h => new TrackInfo(
             "cpr-record-" + h.ArchiveOffset.ToString("X"),
             h.Name ?? "(unnamed CPR record)",
-            h.RecordClass switch
-            {
-                "MAudioTrackEvent" => "Audio",
-                "MMidiTrackEvent" => "MIDI",
-                "MInstrumentTrackEvent" => "Instrument",
-                "MFolderTrack" => "Folder",
-                "MSamplerTrackEvent" => "Sampler",
-                "MDeviceTrackEvent" => "Device (unclassified)",
-                _ => "Unknown"
-            },
+            CprTrackRecordKinds.KindFor(h.RecordClass) ?? "Unknown",
             null, null, null, null, null, EvidenceLevel.Candidate,
             h.RecordClass, h.ArchiveOffset, SourceEndOffset: h.ArchiveEndOffset)).ToList();
         if (tracks.Count > 0)

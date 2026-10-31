@@ -11,6 +11,7 @@ TestResults/
 *.tmp
 dist/*
 .build-check/*
+**/.build-check/build-app/
 # Source CPR regression files contain private Windows paths and machine identifiers.
 tests/private-fixtures/
 artifacts/

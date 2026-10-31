@@ -126,6 +126,53 @@ public sealed class CprStructureTests
     }
 
     [Fact]
+    public async Task RecognizesAsmBackedArrangementTrackAndLaneClassVocabulary()
+    {
+        var classes = CprTrackRecordKinds.SerializedClasses.Order(StringComparer.Ordinal).ToArray();
+        var arrangement = Concat(classes.Select(name => FullRecord(name, Array.Empty<byte>())).ToArray());
+        var file = await MakeFile(Project(Root("Arrangement1", "PArrangement"), Chunk("ARCH", arrangement)));
+        try
+        {
+            var result = await new CprStructureInspector().InspectAsync(file);
+            Assert.True(result.IsSuccess, result.Error?.Message);
+            var hints = result.Value!.Arrangement!.TrackHints;
+            Assert.Equal(classes.Length, hints.Count);
+            Assert.All(hints, hint => Assert.NotNull(CprTrackRecordKinds.KindFor(hint.RecordClass)));
+            Assert.Contains(hints, hint => hint.RecordClass == "MTempoTrackEvent" &&
+                CprTrackRecordKinds.KindFor(hint.RecordClass) == "Tempo");
+            Assert.Contains(hints, hint => hint.RecordClass == "MVideoTrackEvent" &&
+                CprTrackRecordKinds.KindFor(hint.RecordClass) == "Video");
+            Assert.DoesNotContain(hints, hint => hint.RecordClass == "MTrackEvent");
+        }
+        finally { File.Delete(file); }
+    }
+
+    [Fact]
+    public async Task ReadsCubaseBakWithSameNativeTrackMarkersAsCpr()
+    {
+        var track = FullRecord("MAudioTrackEvent", FullRecord("MListNode",
+            Concat(U32(4), Encoding.UTF8.GetBytes("Vox\0"))));
+        var cpr = await MakeFile(Project(Root("Arrangement1", "PArrangement"), Chunk("ARCH", track)));
+        var bak = Path.ChangeExtension(cpr, ".bak");
+        try
+        {
+            File.Copy(cpr, bak);
+            var parsed = await new CprEvidenceReader().ReadAsync(bak);
+            Assert.True(parsed.IsSuccess, parsed.Error?.Message);
+            var audio = Assert.Single(parsed.Value!.Tracks);
+            Assert.Equal("Audio", audio.Kind);
+            Assert.Equal("MAudioTrackEvent", audio.SourceRecordClass);
+            Assert.Contains(parsed.Value.Warnings, warning => warning.Contains(
+                "Cubase native track/lane class records found", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(cpr);
+            if (File.Exists(bak)) File.Delete(bak);
+        }
+    }
+
+    [Fact]
     public async Task InvalidUtf8CandidateTrackNameIsNotPromoted()
     {
         var invalidName = Concat(U32(4), [0xC3, 0x28, 0x41, 0x00]);

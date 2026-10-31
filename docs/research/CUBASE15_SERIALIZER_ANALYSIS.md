@@ -100,6 +100,56 @@ Two fully followed chains:
 - `MMidiNote`: registration `0x14157fd90` → factory `0x141bbe4c0` → constructor `0x141bb3ba0` → primary vtable `0x145f41908` → reader entry `0x141bb4690`, writer `0x141bb49a0`. The reader first calls base reader `0x141bb0390`, which itself consults serializer versions and attributes. The note reader has split `.pdata` fragments, so a single first-fragment boundary is not the complete callback. **Do not extrapolate the existing 112-byte controlled-note candidate to every MIDI-note version.**
 - `MTempoEvent`: registration `0x1417de1e0` → factory `0x1431e83e0` → constructor `0x1431e0570` → primary vtable `0x1461e30e0` → reader `0x1431e0870`, writer `0x1431e08f0`.
 
+## Track/lane class markers and plug-in load properties
+
+The IDA export provides stronger class-level evidence for native track records
+than byte proximity or inferred names:
+
+| Cubase 15.0.40 observation | Meaning supported by the executable | Limit |
+|---|---|---|
+| `MMidiTrackEvent` registration at `0x141581220`, class version 4 | A named serializable track-event class exists in the current binary. | Does not prove that every instance is a visible lane or that its nested name extraction is complete. |
+| `MAudioTrackEvent` registration at `0x1415ced60`, class version 1 | Same, for the audio track-event class. | Version is this class's serializer revision, not Cubase version or a guarantee for older files. |
+| `MInstrumentTrackEvent` registration at `0x14168cf60`, class version 4 | Same, for the instrument track-event class. | Ownership of the associated instrument slot is not established by the class name alone. |
+| Direct class-name comparisons/references for `MDeviceTrackEvent`, `MFolderTrackEvent`, `MMarkerTrackEvent`, `MTempoTrackEvent`, `MSignatureTrackEvent`, `MAutomationTrackEvent`, `MChordTrackEvent`, `MDrumTrackEvent`, `MVideoTrackEvent`, `MPlayRangeTrackEvent`, and `MLoudnessTrackEvent` | These exact Cubase class identifiers are useful classifications when a bounded `PArrangement` record has the matching class header. | We have not traced every class's registration, serializer version, visibility rules, or full body reader. The app does not infer group/FX/VCA classes where this export did not provide a matching native identifier. |
+
+The reader now maps these exact identifiers to useful lane kinds when they are
+encountered inside `PArrangement`. It displays the native class type directly;
+the extracted name, visible-track status, hierarchy, and channel ownership stay
+separate observations. This includes `.bak` inputs when the bytes contain the
+same RIFF/NUND or RIF2/NUND project container. Steinberg documents `.bak` as
+auto-saved project copies and warns that project features absent from the
+opening Cubase version may be lost on save ([Auto Save](https://www.steinberg.help/r/cubase-pro/15.0/en/cubase_nuendo/topics/project_handling/project_handling_about_the_auto_save_option_c.html),
+[Opening Project Files](https://www.steinberg.help/r/cubase-pro/15.0/en/cubase_nuendo/topics/project_handling/project_handling_opening_project_files_t.html));
+the app therefore keeps BAK reads read-only and does not attempt crash recovery
+or repair.
+
+The plug-in path has useful loader-level anchors:
+
+- `APluginSlot` is passed to the serializer registration helper at
+  `0x1415A4B10`.
+- In `sub_141D49EA0`, the code gets the `Plugin` child, requests `Plugin UID`
+  from it, and later requests `Original Plugin Name` (IDA lines 7,387,883–
+  7,388,315). Other exact references include `Plugin Name` and `InsertFolder`.
+- Separate code paths compare the typed fields `fxPluginUID` and
+  `instrumentPluginUID` (lines 9,051,604–9,051,641). They are additional UID
+  properties used in native code; they are not interchangeable with the
+  `Plugin UID` property without an on-file object-context match.
+
+This confirms Cubase's runtime field vocabulary and that a slot loader looks up
+these properties. It does **not** disclose the complete on-disk property tree,
+prove VST2 versus VST3 from the UID's shape, recover vendor state, or identify a
+track owner. The existing token reader therefore exposes UID/name values with
+their offsets and clearer "stored property" descriptions while leaving format,
+slot, owner, enabled/bypass and state as unresolved until an `APluginSlot`
+record-boundary parser is validated against controlled CPR and BAK files.
+
+Public cross-checks support the scope, not the proprietary grammar: the
+[BandPass parser](https://github.com/bandpassrecords/daw-project-manager/blob/6d5d82ac352ddb83212e1240612e24a252d03d5c/lib/services/daw_parsers/cubase_project_parser.dart)
+also searches `Plugin Name`/`Original Plugin Name` and describes `FNPath`
+pool paths, while the [MIT Cubase Project Plugins reader](https://github.com/fgimian/cubase-project-plugins)
+reports plug-in UIDs from Cubase 4 onward and explicitly notes older SX3
+projects may not expose plug-ins. Neither is a Steinberg format specification.
+
 ## MTempoEvent: raw typed body candidate
 
 The registered version is zero. Its reader consumes the following sequence directly, with **no base-class deserialize call**; the writer emits the same sequence. This supports an exact 24-byte, class-version-zero raw-field candidate:

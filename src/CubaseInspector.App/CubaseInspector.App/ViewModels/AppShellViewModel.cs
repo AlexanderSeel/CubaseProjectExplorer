@@ -229,7 +229,12 @@ public sealed partial class AppShellViewModel : ObservableObject
             return;
         }
         IsBusy = true;
-        try { await Library.ScanFolderAsync(currentPath, projectScanTypes: _preferences.ProjectScanTypes); Status = Library.Status; }
+        try
+        {
+            await Library.ScanFolderAsync(currentPath, projectScanTypes: _preferences.ProjectScanTypes,
+                reuseUnchangedFiles: true);
+            Status = Library.Status;
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         { Status = "Project folder rescan failed: " + ex.Message; }
         finally { IsBusy = false; }

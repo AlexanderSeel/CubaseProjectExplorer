@@ -422,7 +422,7 @@ internal sealed partial class WorkspacePageFactory
             ("Project media", layout),
             ("Audio paths", nativePathsPanel),
             ("Duplicates", duplicateSection),
-            ("Analyze", MediaIndexActivityPanel())));
+            ("Activity", MediaIndexActivityPanel())));
         root.Unloaded += (_, _) =>
         {
             mediaLibrary.CancelDuplicateScan();
@@ -593,39 +593,26 @@ internal sealed partial class WorkspacePageFactory
             });
         Grid.SetColumn(detail, 1); layout.Children.Add(midiBrowser); layout.Children.Add(detail);
         var nativePanel = NativeMidiPanel(out var cleanupNative);
-        var source = new ComboBox { ItemsSource = new[] { "Native project notes", "Exported MIDI" },
-            SelectedIndex = mediaLibrary.NativeMidiGroups.Count == 0 && mediaLibrary.MidiTracks.Count > 0 ? 1 : 0,
-            MinWidth = 190, HorizontalAlignment = HorizontalAlignment.Left };
-        AutomationProperties.SetName(source, "MIDI data source");
-        var sourceRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        sourceRow.Children.Add(new TextBlock { Text = "Source", Foreground = Muted, VerticalAlignment = VerticalAlignment.Center });
-        sourceRow.Children.Add(source);
-        var exportedEmpty = Empty("No exported MIDI tracks match this view. Choose Native project notes to browse note information found in Cubase files.");
-        browserPanel.Children.Add(sourceRow); browserPanel.Children.Add(nativePanel); browserPanel.Children.Add(layout); browserPanel.Children.Add(exportedEmpty);
-        var initialSourceChosen = mediaLibrary.NativeMidiGroups.Count + mediaLibrary.MidiTracks.Count > 0;
-        void UpdateSource()
+        var exportedEmpty = Empty("No exported MIDI tracks are indexed for this project yet.");
+        browserPanel.Children.Add(layout);
+        browserPanel.Children.Add(exportedEmpty);
+        void UpdateExportedState()
         {
-            if (!initialSourceChosen && mediaLibrary.NativeMidiGroups.Count + mediaLibrary.MidiTracks.Count > 0)
-            {
-                initialSourceChosen = true;
-                source.SelectedIndex = mediaLibrary.NativeMidiGroups.Count > 0 ? 0 : 1;
-            }
-            var native = source.SelectedIndex == 0;
-            nativePanel.Visibility = native ? Visibility.Visible : Visibility.Collapsed;
-            layout.Visibility = !native && mediaLibrary.MidiTracks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            exportedEmpty.Visibility = !native && mediaLibrary.MidiTracks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            if (!native && mediaLibrary.MidiTracks.Count > 0 && selectedTrack is null)
+            layout.Visibility = mediaLibrary.MidiTracks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            exportedEmpty.Visibility = mediaLibrary.MidiTracks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (mediaLibrary.MidiTracks.Count > 0 && selectedTrack is null)
             {
                 var first = mediaLibrary.MidiTracks[0]; midiBrowser.SelectItem(first); _ = ShowMidiTrackAsync(first);
             }
         }
-        source.SelectionChanged += (_, _) => UpdateSource();
         PropertyChangedEventHandler sourceChanged = (_, args) =>
         {
-            if (args.PropertyName is nameof(mediaLibrary.MidiSummary) or nameof(mediaLibrary.IsBusy)) UpdateSource();
+            if (args.PropertyName is nameof(mediaLibrary.MidiSummary) or nameof(mediaLibrary.IsBusy)) UpdateExportedState();
         };
         mediaLibrary.PropertyChanged += sourceChanged;
-        root.Children.Add(DashboardTabs(("MIDI browser", browserPanel), ("Analysis", activityPanel)));
+        var initialTab = mediaLibrary.MidiTracks.Count == 0 && mediaLibrary.NativeMidiGroups.Count > 0 ? 1 : 0;
+        root.Children.Add(DashboardTabs(initialTab, ("Exported MIDI", browserPanel),
+            ("Project notes", nativePanel), ("Activity", activityPanel)));
         root.Loaded += (_, _) =>
         {
             if (activeProject is null)
@@ -634,7 +621,7 @@ internal sealed partial class WorkspacePageFactory
                      !string.Equals(mediaLibrary.IndexStage, "Index ready", StringComparison.Ordinal))
                 _ = mediaLibrary.LoadOpenProjectAsync(activeProject);
         };
-        UpdateSource();
+        UpdateExportedState();
         root.Unloaded += (_, _) =>
         {
             mediaLibrary.PropertyChanged -= statusChanged;

@@ -18,25 +18,11 @@ internal sealed partial class WorkspacePageFactory
         var current = new TextBlock { Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap };
         var counts = new TextBlock { Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap };
         var outcome = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap };
-        var scope = new ComboBox { Header = "Projects", Width = 270, DisplayMemberPath = nameof(SampleProjectScopeOption.DisplayName) };
-        AutomationProperties.SetName(scope, "Choose which projects to analyze");
-        void UpdateScopes()
-        {
-            var options = new List<SampleProjectScopeOption> { new("", "Whole library") };
-            if (shell.Workspace.Project is { } selected) options.Add(new(selected.FilePath, "Selected project · " + selected.Name));
-            options.AddRange(vm.SampleProjects);
-            scope.ItemsSource = options.DistinctBy(item => item.Path, StringComparer.OrdinalIgnoreCase).ToArray();
-            var selectedPath = string.IsNullOrWhiteSpace(vm.IndexProjectPath)
-                ? shell.Workspace.Project?.FilePath ?? ""
-                : vm.IndexProjectPath;
-            scope.SelectedItem = ((IEnumerable<SampleProjectScopeOption>)scope.ItemsSource)
-                .FirstOrDefault(option => option.Path.Equals(selectedPath, StringComparison.OrdinalIgnoreCase));
-        }
-        UpdateScopes();
+        var scope = new TextBlock { Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap };
+        void UpdateScope() => scope.Text = "Project scope · " + vm.IndexScope;
+        UpdateScope();
         var cancel = Button("Cancel · keep results", () => vm.CancelIndexLoadCommand.Execute(null));
-        var analyze = Button("Analyze", async () =>
-            await shell.AnalyzeScopeAsync((scope.SelectedItem as SampleProjectScopeOption)?.Path));
-        var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { scope, analyze, cancel } };
+        var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { scope, cancel } };
         var detailsButton = InfoButton(() =>
         {
             var panel = new StackPanel { Spacing = 12, DataContext = vm };
@@ -67,7 +53,7 @@ internal sealed partial class WorkspacePageFactory
         controls.Children.Add(detailsButton);
         content.Children.Add(stage); content.Children.Add(progress); content.Children.Add(current);
         content.Children.Add(counts); content.Children.Add(outcome); content.Children.Add(controls);
-        content.Children.Add(new TextBlock { Text = "Choose a project or the whole library, then select Analyze to read its project and refresh audio and MIDI details.",
+        content.Children.Add(new TextBlock { Text = "Start a deep analysis from Overview. This panel shows what it reads, saves, skips, and makes available.",
             FontSize = 11, Foreground = Muted, TextWrapping = TextWrapping.Wrap });
         void Update()
         {
@@ -99,13 +85,12 @@ internal sealed partial class WorkspacePageFactory
                 ? $"{vm.IndexProcessed:N0} of {vm.IndexTotal:N0} projects · {vm.IndexProgress:0.#}% · {vm.IndexElapsed} elapsed · {vm.IndexSkipped:N0} skipped · Projects: {vm.IndexScope}"
                 : $"Preparing project list · {vm.IndexElapsed} elapsed · Projects: {vm.IndexScope}";
             outcome.Text = vm.IndexOutcome;
-            analyze.IsEnabled = scope.IsEnabled = !shell.IsAnyBusy;
             cancel.Visibility = vm.IsIndexLoading ? Visibility.Visible : Visibility.Collapsed;
             cancel.IsEnabled = !vm.IsIndexCancelling;
         }
         PropertyChangedEventHandler changed = (_, args) =>
         {
-            if (args.PropertyName == nameof(vm.SampleProjects)) UpdateScopes();
+            if (args.PropertyName is nameof(vm.IndexScope) or nameof(vm.IndexProjectPath)) UpdateScope();
             Update();
         };
         vm.PropertyChanged += changed;

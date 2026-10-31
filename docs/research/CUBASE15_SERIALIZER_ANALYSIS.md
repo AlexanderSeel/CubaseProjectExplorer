@@ -331,6 +331,54 @@ These exact addresses apply only to the inspected executable hash above. The
 work improves the evidence label for Cubase 15 class/property observations; it
 does not certify cross-version field semantics or normalize inferred hierarchy.
 
+### Automation target and tempo-lane follow-up
+
+The same ASM contains additional object-level wiring evidence. The registration
+routine `sub_141623B70` registers `MAutomationTrackEvent` at serializer revision
+1 with factory `sub_14225E920`. More importantly, `sub_1420A9770` checks an
+automation event through an `MAutomationTrack` and then a `VstCtrlEffect`
+object, while `sub_141BCE2E0` iterates `MAutomationTrackEvent` objects and calls
+their target getter at vtable offset `+0x4C0`; its matching logic compares
+control/track objects and invokes parameter-ID handling. This is evidence that
+automation lanes can target a plug-in control parameter. It is not evidence that
+an automation record is itself a mixer channel, and it does not expose the
+serialized target-reference grammar or connect that target to the reader's
+stored plug-in UID/name observations. The lane and its target must remain
+separate until a stable stored ID/reference is decoded.
+
+`MTempoTrackEvent` is independently registered at revision 3 and its reader
+materializes `MTempoEvent` objects from a compact array. This confirms that the
+tempo object represents tempo-lane event data, not an audio/MIDI/group/FX
+channel. The UI should give unnamed tempo and automation lanes clear, stable
+musician-facing names and keep them visible in Tracks & Channels; it must not
+attach them to arbitrary mixer records because they are nearby or unnamed.
+
+The existing track/channel join can be made more useful without guessing: a
+named mixer record wholly contained by exactly one track record has an exact
+byte-range owner in the structural scan. The track grid and Studio map can use
+that owner to label the channel node and show its saved input/output route. The
+route itself remains candidate evidence from stored bus IDs. Two presentation
+gaps hid this information: the routing projection discarded arrangement track
+records with no declared `ChannelId`, and the track grid's Output column only
+attempted the native route when a `DestinationChannelId` existed. CPR records
+generally have neither; both gates have been removed, while channel endpoints
+are still joined only through exact containment or stored IDs.
+
+### Pre-Cubase-10 compatibility evidence boundary
+
+Cubase 15's assembly does contain backward-compatibility paths, including
+per-class serializer revision branches in current callbacks and a `PAppVersion`
+metadata fallback when application-version metadata is absent. It also contains
+the UI text `Cubase 10, Nuendo 10, or Older`, but the associated routine is not
+a CPR serializer callback and that label alone does not identify a legacy file
+format. These are leads that justify testing older files through Cubase 15's
+reader; they do not establish that a Cubase 10-era CPR grammar covers all files
+before version 10. The user-reported ability to open older files in Cubase 15
+confirms Cubase's importer accepts those files, not that the current CPR
+structural reader has decoded them. Continue adding actual pre-10 files to the
+read-only fixture matrix, classify each by framing and serialized class
+revision, and only claim reader coverage for formats/layouts verified there.
+
 ## MTempoEvent: raw typed body candidate
 
 The registered version is zero. Its reader consumes the following sequence directly, with **no base-class deserialize call**; the writer emits the same sequence. This supports an exact 24-byte, class-version-zero raw-field candidate:

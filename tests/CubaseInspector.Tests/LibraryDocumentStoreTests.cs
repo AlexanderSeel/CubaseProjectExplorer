@@ -7,6 +7,11 @@ namespace CubaseInspector.Tests;
 
 public sealed class LibraryDocumentStoreTests
 {
+    private sealed class SaveProgressCapture(List<LibrarySaveProgress> updates) : IProgress<LibrarySaveProgress>
+    {
+        public void Report(LibrarySaveProgress value) => updates.Add(value);
+    }
+
     [Fact]
     public async Task DatabaseOverviewCountsRecordsWithoutChangingTheStoredDocuments()
     {
@@ -53,6 +58,7 @@ public sealed class LibraryDocumentStoreTests
             await store.SaveScanAsync("C:/Sessions", new FolderReport([project], [], false, 1, 1));
 
             var summary = Assert.Single(await store.GetProjectLibraryEntriesAsync());
+            var lightweight = Assert.Single(await store.GetProjectLibraryEntriesAsync(includeSearchablePlugins: false));
             var persisted = Assert.Single(await store.GetProjectsAsync());
 
             Assert.True(summary.IsSummary);
@@ -64,6 +70,7 @@ public sealed class LibraryDocumentStoreTests
             Assert.Empty(summary.Project.Routing);
             Assert.Empty(summary.Project.Warnings);
             Assert.Contains(summary.SearchablePlugins!, plugin => plugin.Name == "Bass Engine");
+            Assert.Empty(lightweight.SearchablePlugins!);
             Assert.Single(persisted.Snapshot!.Tracks);
             Assert.Single(persisted.Snapshot.Plugins);
             Assert.Single(persisted.Snapshot.Warnings);
@@ -417,6 +424,35 @@ public sealed class LibraryDocumentStoreTests
         {
             var directory = Path.GetDirectoryName(database)!;
             if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Rescan_ReusesUnchangedProjectAndAssetIndex_ThenWritesChangedSource()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-rescan-cache-");
+        try
+        {
+            using var store = new LibraryDocumentStore(Path.Combine(directory.FullName, "library.db"));
+            var project = new ProjectSnapshot("C:/sessions/song.cpr", "song", "CPR", "15", null,
+                EvidenceLevel.Unknown, [], [], [], [], SourceSha256: new string('A', 64));
+            var report = new FolderReport([project], [], false, 1, 1);
+            await store.SaveScanAsync("C:/sessions", report);
+
+            var progress = new List<LibrarySaveProgress>();
+            await store.SaveScanAsync("C:/sessions", report, progress: new SaveProgressCapture(progress));
+
+            Assert.Contains(progress, update => update.Stage.Contains("reused 1 unchanged projects", StringComparison.Ordinal));
+            Assert.Single(await store.GetProjectAssetIndexesAsync());
+            Assert.Single(await store.GetProjectsAsync());
+
+            var changed = project with { SourceSha256 = new string('B', 64) };
+            await store.SaveScanAsync("C:/sessions", new FolderReport([changed], [], false, 1, 1));
+            Assert.Equal(new string('B', 64), Assert.Single(await store.GetProjectsAsync()).SourceSha256);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
         }
     }
 

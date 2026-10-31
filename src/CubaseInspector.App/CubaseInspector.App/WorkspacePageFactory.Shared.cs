@@ -19,8 +19,8 @@ internal sealed partial class WorkspacePageFactory
 
     private StackPanel Page(string title, string subtitle)
     {
-        var root = new StackPanel { Spacing = 16, Margin = PageInset, MaxWidth = 1680,
-            HorizontalAlignment = HorizontalAlignment.Center };
+        var root = new StackPanel { Spacing = 16, Margin = PageInset,
+            HorizontalAlignment = HorizontalAlignment.Stretch };
         var heading = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         heading.Children.Add(new TextBlock { Text = title, Style = (Style)Application.Current.Resources["InspectorPageTitleStyle"],
             TextTrimming = TextTrimming.CharacterEllipsis });

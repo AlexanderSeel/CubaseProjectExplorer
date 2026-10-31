@@ -16,15 +16,15 @@ public sealed partial class MainPage : Page
 {
     private AppShellViewModel? _shell;
     private ProjectLibraryViewModel? _progressLibrary;
-    private Button? _analyzeButton;
     private PluginInventoryViewModel? _progressInventory;
     private readonly NavigationHistory _history = new("Overview");
     private bool _rendering;
+    private FrameworkElement? _pageContent;
 
     public MainPage()
     {
         InitializeComponent();
-        _analyzeButton = AnalyzeProjectButton;
+        PageHost.SizeChanged += (_, _) => ResizePageContent();
         RequestedTheme = ElementTheme.Dark;
     }
 
@@ -65,22 +65,6 @@ public sealed partial class MainPage : Page
         {
             UpdateBusyIndicator();
         }
-    }
-
-    private async void AnalyzeProject_Click(object sender, RoutedEventArgs e)
-    {
-        if (_shell is null) return;
-        await _shell.AnalyzeProjectCommand.ExecuteAsync(null);
-        StatusText.Text = _shell.Status;
-        if (_shell.HasProject) Render(_shell.CurrentPage);
-    }
-
-    private async void ScanFolder_Click(object sender, RoutedEventArgs e)
-    {
-        if (_shell is null) return;
-        await _shell.ScanFolderCommand.ExecuteAsync(null);
-        StatusText.Text = _shell.Library.Status;
-        Render("Projects");
     }
 
     private void ActivityCancel_Click(object sender, RoutedEventArgs e)
@@ -140,18 +124,29 @@ public sealed partial class MainPage : Page
             Navigation.SelectedItem = Navigation.MenuItems.OfType<NavigationViewItem>()
                 .FirstOrDefault(item => string.Equals(item.Tag as string, page, StringComparison.Ordinal));
             PageHost.Children.Clear();
-            PageHost.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Content = new WorkspacePageFactory(_shell, targetPage => Render(targetPage),
+            _pageContent = new WorkspacePageFactory(_shell, targetPage => Render(targetPage),
                     (DataTemplate)Resources["ProjectChangeTemplate"],
                     (DataTemplate)Resources["ScanIssueTemplate"],
                     theme => { RequestedTheme = theme; _shell.SetTheme(theme switch { ElementTheme.Light => "Light", ElementTheme.Default => "System", _ => "Dark" }); },
-                    _shell.MediaLibrary, XamlRoot!).Create(page) });
+                    _shell.MediaLibrary, XamlRoot!).Create(page) as FrameworkElement;
+            if (_pageContent is not null)
+            {
+                PageHost.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    Content = _pageContent });
+                ResizePageContent();
+            }
         }
         finally { _rendering = false; }
         UpdateNavigationControls();
         UpdateBusyIndicator();
         StatusText.Text = page == "Projects" ? _shell.Library.Status
             : _shell.HasProject ? $"{_shell.Workspace.ProjectName} · {_shell.Workspace.TrackCount} tracks · {_shell.Workspace.SavedBy}" : "No project selected";
+    }
+
+    private void ResizePageContent()
+    {
+        if (_pageContent is null || PageHost.ActualHeight <= 0) return;
+        _pageContent.MinHeight = Math.Max(480, PageHost.ActualHeight - 4);
     }
 
     private void Back_Click(object sender, RoutedEventArgs e)
@@ -202,8 +197,6 @@ public sealed partial class MainPage : Page
         if (_shell is null) return;
         var busy = _shell.IsAnyBusy;
         StatusText.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
-        if (_analyzeButton is not null) _analyzeButton.IsEnabled = !busy;
-        ScanFolderButton.IsEnabled = !busy;
         BusyIndicatorPanel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         BusySpinner.IsActive = busy;
         BusyText.Text = busy ? ActivityStatus(_shell) : string.Empty;

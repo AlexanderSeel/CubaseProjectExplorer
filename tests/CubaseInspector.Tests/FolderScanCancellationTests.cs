@@ -48,6 +48,53 @@ public sealed class FolderScanCancellationTests
         finally { directory.Delete(recursive: true); }
     }
 
+    [Fact]
+    public async Task IncrementalScanReusesCachedFileOnlyWhenSizeAndModifiedTimeMatch()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-incremental-scan-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "one.cpr");
+            await File.WriteAllBytesAsync(path, [1, 2, 3]);
+            var file = new FileInfo(path);
+            var hash = new string('C', 64);
+            var project = new ProjectSnapshot(path, "One", "CPR", "15", null,
+                EvidenceLevel.Candidate, [], [], [], [], SourceSha256: hash);
+            var entry = new ProjectLibraryEntry(project, file.Length,
+                new DateTimeOffset(file.LastWriteTimeUtc), hash, TrackRecordCount: 7, RoutingCount: 2);
+            var reusable = new Dictionary<string, ProjectLibraryEntry>(StringComparer.OrdinalIgnoreCase)
+            { [Path.GetFullPath(path)] = entry };
+            var inspector = new ThrowingInspector();
+
+            var result = await new FolderScanner(inspector).ScanAsync(directory.FullName,
+                retainFullSnapshots: false, reusableProjects: reusable);
+
+            Assert.True(result.IsSuccess, result.Error?.Message);
+            Assert.Equal(0, inspector.Calls);
+            Assert.Equal(1, result.Value!.Discovered);
+            Assert.Equal(1, result.Value.Completed);
+            Assert.Equal(7, Assert.Single(result.Value.ProjectSummaries!).TrackRecordCount);
+
+            await File.WriteAllBytesAsync(path, [1, 2, 3, 4]);
+            var changed = await new FolderScanner(inspector).ScanAsync(directory.FullName,
+                retainFullSnapshots: false, reusableProjects: reusable);
+            Assert.True(changed.IsSuccess, changed.Error?.Message);
+            Assert.Equal(1, inspector.Calls);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    private sealed class ThrowingInspector : IProjectInspector
+    {
+        public int Calls { get; private set; }
+        public Task<Result<ProjectSnapshot>> InspectAsync(string path, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult(Result<ProjectSnapshot>.Ok(new ProjectSnapshot(path, "Changed", "CPR", "15",
+                null, EvidenceLevel.Candidate, [], [], [], [])));
+        }
+    }
+
     private sealed class SummarySnapshotInspector : IProjectInspector
     {
         public Task<Result<ProjectSnapshot>> InspectAsync(string path, CancellationToken cancellationToken = default) =>

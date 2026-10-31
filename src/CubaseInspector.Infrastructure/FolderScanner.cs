@@ -9,17 +9,20 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
     // still marshals updates to the caller's context when it is a Progress<T> instance.
     public Task<Result<FolderReport>> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default, ProjectScanTypes? projectTypes = null,
-        bool retainFullSnapshots = true)
+        bool retainFullSnapshots = true,
+        IReadOnlyDictionary<string, ProjectLibraryEntry>? reusableProjects = null)
         => Task.Run(() => ScanCoreAsync(path, progress, cancellationToken,
-            projectTypes ?? ProjectScanTypes.All, retainFullSnapshots));
+            projectTypes ?? ProjectScanTypes.All, retainFullSnapshots, reusableProjects));
 
     private async Task<Result<FolderReport>> ScanCoreAsync(string path, IProgress<ScanProgress>? progress,
-        CancellationToken cancellationToken, ProjectScanTypes projectTypes, bool retainFullSnapshots)
+        CancellationToken cancellationToken, ProjectScanTypes projectTypes, bool retainFullSnapshots,
+        IReadOnlyDictionary<string, ProjectLibraryEntry>? reusableProjects)
     {
         if (!projectTypes.AnyEnabled)
             return Result<FolderReport>.Fail("NO_PROJECT_TYPES", "Enable at least one project file type before scanning.");
         if (!Directory.Exists(path)) return Result<FolderReport>.Fail("FOLDER_NOT_FOUND", "Folder not found.");
         var files = new List<string>();
+        var reusedProjects = new List<ProjectLibraryEntry>();
         var errors = new System.Collections.Concurrent.ConcurrentBag<(string Path, string Error)>();
         var skippedUnrelatedBackups = 0;
         try
@@ -30,13 +33,13 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
             var exploredDirectories = 0;
             var queue = new Queue<(string Path, int Depth)>();
             queue.Enqueue((path, 0));
-            while (queue.Count > 0 && files.Count < 10000)
+            while (queue.Count > 0 && files.Count + reusedProjects.Count < 10000)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var (current, depth) = queue.Dequeue();
                 exploredDirectories++;
                 if (exploredDirectories == 1 || exploredDirectories % 8 == 0)
-                    progress?.Report(new ScanProgress(exploredDirectories, files.Count,
+                    progress?.Report(new ScanProgress(exploredDirectories, files.Count + reusedProjects.Count,
                         current, Stage: ScanStage.Discovering));
                 try
                 {
@@ -58,21 +61,23 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
                         {
                             if ((projectTypes.Cpr && entry.EndsWith(".cpr", StringComparison.OrdinalIgnoreCase)) ||
                                 (projectTypes.Dawproject && entry.EndsWith(".dawproject", StringComparison.OrdinalIgnoreCase)))
-                                files.Add(entry);
+                                AddProjectOrReuse(entry);
                             else if (projectTypes.Bak && entry.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
                             {
-                                if (CprFileIdentity.HasCprHeader(entry)) files.Add(entry);
+                                if (CprFileIdentity.HasCprHeader(entry)) AddProjectOrReuse(entry);
                                 else skippedUnrelatedBackups++;
                             }
                         }
-                        if (files.Count >= 10000) break;
+                        if (files.Count + reusedProjects.Count >= 10000) break;
                     }
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                 { errors.Add((current, "FOLDER_ACCESS: " + e.Message)); }
             }
             // Publish the determinate phase before the first parse, even for empty folders.
-            progress?.Report(new ScanProgress(0, files.Count, path, Stage: ScanStage.Inspecting));
+            var totalProjects = files.Count + reusedProjects.Count;
+            progress?.Report(new ScanProgress(reusedProjects.Count, totalProjects, path, Stage: ScanStage.Inspecting,
+                Reused: reusedProjects.Count));
             var results = new ProjectSnapshot?[files.Count];
             var summaries = retainFullSnapshots ? null : new ProjectLibraryEntry?[files.Count];
             var assetIndexes = retainFullSnapshots ? null : new ProjectAssetIndex?[files.Count];
@@ -101,7 +106,7 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
             // normalized records. Keep only one such tree live at a time even
             // when the surrounding CPR scan uses several workers.
             using var dawprojectReadGate = new SemaphoreSlim(1, 1);
-            var completed = 0;
+            var completed = reusedProjects.Count;
             var interrupted = false;
             try
             {
@@ -114,8 +119,8 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
                     MaxDegreeOfParallelism = 1
                 }, async (index, ct) =>
                 {
-                    progress?.Report(new ScanProgress(Volatile.Read(ref completed), files.Count,
-                        files[index], Stage: ScanStage.Inspecting));
+                    progress?.Report(new ScanProgress(Volatile.Read(ref completed), totalProjects,
+                        files[index], Stage: ScanStage.Inspecting, Reused: reusedProjects.Count));
                     Result<ProjectSnapshot> result;
                     if (Path.GetExtension(files[index]).Equals(".dawproject", StringComparison.OrdinalIgnoreCase))
                     {
@@ -129,13 +134,14 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
                     if (result.IsSuccess && result.Value is not null)
                     {
                         project = result.Value;
-                        progress?.Report(new ScanProgress(completed, files.Count, files[index], Stage: ScanStage.Hashing));
+                        progress?.Report(new ScanProgress(completed, totalProjects, files[index], Stage: ScanStage.Hashing,
+                            Reused: reusedProjects.Count));
                         try
                         {
                             var checksum = await ProjectContentChecksum.ComputeAsync(files[index], ct,
                                 (processedBytes, totalBytes) => progress?.Report(new ScanProgress(
-                                    Volatile.Read(ref completed), files.Count, files[index], Stage: ScanStage.Hashing,
-                                    BytesProcessed: processedBytes, TotalBytes: totalBytes)));
+                                    Volatile.Read(ref completed), totalProjects, files[index], Stage: ScanStage.Hashing,
+                                    BytesProcessed: processedBytes, TotalBytes: totalBytes, Reused: reusedProjects.Count)));
                             project = project with { SourceSha256 = checksum };
                             StoreResult(index, project);
                         }
@@ -156,16 +162,44 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
                     }
                     else if (failure is not null)
                         errors.Add((files[index], failure.Message));
-                    progress?.Report(new ScanProgress(Interlocked.Increment(ref completed), files.Count, files[index],
-                        retainFullSnapshots ? project : null, failure));
+                    progress?.Report(new ScanProgress(Interlocked.Increment(ref completed), totalProjects, files[index],
+                        retainFullSnapshots ? project : null, failure, Reused: reusedProjects.Count));
                 });
             }
             catch (OperationCanceledException) { interrupted = true; }
-            return Result<FolderReport>.Ok(new FolderReport(results.OfType<ProjectSnapshot>().ToList(),
+            var reusedSummaries = reusedProjects.ToArray();
+            var allProjects = results.OfType<ProjectSnapshot>().Concat(reusedSummaries.Select(entry => entry.Project)).ToList();
+            var allSummaries = summaries is null ? null : summaries.OfType<ProjectLibraryEntry>().Concat(reusedSummaries).ToArray();
+            return Result<FolderReport>.Ok(new FolderReport(allProjects,
                 errors.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase).ToList(),
-                interrupted || files.Count >= 10000, files.Count, completed, skippedUnrelatedBackups,
-                summaries?.OfType<ProjectLibraryEntry>().ToArray(),
-                assetIndexes?.OfType<ProjectAssetIndex>().ToArray(), projectTypes));
+                interrupted || totalProjects >= 10000, totalProjects, completed, skippedUnrelatedBackups,
+                allSummaries,
+                assetIndexes?.OfType<ProjectAssetIndex>().ToArray(), projectTypes, reusedProjects.Count));
+
+            void AddProjectOrReuse(string filePath)
+            {
+                if (TryReusableProject(filePath, out var cached)) reusedProjects.Add(cached);
+                else files.Add(filePath);
+            }
+
+            bool TryReusableProject(string filePath, out ProjectLibraryEntry cached)
+            {
+                cached = null!;
+                if (retainFullSnapshots || reusableProjects is null ||
+                    !reusableProjects.TryGetValue(Path.GetFullPath(filePath), out var entry) ||
+                    ProjectLibraryBrowser.NormalizeSha256(entry.SourceSha256 ?? entry.Project.SourceSha256) is null ||
+                    entry.SizeBytes is not long size || entry.LastModifiedUtc is not DateTimeOffset modified)
+                    return false;
+                try
+                {
+                    var file = new FileInfo(filePath);
+                    if (file.Length != size || file.LastWriteTimeUtc != modified.UtcDateTime) return false;
+                    cached = entry;
+                    return true;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                { return false; }
+            }
         }
         catch (OperationCanceledException) { return Result<FolderReport>.Fail("CANCELLED", "Folder scan cancelled."); }
         catch (UnauthorizedAccessException e) { return Result<FolderReport>.Fail("ACCESS_DENIED", e.Message); }

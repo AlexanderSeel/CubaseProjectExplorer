@@ -14,6 +14,9 @@ public static class RoutingFocusBuilder
     {
         var tracks = project.Tracks.Where(track => !string.IsNullOrWhiteSpace(track.ChannelId))
             .GroupBy(track => track.ChannelId!, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.ToArray());
+        var declaredTracks = project.Tracks.Where(track => track.SourceRecordClass != "CPR named record")
+            .GroupBy(track => track.Id, StringComparer.Ordinal).Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Key, group => group.Single(), StringComparer.Ordinal);
         var uniqueTrackIds = project.Tracks.GroupBy(track => track.Id, StringComparer.Ordinal)
             .Where(group => group.Count() == 1).Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
         var devices = project.Plugins.Where(plugin => plugin.Evidence == EvidenceLevel.Confirmed && plugin.TrackId is not null)
@@ -29,7 +32,11 @@ public static class RoutingFocusBuilder
             var track = matches.Length == 1 ? matches[0] : null;
             var labels = endpointLabels.GetValueOrDefault(id) ?? [];
             var endpointName = labels.Length == 1 ? labels[0] + " · " + id : id;
-            return new RoutingFocusChannel(id, track?.Name ?? endpointName + (matches.Length > 1 ? " (ambiguous)" : " (unresolved)"),
+            var channelName = track?.SourceRecordClass == "CPR named record" && track.ParentTrackId is { } parentId &&
+                declaredTracks.TryGetValue(parentId, out var parentTrack)
+                    ? parentTrack.Name + " · channel"
+                    : track?.Name ?? endpointName + (matches.Length > 1 ? " (ambiguous)" : " (unresolved)");
+            return new RoutingFocusChannel(id, channelName,
                 track?.ChannelRole ?? track?.Kind ?? "Unresolved", track,
                 track is not null && uniqueTrackIds.Contains(track.Id) ? devices.GetValueOrDefault(track.Id) ?? [] : []);
         }).OrderBy(channel => channel.Name, StringComparer.OrdinalIgnoreCase).ToArray();

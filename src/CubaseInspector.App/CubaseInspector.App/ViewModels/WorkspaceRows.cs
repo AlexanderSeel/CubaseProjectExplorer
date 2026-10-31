@@ -4,7 +4,10 @@ using Microsoft.UI.Xaml.Media;
 
 namespace CubaseInspector.App.ViewModels;
 
-public sealed record TrackDisplayRow(string Name, string Type, string Channel, string Destination,
+public sealed record StudioIoAssignmentRow(string Direction, string From, string To, string Connection,
+    string Evidence, string Source, long? SourceOffset, EvidenceLevel SourceEvidence);
+
+public sealed record TrackDisplayRow(string Name, string Type, string Input, string Channel, string Destination,
     string SavedValue, string Status, string Evidence, TrackInfo? Source = null)
 {
     public string MixSummary
@@ -33,12 +36,13 @@ public sealed record TrackDisplayRow(string Name, string Type, string Channel, s
         return value;
     }
 
-    public static TrackDisplayRow From(TrackInfo track, int ordinal = 1, string? destinationName = null)
+    public static TrackDisplayRow From(TrackInfo track, int ordinal = 1, string? channelName = null,
+        string? destinationName = null, string? inputName = null)
     {
         var type = TypeFor(track);
-        var name = IsMissing(track.Name) ? $"{type} track {Math.Max(1, ordinal):00}" : track.Name.Trim();
+        var name = IsMissing(track.Name) ? DefaultTrackName(type, ordinal) : track.Name.Trim();
         var output = destinationName ?? (IsMissing(track.DestinationChannelId) ? "—" : "Output not found");
-        return new(name, type, "", output,
+        return new(name, type, inputName ?? "—", channelName ?? "—", output,
             track.Volume is double volume ? volume.ToString("0.###", CultureInfo.CurrentCulture) : "",
             string.Join(" · ", new[]
             {
@@ -49,6 +53,15 @@ public sealed record TrackDisplayRow(string Name, string Type, string Channel, s
     }
 
     public static bool HasSourceValue(string? value) => !IsMissing(value);
+
+    private static string DefaultTrackName(string type, int ordinal) => type switch
+    {
+        "Tempo" => "Tempo track",
+        "Time signature" => "Signature track",
+        "Automation" => $"Automation lane {Math.Max(1, ordinal):00}",
+        "Folder" => $"Folder {Math.Max(1, ordinal):00}",
+        _ => $"{type} track {Math.Max(1, ordinal):00}"
+    };
 
     private static bool IsMissing(string? value) => string.IsNullOrWhiteSpace(value) ||
         value.Trim().Trim('<', '>', '(', ')', '[', ']').ToLowerInvariant() is

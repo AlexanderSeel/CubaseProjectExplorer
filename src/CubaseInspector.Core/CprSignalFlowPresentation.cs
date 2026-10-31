@@ -70,7 +70,7 @@ public static class CprSignalFlowPresentation
                     SourceOffset: field.ArchiveOffset, SourcePath: item.Record.SourceStream + "/" + field.Path,
                     TargetLabel: names.Length == 1 ? names[0] : null));
             }
-        return project with { Tracks = [.. project.Tracks.Where(track => !string.IsNullOrWhiteSpace(track.ChannelId)), .. tracks], Routing = edges };
+        return project with { Tracks = [.. project.Tracks, .. tracks], Routing = edges };
     }
 
     private static bool IsOwnBus(string path) =>

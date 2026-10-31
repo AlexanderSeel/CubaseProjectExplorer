@@ -8,6 +8,25 @@ public sealed record LibraryAssetIndexProgress(string Stage, int Processed, int 
 
 public sealed partial class LibraryDocumentStore
 {
+    /// <summary>Returns only paths with a saved index so quick scans never reuse a project whose media index is missing.</summary>
+    public Task<HashSet<string>> GetProjectAssetIndexPathsAsync(CancellationToken ct = default) => Task.Run(() =>
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!File.Exists(DatabasePath)) return paths;
+        using var connection = OpenReadOnlyDatabase();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COALESCE(json_extract(Data,'$.projectPath'),json_extract(Data,'$.ProjectPath')) " +
+            "FROM documents WHERE TypeName=$type";
+        command.Parameters.AddWithValue("$type", nameof(LibraryProjectAssetIndexDocument));
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!reader.IsDBNull(0)) paths.Add(reader.GetString(0));
+        }
+        return paths;
+    }, ct);
+
     /// <summary>Reads one saved index at a time on a worker, releasing the SQLite reader every 16 records.</summary>
     public Task<int> VisitProjectAssetIndexesAsync(Action<LibraryProjectAssetIndexDocument> visit,
         IProgress<LibraryAssetIndexProgress>? progress = null, string? projectPath = null,

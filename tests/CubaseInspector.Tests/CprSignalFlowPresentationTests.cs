@@ -117,4 +117,26 @@ public sealed class CprSignalFlowPresentationTests
             item => item.SourceRecordClass == "CPR named record");
         Assert.Null(mixer.ParentTrackId);
     }
+
+    [Fact]
+    public void DisplaysExactTrackOwnerForNativeChannelEndpoints()
+    {
+        var track = new TrackInfo("arr-audio", "Lead vocal", "Audio", null, null, null, null, null,
+            EvidenceLevel.Candidate, "MAudioTrackEvent", 100, SourceEndOffset: 300);
+        var project = Project(
+            Mixer("Mixer channel", 130,
+                new CprNamedRecordValue("OutputBusValue", "i64", "42", 160)),
+            Mixer("Group bus", 400,
+                new CprNamedRecordValue("OwnInputBus/Bus UID", "i64", "42", 430))) with
+        { Tracks = [track] };
+
+        var view = CprSignalFlowPresentation.Create(project);
+        Assert.Equal("arr-audio", view.Tracks.Single(item => item.Id == "cpr-mixer-0-82").ParentTrackId);
+        var channel = RoutingFocusBuilder.Channels(view).Single(item => item.Id == "cpr-mixer-0-82");
+        var destination = RoutingFocusBuilder.Channels(view).Single(item => item.Id == "cpr-mixer-1-190");
+
+        Assert.Equal("Lead vocal · channel", channel.Name);
+        Assert.Equal("Group bus", destination.Name);
+        Assert.Equal(EvidenceLevel.Candidate, view.Routing.Single().Evidence);
+    }
 }

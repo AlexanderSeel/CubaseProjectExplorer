@@ -149,14 +149,15 @@ public sealed record ProjectScanTypes(bool Cpr = true, bool Bak = true, bool Daw
 
 public sealed record ScanProgress(int Completed, int Total, string CurrentPath,
     ProjectSnapshot? ParsedProject = null, AppError? Failure = null,
-    ScanStage Stage = ScanStage.Inspecting, long? BytesProcessed = null, long? TotalBytes = null);
+    ScanStage Stage = ScanStage.Inspecting, long? BytesProcessed = null, long? TotalBytes = null,
+    int Reused = 0);
 public sealed record FolderReport(IReadOnlyList<ProjectSnapshot> Projects,
     IReadOnlyList<(string Path, string Error)> Failures,
     bool Partial = false, int Discovered = 0, int Completed = 0,
     int SkippedUnrelatedBackups = 0,
     IReadOnlyList<ProjectLibraryEntry>? ProjectSummaries = null,
     IReadOnlyList<ProjectAssetIndex>? ProjectAssetIndexes = null,
-    ProjectScanTypes? ProjectTypes = null);
+    ProjectScanTypes? ProjectTypes = null, int Reused = 0);
 public sealed record ProjectChange(string Category, string Entity, string Property, string? Before, string? After, string MatchQuality);
 
 public interface IProjectReader
@@ -180,7 +181,8 @@ public interface IFolderScanner
 {
     Task<Result<FolderReport>> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default, ProjectScanTypes? projectTypes = null,
-        bool retainFullSnapshots = true);
+        bool retainFullSnapshots = true,
+        IReadOnlyDictionary<string, ProjectLibraryEntry>? reusableProjects = null);
 }
 
 public interface IProjectDiff

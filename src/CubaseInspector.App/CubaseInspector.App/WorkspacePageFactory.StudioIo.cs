@@ -1,4 +1,5 @@
 using CubaseInspector.Core;
+using CubaseInspector.App.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -10,6 +11,87 @@ namespace CubaseInspector.App;
 
 internal sealed partial class WorkspacePageFactory
 {
+    private UIElement StudioIoAssignmentsView(ProjectSnapshot project)
+    {
+        var diagram = StudioIoDiagramBuilder.Build(project);
+        var nodes = diagram.Nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
+        var connections = diagram.Links.Where(link => link.Label is "Input" or "Output" or
+                "Saved input assignment" or "Saved output assignment")
+            .OrderBy(link => link.Label.Contains("input", StringComparison.OrdinalIgnoreCase) || link.Label == "Input" ? 0 : 1)
+            .ToArray();
+        string Endpoint(string id) => nodes.TryGetValue(id, out var node) ? node.Name
+            : id.StartsWith("Bus UID ", StringComparison.OrdinalIgnoreCase) ? "Saved bus assignment"
+            : "Endpoint unavailable";
+        var rows = connections.Select(link => new StudioIoAssignmentRow(
+            link.Label.Contains("input", StringComparison.OrdinalIgnoreCase) || link.Label == "Input" ? "Input" : "Output",
+            Endpoint(link.From), Endpoint(link.To), link.Label, link.Evidence.ToString(), link.Source,
+            link.SourceOffset, link.Evidence)).ToArray();
+        var root = new StackPanel { Spacing = 12 };
+        var metrics = new Grid { ColumnSpacing = 12 };
+        foreach (var _ in Enumerable.Range(0, 3))
+            metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var inputs = rows.Count(row => row.Direction == "Input");
+        var outputs = rows.Count(row => row.Direction == "Output");
+        var namedPorts = diagram.Nodes.Count(node => node.Kind is "Saved input port" or "Saved output port");
+        var metricValues = new[]
+        {
+            (Label: "INPUT ASSIGNMENTS", Count: inputs),
+            (Label: "OUTPUT ASSIGNMENTS", Count: outputs),
+            (Label: "SAVED PORT NAMES", Count: namedPorts)
+        };
+        for (var index = 0; index < metricValues.Length; index++)
+        {
+            var metric = Metric(metricValues[index].Label, metricValues[index].Count.ToString("N0"));
+            Grid.SetColumn(metric, index);
+            metrics.Children.Add(metric);
+        }
+        root.Children.Add(metrics);
+        root.Children.Add(Note("See the input and output assignments saved in this project. These names and links describe project data; they do not confirm that a port exists on the current audio device."));
+        if (rows.Length == 0)
+        {
+            root.Children.Add(Empty("No explicit input or output assignments were read from this project. Track names and routing conventions are not used to invent ports."));
+        }
+        else
+        {
+            var connectionRows = new ResettableObservableCollection<StudioIoAssignmentRow>();
+            connectionRows.ReplaceAll(rows);
+            var browser = new DataBrowserControl<StudioIoAssignmentRow>(
+                [new("Direction", "Direction", row => row.Direction, row => row.Direction),
+                 new("From", "From", row => row.From, row => row.From),
+                 new("To", "To", row => row.To, row => row.To),
+                 new("Connection", "Connection", row => row.Connection, row => row.Connection),
+                 new("Source", "Source", row => row.Source, row => row.Source)],
+                connectionRows,
+                ["None", "Direction", "Evidence"], "Direction",
+                (row, mode) => mode switch { "Direction" => row.Direction, "Evidence" => row.Evidence, _ => "" },
+                _ => { }, row => { ShowDetails(row); return Task.CompletedTask; }, row =>
+                {
+                    var menu = new MenuFlyout();
+                    var details = new MenuFlyoutItem { Text = "Connection details" };
+                    details.Click += (_, _) => ShowDetails(row);
+                    menu.Items.Add(details);
+                    return menu;
+                }, minimumRowsHeight: 300, maximumRowsHeight: 760);
+            AutomationProperties.SetName(browser, "Saved project input and output assignments");
+            root.Children.Add(browser);
+        }
+
+        var unclassified = diagram.Nodes.Where(node => node.Kind == "Saved port description").ToArray();
+        if (unclassified.Length > 0)
+            root.Children.Add(new Expander { Header = $"Other saved port descriptions · {unclassified.Length:N0}",
+                Content = Section("Direction not determined", unclassified.Select(node => node.Name + " · " + node.Description)) });
+        return root;
+
+        void ShowDetails(StudioIoAssignmentRow row)
+        {
+            var evidence = new StackPanel { Spacing = 10 };
+            evidence.Children.Add(DetailCard("SAVED CONNECTION", ("Direction", row.Direction), ("From", row.From),
+                ("To", row.To), ("Assignment", row.Connection), ("Evidence", row.Evidence),
+                ("Source field", row.Source), ("File position", row.SourceOffset is long offset ? $"0x{offset:X}" : "Not supplied")));
+            ShowInformationWindow(row.Direction + " assignment", evidence, 860, 580);
+        }
+    }
+
     private UIElement StudioIoView(ProjectSnapshot project)
     {
         var diagram = StudioIoDiagramBuilder.Build(project);

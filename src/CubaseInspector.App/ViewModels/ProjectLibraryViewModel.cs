@@ -116,7 +116,11 @@ public sealed partial class ProjectLibraryViewModel(
         Status = ProgressText;
         try
         {
-            var entries = await documentStore.GetProjectLibraryEntriesAsync(projectTypes: selectedTypes);
+            // Full per-plug-in search facets can approach hundreds of megabytes in
+            // large libraries. Project Library searches project/track metadata; the
+            // dedicated Search everything page loads plugin facets on demand.
+            var entries = await documentStore.GetProjectLibraryEntriesAsync(projectTypes: selectedTypes,
+                includeSearchablePlugins: false);
             _allEntries.Clear();
             _allEntries.AddRange(ProjectLibraryBrowser.MergeScanResults(entries, []));
             RebuildEntryIndexes();
@@ -194,7 +198,7 @@ public sealed partial class ProjectLibraryViewModel(
     }
 
     public async Task ScanFolderAsync(string path, CancellationToken cancellationToken = default,
-        ProjectScanTypes? projectScanTypes = null)
+        ProjectScanTypes? projectScanTypes = null, bool reuseUnchangedFiles = false)
     {
         if (IsScanning) return;
         _scanCancellation?.Cancel();
@@ -220,15 +224,19 @@ public sealed partial class ProjectLibraryViewModel(
             {
                 ScanStage.Discovering => $"Finding projects · {update.Completed:N0} folders checked · {update.Total:N0} found",
                 ScanStage.Hashing when update.BytesProcessed is long bytes && update.TotalBytes is long byteTotal && byteTotal > 0
-                    => $"Project {fileNumber:N0} of {totalFiles:N0} · Hashing {currentFile} · {FormatBytes(bytes)} of {FormatBytes(byteTotal)}",
-                ScanStage.Hashing => $"Project {fileNumber:N0} of {totalFiles:N0} · Preparing checksum · {currentFile}",
+                    => $"Project {fileNumber:N0} of {totalFiles:N0} · Hashing {currentFile} · {FormatBytes(bytes)} of {FormatBytes(byteTotal)} · {update.Reused:N0} unchanged reused",
+                ScanStage.Hashing => $"Project {fileNumber:N0} of {totalFiles:N0} · Preparing checksum · {currentFile} · {update.Reused:N0} unchanged reused",
                 _ when totalFiles == 0 => "No project files found · finishing scan…",
+                _ when completedFiles >= totalFiles && update.Reused > 0 => $"Checked {totalFiles:N0} projects · {update.Reused:N0} unchanged reused",
+                _ when update.Reused > 0 => $"Project {fileNumber:N0} of {totalFiles:N0} · {update.Reused:N0} unchanged reused · Reading {currentFile}",
                 _ when completedFiles >= totalFiles => $"Finished {totalFiles:N0} projects · {currentFile}",
                 _ => $"Project {fileNumber:N0} of {totalFiles:N0} · Reading {currentFile}"
             };
 
-            if (totalFiles > 0)
+            if (update.Stage != ScanStage.Discovering && totalFiles > 0)
                 Progress = Math.Clamp((completedFiles + fileFraction) * 100d / totalFiles, 0, 100);
+            else if (update.Stage == ScanStage.Discovering)
+                Progress = 0;
         });
         // Progress<T> posts to the UI context. Coalesce worker reports so a scan of
         // thousands of files does not queue thousands of UI callbacks and redraws.
@@ -236,8 +244,24 @@ public sealed partial class ProjectLibraryViewModel(
 
         try
         {
+            var selectedTypes = projectScanTypes ?? ProjectScanTypes.All;
+            var existingEntries = _allEntries.Where(entry => IsEnabledType(entry.Project.FilePath, selectedTypes)).ToArray();
+            var reusableProjects = new Dictionary<string, ProjectLibraryEntry>(StringComparer.OrdinalIgnoreCase);
+            if (reuseUnchangedFiles)
+            {
+                ProgressText = "Checking saved project and audio indexes…";
+                var indexedPaths = await documentStore.GetProjectAssetIndexPathsAsync(_scanCancellation.Token);
+                foreach (var entry in existingEntries)
+                {
+                    var sourcePath = Path.GetFullPath(entry.Project.FilePath);
+                    if (!indexedPaths.Contains(entry.Project.FilePath) || entry.SizeBytes is null || entry.LastModifiedUtc is null ||
+                        ProjectLibraryBrowser.NormalizeSha256(entry.SourceSha256 ?? entry.Project.SourceSha256) is null ||
+                        !File.Exists(sourcePath)) continue;
+                    reusableProjects[sourcePath] = entry;
+                }
+            }
             var result = await scanner.ScanAsync(path, progress, _scanCancellation.Token, projectScanTypes,
-                retainFullSnapshots: false);
+                retainFullSnapshots: false, reusableProjects: reusableProjects);
             if (!result.IsSuccess || result.Value is null)
             {
                 Status = result.Error?.Code == "CANCELLED" ? "Scan cancelled. Completed results are retained."
@@ -245,8 +269,6 @@ public sealed partial class ProjectLibraryViewModel(
                 return;
             }
 
-            var selectedTypes = projectScanTypes ?? ProjectScanTypes.All;
-            var existingEntries = _allEntries.Where(entry => IsEnabledType(entry.Project.FilePath, selectedTypes)).ToArray();
             var scannedEntries = result.Value.ProjectSummaries ?? result.Value.Projects.Select(project =>
                 ProjectLibraryBrowser.ToSummary(ProjectLibraryBrowser.FromFile(project))).ToArray();
             Progress = 0;
@@ -274,7 +296,7 @@ public sealed partial class ProjectLibraryViewModel(
                 {
                     ProgressText = update.Total > 0
                         ? $"{update.Stage} · {update.Completed:N0} of {update.Total:N0}"
-                        : update.Stage;
+                        : update.Completed > 0 ? $"{update.Stage} · {update.Completed:N0} records checked" : update.Stage;
                     Progress = update.Total > 0
                         ? Math.Clamp(update.Completed * 100d / update.Total, 0, 100) : 0;
                 });
@@ -286,7 +308,7 @@ public sealed partial class ProjectLibraryViewModel(
             var wasCancelled = _scanCancellation!.IsCancellationRequested;
             var scanOutcome = wasCancelled ? "Scan cancelled · completed results retained"
                 : result.Value.Partial ? "Scan reached a limit · partial results retained" : "Scan complete";
-            Status = $"{scanOutcome} · {_allEntries.Count:N0} readable · {ScanIssues.Count:N0} issues" + persistenceNote;
+            Status = $"{scanOutcome} · {_allEntries.Count:N0} readable · {result.Value.Reused:N0} unchanged reused · {ScanIssues.Count:N0} issues" + persistenceNote;
         }
         finally
         {

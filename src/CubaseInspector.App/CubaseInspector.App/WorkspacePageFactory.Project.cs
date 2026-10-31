@@ -25,9 +25,13 @@ internal sealed partial class WorkspacePageFactory
             ? "See how your project is connected, then check audio paths and MIDI parts."
             : "Follow tracks through plug-ins, buses and outputs. Switch to Media paths to check the samples and MIDI in this project.");
         var studioPanel = new StackPanel { Spacing = 10 };
-        if (shell.Workspace.Project is { } selectedProject)
+        var selectedProject = shell.Workspace.Project;
+        if (selectedProject is not null)
             studioPanel.Children.Add(StudioIoView(selectedProject));
         else studioPanel.Children.Add(Empty("Choose Analyze to open a project, then follow its tracks, effects, buses and outputs here."));
+        var connectionsPanel = selectedProject is not null
+            ? StudioIoAssignmentsView(selectedProject)
+            : Empty("Open a project to see its saved input and output assignments.");
         var mediaPanel = new StackPanel { Spacing = 10 };
         mediaPanel.Children.Add(new TextBlock { Text = "EXTERNAL MEDIA CHECKLIST", Margin = new Thickness(0, 8, 0, 4),
             Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] });
@@ -86,7 +90,8 @@ internal sealed partial class WorkspacePageFactory
         };
         vm.PropertyChanged += handler;
         root.Unloaded += (_, _) => vm.PropertyChanged -= handler;
-        root.Children.Add(DashboardTabs(("Signal flow", studioPanel), ("Media paths", mediaPanel)));
+        root.Children.Add(DashboardTabs(("Signal flow", studioPanel), ("Inputs & outputs", connectionsPanel),
+            ("Media paths", mediaPanel)));
         return root;
     }
 
@@ -100,7 +105,11 @@ internal sealed partial class WorkspacePageFactory
         var root = Page(vm.ProjectName, vm.ProjectPath);
         if (vm.Project is { } selectedProject)
         {
-            var analyze = Button("Analyze", async () => await shell.AnalyzeProjectCommand.ExecuteAsync(null));
+            var analyze = Button("Analyze", async () =>
+            {
+                await shell.AnalyzeProjectCommand.ExecuteAsync(null);
+                navigate("Overview");
+            });
             var findProjectSamples = Button("Find project audio", () =>
             {
                 mediaLibrary.SetSampleProjectScope(selectedProject.FilePath);
@@ -121,6 +130,34 @@ internal sealed partial class WorkspacePageFactory
         }
         root.Children.Add(cards);
         root.Children.Add(Note(vm.OverviewSummary));
+        if (vm.Project is { } analyzedProject)
+        {
+            var nativeAudio = analyzedProject.NativeAudioMediaCandidates?.Count ?? 0;
+            var declaredAudio = analyzedProject.MediaReferences?.Count ?? 0;
+            var nativeMidi = analyzedProject.NativeMidiNoteCandidates?.Count ?? 0;
+            var declaredMidi = analyzedProject.MidiNotes?.Count ?? 0;
+            var analysis = new Grid { ColumnSpacing = 10, RowSpacing = 10, Margin = new Thickness(0, 8, 0, 4) };
+            for (var i = 0; i < 3; i++) analysis.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (var i = 0; i < 2; i++) analysis.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var results = new[]
+            {
+                Metric("AUDIO PATHS READ", declaredAudio.ToString("N0")),
+                Metric("MORE AUDIO LOCATIONS", nativeAudio.ToString("N0")),
+                Metric("MIDI NOTES FOUND", $"{declaredMidi:N0} exported · {nativeMidi:N0} in project file"),
+                Metric("SAVED ROUTING LINKS", analyzedProject.Routing.Count.ToString("N0")),
+                Metric("MIXER RECORDS READ", (analyzedProject.NativeMixerObservations?.Count ?? 0).ToString("N0")),
+                Metric("READER NOTES", analyzedProject.Warnings.Count.ToString("N0"))
+            };
+            for (var i = 0; i < results.Length; i++)
+            {
+                Grid.SetColumn(results[i], i % 3);
+                Grid.SetRow(results[i], i / 3);
+                analysis.Children.Add(results[i]);
+            }
+            root.Children.Add(Section("WHAT ANALYZE READ FROM THIS PROJECT", [
+                "This is the latest read of the selected file. Open Audio, MIDI, Tracks or Studio map to inspect the results in context."]));
+            root.Children.Add(analysis);
+        }
         var details = new Grid { ColumnSpacing = 16, RowSpacing = 12, Margin = new Thickness(0, 14, 0, 0) };
         details.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         details.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -184,18 +221,78 @@ internal sealed partial class WorkspacePageFactory
                 (kind == "All" || item.Row.Type.Equals(kind, StringComparison.OrdinalIgnoreCase)) &&
                 (query.Length == 0 || item.Row.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                  item.Row.Type.Contains(query, StringComparison.OrdinalIgnoreCase))).ToArray();
-            var channelNames = displayTracks.Where(item => TrackDisplayRow.HasSourceValue(item.Track.ChannelId))
+            var channelNames = allDisplayTracks.Where(item => TrackDisplayRow.HasSourceValue(item.Track.ChannelId))
                 .GroupBy(item => item.Track.ChannelId!, StringComparer.Ordinal)
                 .Where(group => group.Count() == 1)
                 .ToDictionary(group => group.Key, group => group.Single().Row.Name, StringComparer.Ordinal);
+            var signalFlow = project is null ? null : CprSignalFlowPresentation.Create(project);
+            var mixerRecordsByTrack = signalFlow?.Tracks
+                .Where(item => item.SourceRecordClass == "CPR named record" && item.ParentTrackId is not null)
+                .GroupBy(item => item.ParentTrackId!, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal)
+                ?? new Dictionary<string, TrackInfo[]>(StringComparer.Ordinal);
+            var arrangementRowsById = allDisplayTracks.GroupBy(item => item.Track.Id, StringComparer.Ordinal)
+                .Where(group => group.Count() == 1)
+                .ToDictionary(group => group.Key, group => group.Single().Row.Name, StringComparer.Ordinal);
+            string ResolveEndpoint(string id, string? label = null)
+            {
+                if (!string.IsNullOrWhiteSpace(label)) return label;
+                if (channelNames.TryGetValue(id, out var arrangementName)) return arrangementName;
+                var mixerTrack = signalFlow?.Tracks.FirstOrDefault(track => track.Id == id);
+                if (mixerTrack?.ParentTrackId is { } parentId && arrangementRowsById.TryGetValue(parentId, out var parentName))
+                    return parentName;
+                var mixerName = mixerTrack?.Name;
+                if (!string.IsNullOrWhiteSpace(mixerName)) return mixerName;
+                return id.StartsWith("Bus UID ", StringComparison.OrdinalIgnoreCase)
+                    ? "Saved bus assignment" : "Connection target unavailable";
+            }
             rows.ReplaceAll(displayTracks.Select(item => item.Row with
             {
-                Destination = TrackDisplayRow.HasSourceValue(item.Track.DestinationChannelId) &&
-                    channelNames.TryGetValue(item.Track.DestinationChannelId!, out var destination)
-                        ? destination : TrackDisplayRow.HasSourceValue(item.Track.DestinationChannelId) ? "Output not found" : "—"
+                Input = ResolveNativeRoute(item.Track, "Input"),
+                Channel = TrackDisplayRow.HasSourceValue(item.Track.ChannelId) &&
+                    channelNames.TryGetValue(item.Track.ChannelId!, out var channel) ? channel : ResolveOwnedChannel(item.Track),
+                Destination = ResolveDestination(item.Track)
             }));
             empty.Visibility = rows.Count == 0 && shell.Workspace.Tracks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             count.Text = $"{rows.Count:N0} of {shell.Workspace.Tracks.Count:N0} tracks";
+
+            string ResolveNativeRoute(TrackInfo track, string direction)
+            {
+                if (signalFlow is null) return "—";
+                RoutingEdge? route = null;
+                if (mixerRecordsByTrack.TryGetValue(track.Id, out var mixerRecords) && mixerRecords.Length == 1)
+                {
+                    var mixer = mixerRecords[0];
+                    route = direction == "Input"
+                        ? signalFlow.Routing.FirstOrDefault(edge => edge.Kind == direction && edge.ToChannelId == mixer.Id)
+                        : signalFlow.Routing.FirstOrDefault(edge => edge.Kind == direction && edge.FromChannelId == mixer.Id);
+                }
+                if (route is null && TrackDisplayRow.HasSourceValue(track.ChannelId))
+                    route = direction == "Input"
+                        ? signalFlow.Routing.FirstOrDefault(edge => edge.Kind == direction && edge.ToChannelId == track.ChannelId)
+                        : signalFlow.Routing.FirstOrDefault(edge => edge.Kind == direction && edge.FromChannelId == track.ChannelId);
+                if (route is null) return "—";
+                var endpoint = direction == "Input" ? route.FromChannelId : route.ToChannelId;
+                return ResolveEndpoint(endpoint, route.TargetLabel);
+            }
+
+            string ResolveOwnedChannel(TrackInfo track)
+            {
+                if (!mixerRecordsByTrack.TryGetValue(track.Id, out var mixerRecords) || mixerRecords.Length != 1)
+                    return "—";
+                var mixer = mixerRecords[0];
+                if (arrangementRowsById.TryGetValue(track.Id, out var ownerName)) return ownerName + " channel";
+                return TrackDisplayRow.HasSourceValue(mixer.Name)
+                    ? mixer.Name : $"{arrangementRowsById.GetValueOrDefault(track.Id, "Track")} channel";
+            }
+
+            string ResolveDestination(TrackInfo track)
+            {
+                if (!TrackDisplayRow.HasSourceValue(track.DestinationChannelId))
+                    return ResolveNativeRoute(track, "Output");
+                if (channelNames.TryGetValue(track.DestinationChannelId!, out var name)) return name;
+                return ResolveEndpoint(track.DestinationChannelId!);
+            }
         }
         search.TextChanged += (_, _) => Refresh(); kindFilter.SelectionChanged += (_, _) => Refresh();
         void ShowTrackDetails(TrackDisplayRow row)
@@ -203,7 +300,7 @@ internal sealed partial class WorkspacePageFactory
             detail.Children.Clear();
             detail.Children.Add(new TextBlock { Text = row.Name, FontSize = 17,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-            detail.Children.Add(new TextBlock { Text = $"{row.Type} · Output {row.Destination}",
+            detail.Children.Add(new TextBlock { Text = $"{row.Type} · Input {row.Input} · Channel {row.Channel} · Output {row.Destination}",
                 FontSize = 12, TextWrapping = TextWrapping.Wrap });
             if (row.MixSummary != "—")
                 detail.Children.Add(new TextBlock { Text = row.MixSummary,
@@ -275,6 +372,8 @@ internal sealed partial class WorkspacePageFactory
         var browser = new DataBrowserControl<TrackDisplayRow>(
             [new("Track", "Name", row => row.Name, row => row.Name),
              new("Type", "Type", row => row.Type, row => row.Type),
+             new("Input", "Input", row => row.Input, row => row.Input),
+             new("Channel", "Channel", row => row.Channel, row => row.Channel),
              new("Output", "Destination", row => row.Destination, row => row.Destination),
              new("Mix", "MixSummary", row => row.MixSummary, row => row.MixSummary)],
             rows, ["None", "Type"], "None",

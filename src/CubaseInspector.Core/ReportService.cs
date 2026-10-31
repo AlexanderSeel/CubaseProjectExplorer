@@ -6,7 +6,7 @@ public sealed class ReportService : IReportService
     public string ShortSummary(ProjectSnapshot p) =>
         $"{p.Name.Replace('\r', ' ').Replace('\n', ' ')} — {p.Format}, evidence: {p.Evidence}; BPM: {(p.Bpm?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown")}; " +
         (p.Evidence == EvidenceLevel.Candidate
-            ? $"candidate track records: {p.Tracks.Count}; candidate plugin tokens: {p.Plugins.Count}; routing: not decoded."
+            ? $"recognized serialized track classes: {p.Tracks.Count}; stored plugin UID/name markers: {p.Plugins.Count}; routing: not decoded."
             : $"exported tracks: {p.Tracks.Count}; exported plugin refs: {p.Plugins.Count}; exported routes: {p.Routing.Count}.");
 
     public string ToMarkdown(ProjectSnapshot p)
@@ -21,10 +21,10 @@ public sealed class ReportService : IReportService
             (p.TimeSignatureNumerator.HasValue && p.TimeSignatureDenominator.HasValue
                 ? p.TimeSignatureNumerator + "/" + p.TimeSignatureDenominator
                 : p.Evidence == EvidenceLevel.Candidate ? "Not decoded" : "Not exported"));
-        b.AppendLine($"- Track records: {p.Tracks.Count} (confirmed: {p.Tracks.Count(t => t.Evidence == EvidenceLevel.Confirmed)}, candidate: {p.Tracks.Count(t => t.Evidence == EvidenceLevel.Candidate)}); plugin markers/references: {p.Plugins.Count}; routing edges: {p.Routing.Count}");
+        b.AppendLine($"- Serialized track-class observations: {p.Tracks.Count} (read from export: {p.Tracks.Count(t => t.Evidence == EvidenceLevel.Confirmed)}, CPR fields needing relationship validation: {p.Tracks.Count(t => t.Evidence == EvidenceLevel.Candidate)}); stored plug-in markers/references: {p.Plugins.Count}; routing edges: {p.Routing.Count}");
         b.AppendLine().AppendLine("## Field availability");
         b.AppendLine(p.Evidence == EvidenceLevel.Candidate
-            ? "- Native CPR: track names and plugin UIDs are unverified candidates; confirmed track hierarchy, BPM, inserts, mixer settings, and routing are **not decoded**."
+            ? "- Native CPR: registered track-event class identifiers and stored plug-in UID/name fields are shown where decoded. Track names/visibility/hierarchy and plug-in identity/format/owner/state remain unresolved; BPM, inserts, mixer settings, and routing may be incomplete or not decoded."
             : "- Structured export: values describe fields present in the export; omissions are not numeric zero and do not prove values absent in the source DAW.");
         foreach (var field in ProjectFieldCoverage.Evaluate(p))
             b.AppendLine("- " + EscapeMd(field.Key) + ": " + field.Value);
@@ -94,7 +94,7 @@ public sealed class ReportService : IReportService
         b.AppendLine().AppendLine("## Plugin references");
         if (p.Evidence == EvidenceLevel.Candidate)
         {
-            b.AppendLine("CPR plugin UID/name tokens are candidates; their frequency does not prove insert-instance counts.");
+            b.AppendLine("The reader displays stored CPR plug-in UID/name fields where the typed property pattern matched. Marker frequency is not a verified count of plug-in instances.");
             var named = p.Plugins.Where(plug => plug.Evidence == EvidenceLevel.Candidate &&
                 !plug.Id.StartsWith("offset-", StringComparison.Ordinal) &&
                 plug.Name != "Name not decoded").ToArray();

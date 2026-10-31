@@ -194,7 +194,7 @@ internal sealed partial class WorkspacePageFactory
         search.TextChanged += (_, _) => Refresh(); kindFilter.SelectionChanged += (_, _) => Refresh();
         void ShowTrackDetails(TrackDisplayRow row)
         {
-            detail.Text = $"{row.Name} · {row.Type}\nChannel: {row.Channel} · Destination: {row.Destination}\nSaved value: {row.SavedValue} · {row.Status}\nSource quality: {row.Evidence}";
+            detail.Text = $"{row.Name} · {row.Type}\nSerialized class: {row.Source?.SourceRecordClass ?? "not supplied"} · file offset: {row.Source?.SourceOffset?.ToString("N0") ?? "not supplied"}\nChannel: {row.Channel} · Destination: {row.Destination}\nSaved value: {row.SavedValue} · {row.Status}\n{(row.Source is { } source ? EvidencePresentation.TrackExplanation(source) : row.Evidence)}";
             selected.Visibility = Visibility.Visible;
         }
         void ShowTrackAudioReferences(TrackDisplayRow row)
@@ -348,6 +348,9 @@ internal sealed partial class WorkspacePageFactory
         var details = new StackPanel { Spacing = 8, Background = Surface, Padding = SectionInset, Margin = new Thickness(0, 10, 0, 0) };
         var detailTitle = new TextBlock { Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] };
         var detailSummary = new TextBlock { Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], TextWrapping = TextWrapping.Wrap };
+        var lookupStatus = new TextBlock { Text = shell.PluginCatalog.ProjectLookupStatus,
+            Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 4) };
         details.Children.Add(detailTitle); details.Children.Add(detailSummary);
         details.Children.Add(new TextBlock { Text = "WHERE THIS NAME APPEARS", Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] });
         var usageList = new ListView { ItemsSource = usageRows, SelectionMode = ListViewSelectionMode.None, MaxHeight = 220 };
@@ -356,6 +359,22 @@ internal sealed partial class WorkspacePageFactory
             Content = new ListView { ItemsSource = eqRows, SelectionMode = ListViewSelectionMode.None, MaxHeight = 240 } };
         details.Children.Add(eqDetails);
         var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var checkCatalog = Button("Check saved catalog", async () =>
+        {
+            if (selectedCard?.Group.Uses.FirstOrDefault()?.Reference is { } reference)
+                await shell.PluginCatalog.CheckProjectReferenceAsync(reference);
+        });
+        var researchKvr = Button("Research on KVR", async () =>
+        {
+            if (selectedCard is not { } card) return;
+            var url = ExternalPluginDiscovery.KvrSearchUrl(card.Name, card.Vendor);
+            if (url is not null) await Windows.System.Launcher.LaunchUriAsync(new Uri(url));
+        });
+        var grabKvr = Button("Grab exact listing from KVR", async () =>
+        {
+            if (selectedCard?.Group.Uses.FirstOrDefault()?.Reference is { } reference)
+                await shell.PluginCatalog.GrabKvrForProjectReferenceAsync(reference);
+        });
         var searchCatalog = Button("Search catalog", () =>
         {
             if (selectedCard is not { } card) return;
@@ -366,19 +385,31 @@ internal sealed partial class WorkspacePageFactory
             if (selectedCard is not { } card) return;
             shell.PluginInventory.Search = card.Name; navigate("Inventory");
         });
-        actionRow.Children.Add(searchCatalog); actionRow.Children.Add(searchLocal); details.Children.Add(actionRow);
+        actionRow.Children.Add(checkCatalog); actionRow.Children.Add(researchKvr); actionRow.Children.Add(grabKvr);
+        var navigationActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        navigationActions.Children.Add(searchCatalog); navigationActions.Children.Add(searchLocal);
+        details.Children.Add(actionRow); details.Children.Add(navigationActions); details.Children.Add(lookupStatus);
+        PropertyChangedEventHandler lookupHandler = (_, args) =>
+        {
+            if (args.PropertyName == nameof(PluginCatalogViewModel.ProjectLookupStatus))
+                lookupStatus.Text = shell.PluginCatalog.ProjectLookupStatus;
+            if (args.PropertyName == nameof(PluginCatalogViewModel.IsBusy))
+                checkCatalog.IsEnabled = researchKvr.IsEnabled = grabKvr.IsEnabled = !shell.PluginCatalog.IsBusy;
+        };
+        shell.PluginCatalog.PropertyChanged += lookupHandler;
+        root.Unloaded += (_, _) => shell.PluginCatalog.PropertyChanged -= lookupHandler;
         void SelectGroup(PluginGroupCardRow? card)
         {
             selectedCard = card;
             if (card is null) { details.Visibility = Visibility.Collapsed; return; }
             detailTitle.Text = card.Name;
-            detailSummary.Text = $"{card.Vendor} · {card.Format} · {card.Uses}\n{EvidencePresentation.Explanation(card.Group.Evidence)}";
+            detailSummary.Text = $"{card.Vendor} · {card.Format} · {card.Uses}\n{EvidencePresentation.PluginGroupExplanation(card.Group)}";
             usageRows.Clear();
             foreach (var use in card.Group.Uses)
             {
                 var source = use.Reference;
                 var suffix = source.SourceByteOffset is long offset ? $" · file position {offset:N0}" : string.Empty;
-                usageRows.Add($"{use.Location}{suffix} · {EvidencePresentation.Label(source.Evidence)}");
+                usageRows.Add($"{use.Location}{suffix} · {EvidencePresentation.PluginLabel(source)}");
             }
             details.Visibility = Visibility.Visible;
             eqRows.Clear();

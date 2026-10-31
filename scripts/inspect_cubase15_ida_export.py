@@ -29,6 +29,21 @@ TARGETS = {
     "time-signature-writer": "sub_1431D3C40",
     "marker-reader": "sub_1426FC400",
     "marker-writer": "sub_1426FC470",
+    "midi-track-registration": "sub_141581220",
+    "midi-track-factory": "sub_141BEFE80",
+    "midi-track-reader": "sub_141BCCFB0",
+    "midi-track-writer": "sub_141BCD590",
+    "audio-track-registration": "sub_1415CED60",
+    "audio-track-factory": "sub_141E8C6B0",
+    "audio-track-reader": "sub_141E85B90",
+    "audio-track-writer": "sub_141E85F50",
+    "instrument-track-registration": "sub_14168CF60",
+    "instrument-track-factory": "sub_142615CA0",
+    "plugin-slot-registration": "sub_1415A4B10",
+    "plugin-slot-factory": "sub_141D4FDA0",
+    "plugin-slot-reader": "sub_141D49320",
+    "plugin-slot-writer": "sub_141D49BC0",
+    "plugin-slot-loader": "sub_141D49EA0",
 }
 
 

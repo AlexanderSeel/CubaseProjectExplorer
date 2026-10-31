@@ -16,6 +16,7 @@ public sealed partial class PluginCatalogViewModel(PluginCatalogStore store, Lib
     [ObservableProperty] private string _manufacturer = "";
     [ObservableProperty] private string _apiBaseAddress = "http://localhost:8000";
     [ObservableProperty] private string _status = "Load the public catalog to search product metadata.";
+    [ObservableProperty] private string _projectLookupStatus = "Select a project plug-in to check saved catalog data or look it up on KVR.";
     [ObservableProperty] private string _source = "No catalog loaded";
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private bool _downloadProductImages;
@@ -25,6 +26,89 @@ public sealed partial class PluginCatalogViewModel(PluginCatalogStore store, Lib
 
     public PluginCatalogMatchAssessment Assess(PluginReference reference) =>
         PluginCatalogMatchService.Assess(_catalog, reference);
+
+    public async Task CheckProjectReferenceAsync(PluginReference reference)
+    {
+        ProjectLookupStatus = "Checking the saved plug-in database…";
+        if (_catalog is null)
+            await LoadLibraryCommand.ExecuteAsync(null);
+
+        var assessment = Assess(reference);
+        var products = assessment.Candidates.Count == 0 ? "" : "\n" + string.Join("\n", assessment.Candidates
+            .Take(5).Select(item => $"• {item.Name} · {item.Manufacturer} · {item.Source}"));
+        ProjectLookupStatus = $"{assessment.Kind}: {assessment.Explanation}{products}\nCatalog source: {Source}. This is advisory product metadata, not proof of installed identity or loadability.";
+    }
+
+    public async Task GrabKvrForProjectReferenceAsync(PluginReference reference)
+    {
+        var name = reference.Name?.Trim();
+        if (string.IsNullOrWhiteSpace(name) || name == "Name not decoded" ||
+            name.Length >= 16 && name.All(Uri.IsHexDigit))
+        {
+            ProjectLookupStatus = "This project reference has no searchable product name. Open KVR research and search using its stored UID/name evidence.";
+            return;
+        }
+
+        IsBusy = true;
+        ProjectLookupStatus = $"Checking saved KVR entries, then reading KVR's public newest-products listing for “{name}”…";
+        try
+        {
+            if (_catalog is null) await LoadLibraryCommand.ExecuteAsync(null);
+            var stored = _catalog?.FindExactNameCandidates(name)
+                .Where(item => item.Source.Contains("KVR", StringComparison.OrdinalIgnoreCase)).ToArray() ?? [];
+            var match = SelectExactKvrMatch(stored, name, reference.Manufacturer, out var ambiguity);
+            if (match is null && ambiguity)
+            {
+                ProjectLookupStatus = $"Several saved KVR products share the name “{name}”; nothing was imported. Use KVR research to choose the right listing.";
+                return;
+            }
+
+            if (match is null)
+            {
+                var fetched = await directories.GrabKvrNewestAsync(CancellationToken.None);
+                match = SelectExactKvrMatch(fetched, name, reference.Manufacturer, out ambiguity);
+                if (match is null)
+                {
+                    ProjectLookupStatus = ambiguity
+                        ? $"KVR's fetched listings contain multiple exact-name products for “{name}”; nothing was imported. Research on KVR and select a listing manually."
+                        : $"No exact listing for “{name}” appeared in the KVR newest-products results. Nothing was imported; use Research on KVR for the full database search.";
+                    return;
+                }
+
+                var imported = PluginMetadataCatalog.FromEntries([match]);
+                var combined = await PersistAndLoadCombinedAsync(imported);
+                ProjectLookupStatus = $"Added “{match.Name}” by {match.Manufacturer} from {match.Source} to the saved catalog. {combined.Catalog.Count:N0} products are now available. KVR listing metadata does not verify project identity or installation.";
+            }
+            else
+            {
+                ProjectLookupStatus = $"“{match.Name}” by {match.Manufacturer} is already in the saved catalog ({match.Source}). KVR metadata does not verify project identity or installation.";
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or
+                                   UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+        {
+            ProjectLookupStatus = $"KVR lookup failed: {ex.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
+    private static PluginMetadataEntry? SelectExactKvrMatch(IEnumerable<PluginMetadataEntry> entries,
+        string projectName, string? projectVendor, out bool ambiguous)
+    {
+        static string Normalize(string value) => new(value.Where(char.IsLetterOrDigit)
+            .Select(char.ToLowerInvariant).ToArray());
+
+        var exact = entries.Where(item => Normalize(item.Name) == Normalize(projectName)).ToArray();
+        if (!string.IsNullOrWhiteSpace(projectVendor) &&
+            projectVendor is not ("Unknown" or "Unspecified manufacturer"))
+        {
+            var vendorMatches = exact.Where(item => Normalize(item.Manufacturer) == Normalize(projectVendor)).ToArray();
+            if (vendorMatches.Length == 1) { ambiguous = false; return vendorMatches[0]; }
+            if (vendorMatches.Length > 1) { ambiguous = true; return null; }
+        }
+        ambiguous = exact.Length > 1;
+        return exact.Length == 1 ? exact[0] : null;
+    }
 
     public void SearchFor(string pluginName)
     {

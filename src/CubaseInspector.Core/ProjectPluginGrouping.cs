@@ -41,7 +41,7 @@ public static class ProjectPluginGrouping
                     }
                     else if (!string.IsNullOrWhiteSpace(plugin.CandidateOwnerName))
                     {
-                        location = $"Nearby CPR record (owner unverified): {plugin.CandidateOwnerName}";
+                        location = $"Possible enclosing channel (relationship unverified): {plugin.CandidateOwnerName}";
                         if (!string.IsNullOrWhiteSpace(plugin.CandidateLocationPath))
                             location += " · " + plugin.CandidateLocationPath;
                     }

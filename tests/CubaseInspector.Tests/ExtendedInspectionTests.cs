@@ -262,7 +262,7 @@ public sealed class ExtendedInspectionTests
             "Unknown", null, EvidenceLevel.Candidate)], level: EvidenceLevel.Candidate);
         var text = new ReportService().ShortSummary(source);
         Assert.Contains("evidence: Candidate", text);
-        Assert.Contains("candidate plugin tokens: 1", text);
+        Assert.Contains("stored plugin UID/name markers: 1", text);
     }
 
     [Fact]

@@ -45,10 +45,11 @@ public static class ExternalPluginDiscovery
     public static string? KvrSearchUrl(string? pluginName, string? vendor)
     {
         if (string.IsNullOrWhiteSpace(pluginName)) return null;
+        if (pluginName.Length > 128 || pluginName.Any(char.IsControl) ||
+            vendor is { Length: > 100 } || vendor?.Any(char.IsControl) == true) return null;
         var term = pluginName.Trim();
         var maker = string.IsNullOrWhiteSpace(vendor) ? "" : vendor.Trim();
-        if (term.Length > 128 || term.Length < 2 || term.Any(char.IsControl) ||
-            maker.Length > 100 || maker.Any(char.IsControl)) return null;
+        if (term.Length < 2) return null;
         var query = term + (maker.Length == 0 ? "" : " " + maker);
         return "https://www.kvraudio.com/plugins?search=" + Uri.EscapeDataString(query);
     }

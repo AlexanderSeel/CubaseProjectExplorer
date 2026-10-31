@@ -14,7 +14,7 @@ public static class ProjectChartService
     {
         var trackBars = Bars(project.Tracks.GroupBy(t => t.Kind, StringComparer.OrdinalIgnoreCase)
                 .Select(g => (Name: g.Key, Count: g.Count())),
-            project.Evidence, project.Evidence == EvidenceLevel.Confirmed ? "tracks" : "candidate track records");
+            project.Evidence, project.Evidence == EvidenceLevel.Confirmed ? "tracks" : "recognized serialized class records");
 
         // Raw binary CPR markers are not identified plugin instances and cannot be meaningfully
         // classified by format/manufacturer; keep the chart empty rather than fabricating ratios.
@@ -26,7 +26,7 @@ public static class ProjectChartService
             : [];
         var note = project.Evidence == EvidenceLevel.Confirmed
             ? "Counts reflect parsed DAWproject track and plugin references; local installation is not validated."
-            : "CPR data shows candidate track-record counts only; plugin-marker distributions are excluded.";
+            : "Track bars count recognized CPR serialized class headers, not confirmed visible tracks. Plug-in format distributions are not inferred from stored UID/name markers.";
         return new ProjectChartSummary(trackBars, plugins, note);
     }
 

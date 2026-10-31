@@ -75,7 +75,7 @@ public sealed class ProjectFieldEvidenceTests
         var candidate = new ProjectSnapshot("song.cpr", "Song", "CPR", null, null,
             EvidenceLevel.Candidate, [], [], [], []);
         var summary = new ReportService().ShortSummary(candidate);
-        Assert.Contains("candidate plugin tokens", summary);
+        Assert.Contains("stored plugin UID/name markers", summary);
         Assert.Contains("routing: not decoded", summary);
         Assert.DoesNotContain("exported plugin refs", summary);
     }
@@ -90,5 +90,29 @@ public sealed class ProjectFieldEvidenceTests
         Assert.False(field.IsConfirmedValue);
         Assert.Throws<ArgumentException>(() =>
             ProjectFieldEvidence<int>.Unavailable(ProjectFieldState.Present, "invalid"));
+    }
+
+    [Fact]
+    public void RecognizedTrackClassIsShownSeparatelyFromUnverifiedRelationships()
+    {
+        var track = new TrackInfo("r1", "Bass", "Audio", null, null, null, null, null,
+            EvidenceLevel.Candidate, "MAudioTrackEvent", 1234);
+
+        Assert.Contains("Serialized Audio class recognized", EvidencePresentation.TrackLabel(track));
+        Assert.Contains("MAudioTrackEvent", EvidencePresentation.TrackExplanation(track));
+        Assert.Contains("parent hierarchy", EvidencePresentation.TrackExplanation(track));
+        Assert.DoesNotContain("Unverified CPR record", EvidencePresentation.TrackLabel(track));
+    }
+
+    [Fact]
+    public void StoredPluginFieldsAreShownAsFoundWithoutClaimingIdentityOrOwner()
+    {
+        var plugin = new PluginReference("uid", "Compressor", null, "CPR UID (format unverified)",
+            null, EvidenceLevel.Candidate, Role: "Cubase Plugin UID and typed Plugin Name fields at 0x1234");
+
+        Assert.Contains("Stored CPR plug-in UID/name found", EvidencePresentation.PluginLabel(plugin));
+        Assert.Contains("identity and owner unverified", EvidencePresentation.PluginLabel(plugin));
+        Assert.Contains("APluginSlot", EvidencePresentation.PluginExplanation(plugin));
+        Assert.DoesNotContain("Unverified CPR record", EvidencePresentation.PluginLabel(plugin));
     }
 }

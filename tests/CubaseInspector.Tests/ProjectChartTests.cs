@@ -32,7 +32,7 @@ public sealed class ProjectChartTests
         var bars = ProjectChartService.Build(project);
         Assert.Single(bars.TrackTypes);
         Assert.Empty(bars.PluginFormats);
-        Assert.Contains("candidate", bars.TrackTypes[0].CountLabel);
+        Assert.Contains("recognized serialized class", bars.TrackTypes[0].CountLabel);
     }
 
     private static TrackInfo Track(string id, string kind, EvidenceLevel level) =>

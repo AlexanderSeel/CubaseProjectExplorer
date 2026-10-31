@@ -62,11 +62,11 @@ public sealed partial class ProjectStatisticsViewModel : ObservableObject
         }
         var result = _statistics.Summarize(project);
         foreach (var row in result.TrackTypes.Select(pair => new StatisticRow(pair.Key, pair.Value,
-                     project.Evidence.ToString()))) Tracks.Add(row);
+                     project.Evidence == EvidenceLevel.Candidate ? "Recognized serialized class" : "Read from project export"))) Tracks.Add(row);
         foreach (var row in result.PluginFormats.Select(pair => new StatisticRow(pair.Key, pair.Value,
                      "Confirmed exported references"))) Plugins.Add(row);
         Summary = result.CandidatePluginReferences == 0
             ? $"{project.Tracks.Count:N0} track records · {project.Plugins.Count:N0} confirmed plugin references"
-            : $"{project.Tracks.Count:N0} candidate track records · {result.CandidatePluginReferences:N0} unverified plugin markers, excluded from confirmed plugin charts";
+            : $"{project.Tracks.Count:N0} recognized serialized track classes · {result.CandidatePluginReferences:N0} stored plug-in markers; format and identity charts require more evidence";
     }
 }

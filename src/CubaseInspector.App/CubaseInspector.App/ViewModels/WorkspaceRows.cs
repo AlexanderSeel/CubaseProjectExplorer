@@ -14,7 +14,7 @@ public sealed record TrackDisplayRow(string Name, string Type, string Channel, s
         track.DestinationChannelId ?? "Unknown",
         track.Volume is double volume ? volume.ToString("0.###", CultureInfo.CurrentCulture) : "Unknown",
         $"Mute {Flag(track.Mute)} · Solo {Flag(track.Solo)}",
-        EvidencePresentation.Label(track.Evidence), track);
+        EvidencePresentation.TrackLabel(track), track);
 
     private static string Flag(bool? value) => value switch { true => "On", false => "Off", _ => "Unknown" };
 }
@@ -29,8 +29,8 @@ public sealed record PluginReferenceDisplayRow(string Name, string Manufacturer,
         plugin.Version ?? "Unknown",
         plugin.Role ?? "Role not supplied",
         plugin.TrackId is not null && owners.TryGetValue(plugin.TrackId, out var owner) ? owner :
-            plugin.CandidateOwnerName is { Length: > 0 } candidate ? "Nearby CPR record: " + candidate + " (owner unverified)" : "Location not found",
-        EvidencePresentation.Label(plugin.Evidence), plugin);
+            plugin.CandidateOwnerName is { Length: > 0 } candidate ? "Possible enclosing channel: " + candidate + " · relationship unverified" : "Location not found",
+        EvidencePresentation.PluginLabel(plugin), plugin);
 }
 
 public sealed record PluginGroupCardRow(ProjectPluginGroup Group, ImageSource? Artwork)
@@ -40,5 +40,5 @@ public sealed record PluginGroupCardRow(ProjectPluginGroup Group, ImageSource? A
     public string Format => Group.Format;
     public string Uses => Group.CountLabel;
     public string Locations => Group.LocationSummary;
-    public string Reliability => EvidencePresentation.Label(Group.Evidence);
+    public string Reliability => EvidencePresentation.PluginGroupLabel(Group);
 }

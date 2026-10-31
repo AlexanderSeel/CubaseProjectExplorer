@@ -103,7 +103,7 @@ public sealed partial class MainPage : Page
         });
         content.Children.Add(new TextBlock
         {
-            Text = "CPR/BAK track and plug-in markers remain candidates until verified against Cubase. Unknown values do not mean zero or absent.",
+            Text = "The reader identifies registered Cubase track-event classes and displays stored plug-in UID/name fields. Track hierarchy, plug-in identity and ownership remain unresolved; unknown values do not mean zero or absent.",
             TextWrapping = TextWrapping.Wrap,
             Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"]
         });

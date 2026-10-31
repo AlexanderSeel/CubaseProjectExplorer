@@ -118,4 +118,14 @@ public class PluginCatalogSuggestionsTests
         Assert.Contains("%26", url);
         Assert.Null(ExternalPluginDiscovery.SearchUrl("unknown", "Synth", null));
     }
+
+    [Fact]
+    public void KvrResearchOpensKvrDatabaseWithEscapedProductAndVendor()
+    {
+        var url = ExternalPluginDiscovery.KvrSearchUrl("Pro-Q 3 & Echo", "Fab Filter");
+        Assert.StartsWith("https://www.kvraudio.com/plugins?search=", url);
+        Assert.Contains("%26", url);
+        Assert.Contains("Fab%20Filter", url);
+        Assert.Null(ExternalPluginDiscovery.KvrSearchUrl("\ninvalid", null));
+    }
 }

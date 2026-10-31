@@ -68,7 +68,7 @@ internal sealed partial class WorkspacePageFactory
         var recentRows = new StackPanel { Spacing = 4 };
         recentPanel.Children.Add(recentRows);
         root.Children.Add(recentPanel);
-        var evidenceNote = Note("Native CPR/BAK track and plug-in markers remain candidates. The dashboard counts indexed files and never treats unknown values as zero or absent.");
+        var evidenceNote = Note("CPR/BAK class markers recognized in Cubase 15.0.40 ASM are shown with their stored names and offsets. Plug-in UID/name fields found in the project are shown directly; track hierarchy, plug-in ownership and identity remain unresolved. Unknown values are not treated as zero or absent.");
         root.Children.Add(evidenceNote);
 
         void AddMetric(int column, int row, Border card)

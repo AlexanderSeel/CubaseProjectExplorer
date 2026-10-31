@@ -38,11 +38,10 @@ public sealed partial class ProjectWorkspaceViewModel : ObservableObject
         ? $"{n}/{d}" : CandidateValue("Time signature event") is { } signature ? signature + " · unverified" : "Unknown";
     public string TrackCount => Project is null ? "—" : Project.Tracks.Count.ToString("N0");
     public string TrackEvidence => Project?.Evidence == EvidenceLevel.Candidate
-        ? "CPR track records (unverified)" : "tracks read from the project export";
-    public string PluginCount => Project is null ? "—" : Project.Evidence == EvidenceLevel.Candidate
-        ? "Unknown" : Project.Plugins.Count.ToString("N0");
+        ? "recognized serialized classes · names and links unresolved" : "tracks read from the project export";
+    public string PluginCount => Project is null ? "—" : Project.Plugins.Count.ToString("N0");
     public string PluginEvidence => Project?.Evidence == EvidenceLevel.Candidate
-        ? "plug-in instances are not confirmed by Cubase"
+        ? "stored UID/name markers shown · identity, format, and owner unresolved"
         : Project?.Plugins.Any(p => p.Evidence == EvidenceLevel.Candidate) == true
             ? "some references have unverified identities or locations"
             : Project?.Plugins.Any(p => p.Evidence == EvidenceLevel.Unknown) == true
@@ -55,7 +54,7 @@ public sealed partial class ProjectWorkspaceViewModel : ObservableObject
     public string OverviewSummary => Project is null
         ? "Choose a project from the Library to inspect its available evidence."
         : Project.Evidence == EvidenceLevel.Candidate
-        ? "Showing native CPR/BAK record observations. Open a workspace to inspect decoded values, interpreted connections and source details."
+        ? "Recognized CPR/BAK serialized track classes and stored plug-in UID/name fields are shown below. Names, track links, plug-in identity, and cross-version meaning remain separate details."
             : "Showing fields declared in the project export. Missing values remain unknown.";
     public string RoutingSummary => Project?.Evidence == EvidenceLevel.Candidate
         ? $"{CprSignalFlowPresentation.Create(Project).Tracks.Count:N0} records · {CprSignalFlowPresentation.Create(Project).Routing.Count:N0} bus/send links read from CPR fields. Select a record to explore its signal path and source details."

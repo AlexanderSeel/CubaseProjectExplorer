@@ -22,7 +22,7 @@ public sealed class LibraryProjectRow(ProjectLibraryEntry entry)
     public int? TrackCount => entry.TrackRecordCount ?? (entry.Project.Tracks.Count == 0 ? null : entry.Project.Tracks.Count);
     public int PluginReferenceCount => entry.PluginReferenceCount ?? entry.Project.Plugins.Count;
     public string Plugins => entry.Project.Evidence == EvidenceLevel.Candidate
-        ? "Unverified CPR markers"
+        ? $"{PluginReferenceCount:N0} stored plug-in markers · identity/owner unresolved"
         : (entry.ConfirmedPluginReferenceCount ?? entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Confirmed)) + " confirmed · " +
           (entry.CandidatePluginReferenceCount ?? entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Candidate)) + " candidate · " +
           (entry.UnknownPluginReferenceCount ?? entry.Project.Plugins.Count(p => p.Evidence == EvidenceLevel.Unknown)) + " unknown";

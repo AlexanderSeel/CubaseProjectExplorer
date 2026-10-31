@@ -20,6 +20,7 @@ The standard-library script [inspect_cubase15_serializers.py](../../scripts/insp
 ```powershell
 python scripts/inspect_cubase15_serializers.py Cubase15.exe
 python scripts/inspect_cubase15_serializers.py Cubase15.exe --function archive-class-reader --function archive-body-size
+python scripts/inspect_cubase15_ida_export.py Cubase15.exe.asm --function midi-track-registration --function midi-track-reader --function audio-track-registration --function audio-track-reader --function instrument-track-registration --function plugin-slot-registration --function plugin-slot-reader --function plugin-slot-loader --output artifacts/cubase15-track-plugin
 ```
 
 Optional disassembly uses Capstone; it is not a product dependency:
@@ -149,6 +150,42 @@ also searches `Plugin Name`/`Original Plugin Name` and describes `FNPath`
 pool paths, while the [MIT Cubase Project Plugins reader](https://github.com/fgimian/cubase-project-plugins)
 reports plug-in UIDs from Cubase 4 onward and explicitly notes older SX3
 projects may not expose plug-ins. Neither is a Steinberg format specification.
+
+## Track serializer dispatch and plug-in slot load path
+
+A second pass followed class registration through factories and the object vtables
+in the same hash-identified Cubase 15.0.40 IDA export. Under the native archive
+object reader's virtual dispatch at `+0x90` (writer at `+0x98`), the paths are:
+
+| Serialized class | Registration → factory | Object reader (`+0x90`) | Object writer (`+0x98`) |
+|---|---|---|---|
+| `MMidiTrackEvent` v4 | `0x141581220` → `0x141BEFE80`; factory allocates `0x208` bytes and initializes through `0x141BD2740` | `0x141BCCFB0` | `0x141BCD590` |
+| `MAudioTrackEvent` v1 | `0x1415CED60` → `0x141E8C6B0`; factory allocates `0x1D8` bytes | `0x141E85B90` | `0x141E85F50` |
+| `MInstrumentTrackEvent` v4 | `0x14168CF60` → `0x142615CA0`; factory allocates `0x210` bytes and initializes through `0x141BD2740` | `0x141BCCFB0` | `0x141BCD590` |
+| `APluginSlot` v0 | `0x1415A4B10` → `0x141D4FDA0`; factory allocates `0x678` bytes | `0x141D49320` | `0x141D49BC0` |
+
+The three track-event entries therefore have actual registered serializers and
+dedicated or shared callbacks; they are not merely strings found in the binary.
+When the CPR reader has parsed a bounded class header in an ARCH stream and its
+class identifier matches one of these names, it can report the serialized class
+as recognized. This does not make a byte-window-extracted name a proven visible
+track, prove parentage/order, or establish that the same class contract held in
+every historical Cubase release. The reader/UI now separates **recognized
+serialized class** from those unresolved relationships instead of labelling
+the whole record “Unverified CPR record.”
+
+For plug-ins, registration confirms `APluginSlot` itself has a native serializer.
+The separately traced runtime load function `sub_141D49EA0` is called by
+`sub_141D704A0`; it obtains a `Plugin` child and asks for `Plugin UID`. A later
+branch obtains `Original Plugin Name`. The serialized slot callback
+`sub_141D49320` is not itself proof that the token reader found a complete slot
+boundary around every marker. Consequently the UI now says stored UID/name
+fields were found when the typed property pattern matched, while keeping
+plugin identity, format, slot/track ownership, state, and loadability unresolved.
+
+These exact addresses apply only to the inspected executable hash above. The
+work improves the evidence label for Cubase 15 class/property observations; it
+does not certify cross-version field semantics or normalize inferred hierarchy.
 
 ## MTempoEvent: raw typed body candidate
 

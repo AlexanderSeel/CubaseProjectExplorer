@@ -25,7 +25,7 @@ internal sealed partial class WorkspacePageFactory
             HorizontalAlignment = HorizontalAlignment.Stretch, Visibility = Visibility.Collapsed,
             PlaceholderText = "Choose a project or part", Margin = new Thickness(0, 0, 0, 4) };
         AutomationProperties.SetName(compactPicker, "Select native MIDI project or part");
-        var title = new TextBlock { Text = "Native CPR notes", FontSize = 18,
+        var title = new TextBlock { Text = "CPR note observations", FontSize = 18,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
         var context = new TextBlock { Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap };
         var plot = new MidiNotePlot();
@@ -55,10 +55,10 @@ internal sealed partial class WorkspacePageFactory
                     (note.RawFlags is ushort flags ? $" · raw flags 0x{flags:X4}" : "") + $" · {note.SourceLayout}";
                 return Task.CompletedTask;
             }, _ => null, minimumRowsHeight: 160, maximumRowsHeight: 280, showToolbar: false);
-        AutomationProperties.SetName(notes, "Candidate MIDI note values. Timing units and ownership are unverified.");
+        AutomationProperties.SetName(notes, "CPR note observations. Stored timing units and track ownership are unverified.");
         var detail = new StackPanel { Spacing = 10 };
         detail.Children.Add(title); detail.Children.Add(context);
-        detail.Children.Add(new TextBlock { Text = "Candidate evidence · Standard MIDI export unavailable", FontSize = 11, Foreground = Muted });
+        detail.Children.Add(new TextBlock { Text = "CPR note data · timing and track assignment are not verified", FontSize = 11, Foreground = Muted });
         detail.Children.Add(new Border { CornerRadius = new CornerRadius(6), BorderBrush = Divider,
             BorderThickness = new Thickness(1), Child = plot });
         detail.Children.Add(timing); detail.Children.Add(notes); detail.Children.Add(selectedNote);
@@ -70,7 +70,7 @@ internal sealed partial class WorkspacePageFactory
             compactPicker.SelectedItem = group;
             title.Text = group.Name;
             var projectContext = group.Name == group.ProjectName ? group.Context : group.ProjectName + " · " + group.Context;
-            context.Text = $"{projectContext}\n{group.NoteCount:N0} candidate notes · MIDI pitches {group.PitchRange}";
+            context.Text = $"{projectContext}\n{group.NoteCount:N0} notes read · MIDI pitches {group.PitchRange}";
             noteRows.ReplaceAll(group.Notes);
             plot.SetPreview(NativeMidiBrowser.Preview(group));
             evidence.Text = group.SourceLayout + "\n\n" + (group.Notes.FirstOrDefault()?.Warning ?? "No source evidence available.");
@@ -82,7 +82,7 @@ internal sealed partial class WorkspacePageFactory
         var groupColumns = new DataBrowserColumn<NativeMidiNoteGroup>[]
         {
             new("Project / part", "Name", group => group.Name, group => group.Name, 2.8),
-            new("Possible track", "Context", group => group.CandidateTrackName ?? "Unassigned", group => group.Context, 1),
+            new("Track context", "Context", group => group.CandidateTrackName ?? "Not assigned", group => group.Context, 1),
             new("Notes", "Count", group => group.NoteCount.ToString("N0"), group => group.NoteCount, 0.45)
         };
         groups = new DataBrowserControl<NativeMidiNoteGroup>(groupColumns, mediaLibrary.NativeMidiGroups,

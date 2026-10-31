@@ -14,7 +14,7 @@ public static class CprIoObservationPresentation
               extension.Equals(".bak", StringComparison.OrdinalIgnoreCase))) return [];
 
         var audio = (project.NativeAudioMediaCandidates ?? []).Take(limit)
-            .Select(media => $"Audio path candidate · {media.DeclaredPath} · containing track label: {media.CandidateTrackName ?? "unknown"} · {media.SourceRecord} · file offset 0x{media.FileOffset:X} · {media.Warning}").ToArray();
+            .Select(media => $"Audio path · {media.DeclaredPath} · containing track label: {media.CandidateTrackName ?? "unknown"} · {media.SourceRecord} · file offset 0x{media.FileOffset:X} · {media.Warning}").ToArray();
         var mixerRows = (project.NativeMixerObservations ?? []).Take(limit).Select(mixer =>
         {
             var values = new List<string>();
@@ -24,11 +24,11 @@ public static class CprIoObservationPresentation
             if (mixer.Solo is bool solo) values.Add($"solo {solo}");
             values.AddRange((mixer.CandidateFields ?? []).Take(16)
                 .Select(field => $"{field.Path} [{field.Type}]={field.Value}"));
-            return $"Named-record candidate · {mixer.Name} · {string.Join("; ", values.DefaultIfEmpty("no supported fields decoded"))} · {mixer.SourceStream} · file offset 0x{mixer.ArchiveOffset:X} · {mixer.Evidence}";
+            return $"Mixer values · {mixer.Name} · {string.Join("; ", values.DefaultIfEmpty("no supported fields decoded"))} · {mixer.SourceStream} · file offset 0x{mixer.ArchiveOffset:X} · {mixer.Evidence}";
         }).ToArray();
 
         var fields = (project.NativeMetadataCandidates ?? []).Take(limit)
-            .Select(field => $"Typed-field candidate · {field.Field}: {field.Value} · {field.SourcePattern} · file offset 0x{field.ArchiveOffset:X} · {field.Status}").ToArray();
+            .Select(field => $"Project field · {field.Field}: {field.Value} · {field.SourcePattern} · file offset 0x{field.ArchiveOffset:X} · {field.Status}").ToArray();
 
         var categories = new[] { audio, mixerRows, fields };
         var observations = new List<string>(Math.Min(limit, audio.Length + mixerRows.Length + fields.Length));

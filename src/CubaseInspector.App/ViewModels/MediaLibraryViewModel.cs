@@ -129,7 +129,7 @@ public sealed partial class MediaLibraryViewModel(
         OnPropertyChanged(nameof(SampleProjects));
         RefreshSamples();
         RefreshMidiTracks();
-        Status = $"Indexed {_allSamples.Length:N0} confirmed media uses and {_allNativeSampleCandidates.Length:N0} native CPR audio-path candidates across {indexes.Count:N0} projects · {_allMidiTracks.Length:N0} MIDI tracks · {_allMidiCandidates.Length:N0} unverified CPR note observations.";
+        Status = $"Indexed {_allSamples.Length:N0} confirmed media uses and {_allNativeSampleCandidates.Length:N0} native CPR audio-path observations across {indexes.Count:N0} projects · {_allMidiTracks.Length:N0} MIDI tracks · {_allMidiCandidates.Length:N0} CPR note observations.";
         if (indexes.Count == 0) Status = "No asset indexes exist yet. Build the index from the Library database page.";
     }
 
@@ -521,8 +521,8 @@ public sealed partial class MediaLibraryViewModel(
         OnPropertyChanged(nameof(MidiSummary));
     }
 
-    public string SampleSummary => $"{Samples.Count:N0} confirmed uses · {NativeSampleCandidates.Count:N0} candidate CPR paths shown of {_allNativeSampleCandidates.Length:N0}";
-    public string MidiSummary => $"{MidiTracks.Count:N0} exported tracks · {NativeMidiGroups.Count:N0} native note groups · {NativeMidiCandidates.Count:N0} of {_allMidiCandidates.Length:N0} candidate notes";
+    public string SampleSummary => $"{Samples.Count:N0} confirmed uses · {NativeSampleCandidates.Count:N0} CPR path observations shown of {_allNativeSampleCandidates.Length:N0}";
+    public string MidiSummary => $"{MidiTracks.Count:N0} exported tracks · {NativeMidiGroups.Count:N0} native note groups · {NativeMidiCandidates.Count:N0} of {_allMidiCandidates.Length:N0} notes read";
 
     public void SetSampleProjectScope(string? projectPath)
     {

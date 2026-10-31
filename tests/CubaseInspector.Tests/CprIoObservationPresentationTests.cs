@@ -6,7 +6,7 @@ namespace CubaseInspector.Tests;
 public sealed class CprIoObservationPresentationTests
 {
     [Fact]
-    public void DisplaysSupportedNativeObservationsWithCandidateEvidenceAndOffsets()
+    public void DisplaysNativeObservationsWithSourceOffsetsAndDomainLabels()
     {
         var project = new ProjectSnapshot("session.cpr", "Session", "CPR candidate", "Cubase 12", null,
             EvidenceLevel.Candidate, [], [], [], [],
@@ -20,9 +20,9 @@ public sealed class CprIoObservationPresentationTests
         var rows = CprIoObservationPresentation.Build(project);
 
         Assert.Equal(3, rows.Count);
-        Assert.Contains(rows, row => row.Contains("Audio path candidate") && row.Contains("0x123"));
-        Assert.Contains(rows, row => row.Contains("Named-record candidate") && row.Contains("-3 dB") && row.Contains("0x40"));
-        Assert.Contains(rows, row => row.Contains("Typed-field candidate") && row.Contains("0x99"));
+        Assert.Contains(rows, row => row.Contains("Audio path") && row.Contains("0x123"));
+        Assert.Contains(rows, row => row.Contains("Mixer values") && row.Contains("-3 dB") && row.Contains("0x40"));
+        Assert.Contains(rows, row => row.Contains("Project field") && row.Contains("0x99"));
     }
 
     [Fact]

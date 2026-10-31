@@ -24,13 +24,25 @@ internal sealed partial class WorkspacePageFactory
         root.Children.Add(Note("External media status means only that a file path exists. This check does not read audio, inspect embedded archive entries, prove loadability, or infer native CPR/BAK links."));
         if (shell.Workspace.Project is { Evidence: EvidenceLevel.Candidate } nativeProject)
         {
-            root.Children.Add(Note("The native project was re-read when opened. The observations below are raw reader candidates with source offsets; they do not establish Cubase routing, hardware ports, media ownership, or active state."));
+            root.Children.Add(Note("The native project was re-read when opened. Values below are shown as read from the CPR file with their byte offsets. Their Cubase meaning and ownership are not yet verified; physical ports and signal connections are not inferred."));
             var observations = CprIoObservationPresentation.Build(nativeProject);
             var totalNativeObservations = (nativeProject.NativeAudioMediaCandidates?.Count ?? 0) +
                 (nativeProject.NativeMixerObservations?.Count ?? 0) + (nativeProject.NativeMetadataCandidates?.Count ?? 0);
-            root.Children.Add(observations.Count == 0
-                ? Empty("No supported native audio, mixer, or typed-field observations were found in this read. This does not prove those fields are absent from the project.")
-                : Section($"Native CPR observations · unverified · showing {observations.Count:N0} of {totalNativeObservations:N0}", observations));
+            if (observations.Count == 0)
+                root.Children.Add(Empty("No supported native audio, mixer, or typed-field observations were found in this read. This does not prove those fields are absent from the project."));
+            else
+            {
+                root.Children.Add(Note($"{observations.Count:N0} of {totalNativeObservations:N0} CPR values shown · source offsets included · interpretation and signal routing unverified."));
+                AddObservationSection("Audio paths", "Audio path ·", observations);
+                AddObservationSection("Mixer values", "Mixer values ·", observations);
+                AddObservationSection("Project fields", "Project field ·", observations);
+            }
+
+            void AddObservationSection(string title, string prefix, IReadOnlyList<string> rows)
+            {
+                var matching = rows.Where(row => row.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+                if (matching.Length > 0) root.Children.Add(Section($"{title} · {matching.Length:N0}", matching));
+            }
         }
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 8) };
@@ -131,7 +143,7 @@ internal sealed partial class WorkspacePageFactory
             ? Array.Empty<(string Name, string Value)>()
             : ProjectFieldCoverage.Evaluate(vm.Project).Select(field => (field.Key, field.Value.ToString()))
                 .Concat((vm.Project.NativeMetadataCandidates ?? []).Select(candidate =>
-                    ($"{candidate.Field} · offset {candidate.ArchiveOffset}", candidate.Value + " · candidate")))
+                    ($"{candidate.Field} · offset {candidate.ArchiveOffset}", candidate.Value + " · mapping unverified")))
                 .ToArray();
         coveragePanel.Child = DetailCard("FIELD AVAILABILITY", coverageRows);
         var coverageButton = new Button { Content = "Field availability…",
@@ -146,13 +158,13 @@ internal sealed partial class WorkspacePageFactory
                 $"pitch {note.MidiPitch} · velocity {note.Velocity} · offset 0x{note.FileOffset:X}").ToArray();
             IEnumerable<string> noteRows = preview;
             if (noteCandidates.Count > preview.Length)
-                noteRows = preview.Append($"{noteCandidates.Count - preview.Length:N0} additional candidates are preserved in JSON inspection output.");
+                noteRows = preview.Append($"{noteCandidates.Count - preview.Length:N0} additional note observations are preserved in JSON inspection output.");
             var candidateNotes = new StackPanel { Spacing = 6 };
             candidateNotes.Children.Add(Note(string.Join(", ", noteCandidates.Select(note => note.SourceLayout).Distinct()) + ". Timing units, tempo, clip placement and track ownership remain unverified."));
             candidateNotes.Children.Add(Section("Observed note records · first " + preview.Length + " of " + noteCandidates.Count,
                 noteRows));
-            root.Children.Add(new Expander { Header = $"Native MIDI note candidates · {noteCandidates.Count:N0}",
-                Content = candidateNotes, IsExpanded = false });
+            root.Children.Add(new Expander { Header = $"CPR note observations · {noteCandidates.Count:N0}",
+                Content = candidateNotes, IsExpanded = true });
         }
         if (vm.Project?.WarpPoints is { Count: > 0 } warpPoints)
             root.Children.Add(new Expander { Header = $"Exported audio warp points · {warpPoints.Count:N0}",

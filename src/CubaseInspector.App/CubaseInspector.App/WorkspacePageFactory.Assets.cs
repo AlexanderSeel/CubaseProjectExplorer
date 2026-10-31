@@ -16,7 +16,7 @@ internal sealed partial class WorkspacePageFactory
     private UIElement SamplesPage()
     {
         _ = mediaLibrary.LoadCommand.ExecuteAsync(null);
-        var root = Page("Sample finder", "Browse confirmed exported media and native CPR audio-path candidates. Candidate paths keep their evidence warning and are checked before preview.");
+        var root = Page("Sample finder", "Find audio references across projects. CPR path observations appear with their source offset; preview checks whether the referenced file can be read.");
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var search = FilterTextBox("Search filename, folder, project, track…", 300);
         search.Text = mediaLibrary.Search;
@@ -129,9 +129,9 @@ internal sealed partial class WorkspacePageFactory
             preview.IsEnabled = row is not null && !mediaLibrary.IsBusy;
             export.IsEnabled = collect.IsEnabled = false;
             selectedText.Text = row is null
-                ? "Select a media reference or native CPR candidate to inspect it."
-                : $"{row.ProjectName}\n{row.TrackName} · {row.FileType} · native CPR candidate\nDeclared path: {row.DeclaredPath}\nCPR file offset: 0x{row.FileOffset:X}" +
-                  (row.CandidateTrackOffset is long trackOffset ? $" · candidate audio-track record 0x{trackOffset:X}" : "") +
+                ? "Select a media reference or CPR path observation to inspect it."
+                : $"{row.ProjectName}\n{row.TrackName} · {row.FileType} · CPR path observation\nDeclared path: {row.DeclaredPath}\nCPR file offset: 0x{row.FileOffset:X}" +
+                  (row.CandidateTrackOffset is long trackOffset ? $" · audio-track record context 0x{trackOffset:X}" : "") +
                   $"\n{row.Warning}\nPreview checks the referenced file and copies a bounded temporary preview; it does not edit the CPR project.";
         }
         PropertyChangedEventHandler actionBusyChanged = (_, args) =>
@@ -204,7 +204,7 @@ internal sealed partial class WorkspacePageFactory
         root.Children.Add(layout);
         var nativeSampleList = new ListView { ItemsSource = mediaLibrary.NativeSampleCandidates,
             SelectionMode = ListViewSelectionMode.Single, MaxHeight = 380 };
-        AutomationProperties.SetName(nativeSampleList, "Unverified audio path candidates from native Cubase projects");
+        AutomationProperties.SetName(nativeSampleList, "Audio paths read from native Cubase projects; track association is unverified");
         nativeSampleList.ItemTemplate = new DataTemplate(() =>
         {
             var body = new StackPanel { Spacing = 4 };
@@ -217,7 +217,7 @@ internal sealed partial class WorkspacePageFactory
             trackName.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("TrackName") });
             var warning = new TextBlock { FontSize = 10, Foreground = Muted, TextWrapping = TextWrapping.Wrap };
             warning.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath("Warning") });
-            var play = new Button { Content = "Preview candidate…",
+            var play = new Button { Content = "Prepare preview…",
                 Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
             play.Click += async (_, _) =>
             {
@@ -234,10 +234,10 @@ internal sealed partial class WorkspacePageFactory
         });
         nativeSampleList.SelectionChanged += (_, _) =>
             ShowNativeSampleCandidate(nativeSampleList.SelectedItem as NativeSampleCandidateRow);
-        var nativeSampleExpander = new Expander { Header = "Native CPR audio paths · unverified sample and track candidates",
-            IsExpanded = false, Content = new StackPanel { Spacing = 6, Children =
+        var nativeSampleExpander = new Expander { Header = "CPR audio path observations · track association unverified",
+            IsExpanded = true, Content = new StackPanel { Spacing = 6, Children =
             {
-                Note("Audio filenames were found inside MAudioEvent records contained by candidate MAudioTrackEvent records. This supports structural containment, not proof Cubase uses that file on the displayed track. Paths may be stale or offline."),
+                Note("Audio filenames were read inside MAudioEvent records nested in MAudioTrackEvent records. That nesting gives structural context, but does not confirm the active clip or assigned track. Paths may be stale or offline."),
                 nativeSampleList
             } } };
         nativeSampleExpander.Visibility = mediaLibrary.NativeSampleCandidates.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -288,7 +288,7 @@ internal sealed partial class WorkspacePageFactory
     private UIElement MidiTracksPage()
     {
         _ = mediaLibrary.LoadCommand.ExecuteAsync(null);
-        var root = Page("MIDI tracks", "Inspect native note candidates and exported MIDI tracks. Select a project or part to preview its notes.");
+        var root = Page("MIDI tracks", "Inspect CPR note observations and exported MIDI tracks. Select a project or part to preview its notes.");
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var search = FilterTextBox("Search project, part or pitch…", 300);
         search.Text = mediaLibrary.MidiSearch;
@@ -432,14 +432,14 @@ internal sealed partial class WorkspacePageFactory
             });
         Grid.SetColumn(detail, 1); layout.Children.Add(midiBrowser); layout.Children.Add(detail);
         var nativePanel = NativeMidiPanel(out var cleanupNative);
-        var source = new ComboBox { ItemsSource = new[] { "Native CPR notes", "Exported MIDI" },
+        var source = new ComboBox { ItemsSource = new[] { "CPR note observations", "Exported MIDI" },
             SelectedIndex = mediaLibrary.NativeMidiGroups.Count == 0 && mediaLibrary.MidiTracks.Count > 0 ? 1 : 0,
             MinWidth = 190, HorizontalAlignment = HorizontalAlignment.Left };
         AutomationProperties.SetName(source, "MIDI data source");
         var sourceRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
         sourceRow.Children.Add(new TextBlock { Text = "Source", Foreground = Muted, VerticalAlignment = VerticalAlignment.Center });
         sourceRow.Children.Add(source);
-        var exportedEmpty = Empty("No exported MIDI tracks match this view. Choose Native CPR notes to inspect native observations, or index a DAWproject export.");
+        var exportedEmpty = Empty("No exported MIDI tracks match this view. Choose CPR note observations to inspect notes read from native files, or index a DAWproject export.");
         root.Children.Add(sourceRow); root.Children.Add(nativePanel); root.Children.Add(layout); root.Children.Add(exportedEmpty);
         var initialSourceChosen = mediaLibrary.NativeMidiGroups.Count + mediaLibrary.MidiTracks.Count > 0;
         void UpdateSource()

@@ -25,6 +25,17 @@ public sealed class LibraryProjectDocument
     public DateTimeOffset? LastModifiedUtc { get; set; }
     public string? SourceSha256 { get; set; }
     public ProjectSnapshot? Snapshot { get; set; }
+    public int? TrackRecordCount { get; set; }
+    public int? PluginReferenceCount { get; set; }
+    public int? ConfirmedPluginReferenceCount { get; set; }
+    public int? CandidatePluginReferenceCount { get; set; }
+    public int? UnknownPluginReferenceCount { get; set; }
+    public int? ParserWarningCount { get; set; }
+    public int? RoutingCount { get; set; }
+    public string[]? TrackKinds { get; set; }
+    public string[]? SearchableTrackNames { get; set; }
+    public ProjectPluginSearchFacet[]? SearchablePlugins { get; set; }
+    public bool IsCompactSnapshot { get; set; }
 }
 
 public sealed class LibraryPluginDocument
@@ -127,7 +138,7 @@ public sealed partial class LibraryDocumentStore : IDisposable
     {
         var now = DateTime.UtcNow;
         var folderId = StableId(folder);
-        var existingProjects = await GetProjectHeadersAsync(ct);
+        var existingProjects = await GetProjectHeadersAsync(ct, report.ProjectTypes);
         var existingDocumentsByPath = existingProjects
             .ToDictionary(project => NormalizePath(project.FilePath), StringComparer.OrdinalIgnoreCase);
         var existingEntries = new List<ProjectLibraryEntry>(existingDocumentsByPath.Count);
@@ -144,8 +155,7 @@ public sealed partial class LibraryDocumentStore : IDisposable
                 existing.SourceSha256 = checksum;
                 existing.Snapshot = snapshot = snapshot with { SourceSha256 = checksum };
             }
-            existingEntries.Add(ProjectLibraryBrowser.FromFile(snapshot, existing.SizeBytes,
-                existing.LastModifiedUtc, checksum));
+            existingEntries.Add(ToBrowserEntry(existing));
         }
 
         var scannedProjects = new List<ProjectSnapshot>(report.Projects.Count);
@@ -160,14 +170,21 @@ public sealed partial class LibraryDocumentStore : IDisposable
             }
             scannedProjects.Add(checksum is null ? project : project with { SourceSha256 = checksum });
         }
-        var scannedEntries = scannedProjects.Select(project => ProjectLibraryBrowser.FromFile(project)).ToArray();
+        var scannedEntries = report.ProjectSummaries ?? scannedProjects
+            .Select(project => ProjectLibraryBrowser.FromFile(project))
+            .Select(entry => ProjectLibraryBrowser.ToSummary(entry)).ToArray();
         var uniqueEntries = ProjectLibraryBrowser.MergeScanResults(existingEntries, scannedEntries);
         var uniquePaths = uniqueEntries.Select(entry => NormalizePath(entry.Project.FilePath))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var scannedByPath = scannedProjects.ToDictionary(project => NormalizePath(project.FilePath), StringComparer.OrdinalIgnoreCase);
+        var summariesByPath = scannedEntries.ToDictionary(entry => NormalizePath(entry.Project.FilePath),
+            StringComparer.OrdinalIgnoreCase);
         var projectsByPath = existingDocumentsByPath;
         var documentsToSave = new List<LibraryProjectDocument>(uniqueEntries.Count);
         var scannedWinners = new List<ProjectSnapshot>();
+        var scannedIndexByPath = (report.ProjectAssetIndexes ?? []).ToDictionary(
+            index => NormalizePath(index.ProjectPath), StringComparer.OrdinalIgnoreCase);
+        var assetIndexesToSave = new List<LibraryProjectAssetIndexDocument>();
         foreach (var entry in uniqueEntries)
         {
             var key = NormalizePath(entry.Project.FilePath);
@@ -183,10 +200,17 @@ public sealed partial class LibraryDocumentStore : IDisposable
                     SourceUrl = existing?.SourceUrl, IsManual = existing?.IsManual ?? false,
                     SizeBytes = GetFileSize(scanned.FilePath), LastModifiedUtc = GetLastModified(scanned.FilePath),
                     SourceSha256 = ProjectLibraryBrowser.NormalizeSha256(scanned.SourceSha256),
-                    Snapshot = scanned
+                    Snapshot = scanned,
+                    IsCompactSnapshot = report.ProjectSummaries is not null
                 };
+                if (summariesByPath.TryGetValue(key, out var summary))
+                    ApplyBrowserSummary(document, summary);
                 documentsToSave.Add(document);
                 scannedWinners.Add(scanned);
+                if (scannedIndexByPath.TryGetValue(key, out var assetIndex))
+                    assetIndexesToSave.Add(BuildAssetIndexDocument(assetIndex));
+                else if (report.ProjectAssetIndexes is null)
+                    assetIndexesToSave.Add(BuildAssetIndexDocument(scanned));
             }
         }
 
@@ -195,14 +219,56 @@ public sealed partial class LibraryDocumentStore : IDisposable
         {
             await DeleteProjectAsync(duplicate.Id, ct);
         }
-        await _store.BatchUpsert(documentsToSave, cancellationToken: ct);
-        await _store.BatchUpsert(scannedWinners.Select(BuildAssetIndexDocument), cancellationToken: ct);
+        await BatchUpsertInChunksAsync(documentsToSave, ct);
+        if (report.ProjectAssetIndexes is null && assetIndexesToSave.Count == 0)
+            assetIndexesToSave.AddRange(scannedWinners.Select(BuildAssetIndexDocument));
+        await BatchUpsertInChunksAsync(assetIndexesToSave, ct);
         await _store.Upsert(new LibraryScanFolderDocument
         {
             Id = folderId, Path = folder, LastScannedUtc = now,
             ProjectCount = ProjectLibraryBrowser.MergeScanResults([], scannedEntries).Count,
             FailureCount = report.Failures.Count
         }, patchIfUpdate: false, cancellationToken: ct);
+        await CheckpointWalAfterScanAsync(ct);
+    }
+
+    private async Task BatchUpsertInChunksAsync<T>(IReadOnlyList<T> documents, CancellationToken ct) where T : class
+    {
+        const int batchSize = 32;
+        for (var offset = 0; offset < documents.Count; offset += batchSize)
+        {
+            ct.ThrowIfCancellationRequested();
+            var count = Math.Min(batchSize, documents.Count - offset);
+            var batch = new T[count];
+            for (var index = 0; index < count; index++) batch[index] = documents[offset + index];
+            await _store.BatchUpsert(batch, cancellationToken: ct);
+        }
+    }
+
+    private async Task CheckpointWalAfterScanAsync(CancellationToken ct)
+    {
+        await Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                {
+                    DataSource = DatabasePath,
+                    Mode = SqliteOpenMode.ReadWrite,
+                    Pooling = false,
+                    DefaultTimeout = 5
+                }.ToString());
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                using var reader = command.ExecuteReader();
+                // A busy result means another reader still owns a WAL snapshot. SQLite
+                // keeps the WAL intact; the next idle checkpoint can reclaim it.
+                _ = reader.Read();
+            }
+            catch (SqliteException) { /* A concurrent reader or locked database may defer this best-effort cleanup. */ }
+        }, ct);
     }
 
     public async Task SavePluginScanAsync(IEnumerable<InstalledPlugin> plugins, CancellationToken ct = default)
@@ -243,7 +309,7 @@ public sealed partial class LibraryDocumentStore : IDisposable
         }
         var id = StableId(project.FilePath);
         var existing = await _store.Get<LibraryProjectDocument>(id, cancellationToken: ct);
-        await _store.Upsert(new LibraryProjectDocument
+        var document = new LibraryProjectDocument
         {
             Id = id,
             FilePath = project.FilePath,
@@ -259,7 +325,9 @@ public sealed partial class LibraryDocumentStore : IDisposable
             LastModifiedUtc = GetLastModified(project.FilePath),
             SourceSha256 = ProjectLibraryBrowser.NormalizeSha256(project.SourceSha256),
             Snapshot = project
-        }, patchIfUpdate: false, cancellationToken: ct);
+        };
+        ApplyBrowserSummary(document, ProjectLibraryBrowser.ToSummary(ProjectLibraryBrowser.FromFile(project)));
+        await _store.Upsert(document, patchIfUpdate: false, cancellationToken: ct);
         await _store.Upsert(BuildAssetIndexDocument(project), patchIfUpdate: false, cancellationToken: ct);
         await DeduplicateStoredProjectsAsync(ct);
     }
@@ -270,11 +338,7 @@ public sealed partial class LibraryDocumentStore : IDisposable
         var entries = new List<ProjectLibraryEntry>();
         foreach (var document in documents.Where(item => item.Snapshot is not null))
         {
-            var snapshot = document.Snapshot!;
-            var checksum = ProjectLibraryBrowser.NormalizeSha256(document.SourceSha256) ??
-                ProjectLibraryBrowser.NormalizeSha256(snapshot.SourceSha256);
-            entries.Add(ProjectLibraryBrowser.FromFile(snapshot, document.SizeBytes,
-                document.LastModifiedUtc, checksum));
+            entries.Add(ToBrowserEntry(document));
         }
 
         var winners = ProjectLibraryBrowser.MergeScanResults(entries, []);
@@ -288,10 +352,11 @@ public sealed partial class LibraryDocumentStore : IDisposable
     public Task<IReadOnlyList<LibraryProjectAssetIndexDocument>> GetProjectAssetIndexesAsync(CancellationToken ct = default) =>
         Task.Run(() => _store.Query<LibraryProjectAssetIndexDocument>().OrderBy(document => document.ProjectPath).ToList(ct), ct);
 
-    /// <summary>Rebuilds search indexes from project snapshots already stored in this database, without reopening source files.</summary>
+    /// <summary>Rebuilds search indexes in bounded batches, re-reading source files for compact scan snapshots.</summary>
     public async Task<int> RebuildProjectAssetIndexesAsync(CancellationToken ct = default)
     {
         const int batchSize = 64;
+        var inspector = new ProjectInspector([new CprEvidenceReader(), new DawprojectReader()]);
         long lastRowId = 0;
         var indexedCount = 0;
         while (true)
@@ -299,7 +364,7 @@ public sealed partial class LibraryDocumentStore : IDisposable
             var cursor = lastRowId;
             var batch = await Task.Run(() =>
             {
-                if (!File.Exists(DatabasePath)) return (LastRowId: cursor, Indexes: new List<LibraryProjectAssetIndexDocument>());
+                if (!File.Exists(DatabasePath)) return (LastRowId: cursor, Projects: new List<LibraryProjectDocument>());
                 using var connection = OpenReadOnlyDatabase();
                 using var command = connection.CreateCommand();
                 command.CommandText = "SELECT rowid, Data FROM documents WHERE TypeName=$type AND rowid>$after ORDER BY rowid LIMIT $limit";
@@ -307,23 +372,37 @@ public sealed partial class LibraryDocumentStore : IDisposable
                 command.Parameters.AddWithValue("$after", cursor);
                 command.Parameters.AddWithValue("$limit", batchSize);
                 using var reader = command.ExecuteReader();
-                var indexes = new List<LibraryProjectAssetIndexDocument>(batchSize);
+                var projects = new List<LibraryProjectDocument>(batchSize);
                 var nextRowId = cursor;
                 while (reader.Read())
                 {
                     ct.ThrowIfCancellationRequested();
                     nextRowId = reader.GetInt64(0);
                     var document = JsonSerializer.Deserialize<LibraryProjectDocument>(reader.GetString(1), AdminDocumentJsonOptions);
-                    if (document?.Snapshot is { } snapshot) indexes.Add(BuildAssetIndexDocument(snapshot));
+                    if (document?.Snapshot is not null) projects.Add(document);
                 }
-                return (LastRowId: nextRowId, Indexes: indexes);
+                return (LastRowId: nextRowId, Projects: projects);
             }, ct);
 
             if (batch.LastRowId == lastRowId) break;
             lastRowId = batch.LastRowId;
-            if (batch.Indexes.Count == 0) continue;
-            await _store.BatchUpsert(batch.Indexes, cancellationToken: ct);
-            indexedCount += batch.Indexes.Count;
+            if (batch.Projects.Count == 0) continue;
+            var indexes = new List<LibraryProjectAssetIndexDocument>(batch.Projects.Count);
+            foreach (var document in batch.Projects)
+            {
+                ct.ThrowIfCancellationRequested();
+                var snapshot = document.Snapshot!;
+                if (document.IsCompactSnapshot)
+                {
+                    var reread = await inspector.InspectAsync(document.FilePath, ct);
+                    if (!reread.IsSuccess || reread.Value is null) continue;
+                    snapshot = reread.Value;
+                }
+                indexes.Add(BuildAssetIndexDocument(snapshot));
+            }
+            if (indexes.Count == 0) continue;
+            await BatchUpsertInChunksAsync(indexes, ct);
+            indexedCount += indexes.Count;
         }
         return indexedCount;
     }
@@ -351,7 +430,8 @@ public sealed partial class LibraryDocumentStore : IDisposable
             return accumulator.Build();
         }, ct);
 
-    private Task<IReadOnlyList<LibraryProjectDocument>> GetProjectHeadersAsync(CancellationToken ct) =>
+    private Task<IReadOnlyList<LibraryProjectDocument>> GetProjectHeadersAsync(CancellationToken ct,
+        ProjectScanTypes? projectTypes = null) =>
         Task.Run<IReadOnlyList<LibraryProjectDocument>>(() =>
         {
             if (!File.Exists(DatabasePath)) return [];
@@ -366,10 +446,19 @@ public sealed partial class LibraryDocumentStore : IDisposable
                     '$.snapshot.nativeMetadataCandidates', json('[]'), '$.snapshot.nativeMixerObservations', json('[]'),
                     '$.snapshot.eqBands', json('[]'), '$.snapshot.warpPoints', json('[]'),
                     '$.snapshot.nativeMidiNoteCandidates', json('[]'), '$.snapshot.nativeAudioMediaCandidates', json('[]'),
-                    '$.snapshot.metadata', NULL)
-                FROM documents WHERE TypeName=$type
+                    '$.snapshot.metadata', NULL,
+                    '$.searchablePlugins', json('[]'), '$.searchableTrackNames', json('[]'), '$.trackKinds', json('[]'))
+                FROM documents WHERE TypeName=$type AND (
+                    ($scanAll=1) OR
+                    ($scanCpr=1 AND lower(json_extract(Data, '$.filePath')) LIKE '%.cpr') OR
+                    ($scanBak=1 AND lower(json_extract(Data, '$.filePath')) LIKE '%.bak') OR
+                    ($scanDawproject=1 AND lower(json_extract(Data, '$.filePath')) LIKE '%.dawproject'))
                 """;
             command.Parameters.AddWithValue("$type", nameof(LibraryProjectDocument));
+            command.Parameters.AddWithValue("$scanAll", projectTypes is null ? 1 : 0);
+            command.Parameters.AddWithValue("$scanCpr", projectTypes?.Cpr == true ? 1 : 0);
+            command.Parameters.AddWithValue("$scanBak", projectTypes?.Bak == true ? 1 : 0);
+            command.Parameters.AddWithValue("$scanDawproject", projectTypes?.Dawproject == true ? 1 : 0);
             using var reader = command.ExecuteReader();
             var projects = new List<LibraryProjectDocument>();
             while (reader.Read())
@@ -386,10 +475,12 @@ public sealed partial class LibraryDocumentStore : IDisposable
     /// database stores full reader snapshots; keeping all serialized JSON strings
     /// and all deserialized snapshots alive together makes large libraries costly.
     /// </summary>
-    public Task<IReadOnlyList<ProjectLibraryEntry>> GetProjectLibraryEntriesAsync(CancellationToken ct = default) =>
+    public Task<IReadOnlyList<ProjectLibraryEntry>> GetProjectLibraryEntriesAsync(CancellationToken ct = default,
+        ProjectScanTypes? projectTypes = null) =>
         Task.Run<IReadOnlyList<ProjectLibraryEntry>>(() =>
         {
             if (!File.Exists(DatabasePath)) return [];
+            projectTypes ??= ProjectScanTypes.All;
             using var connection = OpenReadOnlyDatabase();
             using var command = connection.CreateCommand();
             // The browser summary needs tracks/plugins for counts and search facets,
@@ -403,9 +494,15 @@ public sealed partial class LibraryDocumentStore : IDisposable
                     '$.snapshot.nativeMixerObservations', json('[]'), '$.snapshot.eqBands', json('[]'),
                     '$.snapshot.warpPoints', json('[]'), '$.snapshot.nativeMidiNoteCandidates', json('[]'),
                     '$.snapshot.nativeAudioMediaCandidates', json('[]'), '$.snapshot.metadata', NULL)
-                FROM documents WHERE TypeName=$type
+                FROM documents WHERE TypeName=$type AND (
+                    ($scanCpr=1 AND lower(json_extract(Data, '$.filePath')) LIKE '%.cpr') OR
+                    ($scanBak=1 AND lower(json_extract(Data, '$.filePath')) LIKE '%.bak') OR
+                    ($scanDawproject=1 AND lower(json_extract(Data, '$.filePath')) LIKE '%.dawproject'))
                 """;
             command.Parameters.AddWithValue("$type", nameof(LibraryProjectDocument));
+            command.Parameters.AddWithValue("$scanCpr", projectTypes.Cpr ? 1 : 0);
+            command.Parameters.AddWithValue("$scanBak", projectTypes.Bak ? 1 : 0);
+            command.Parameters.AddWithValue("$scanDawproject", projectTypes.Dawproject ? 1 : 0);
             using var reader = command.ExecuteReader();
             var entries = new List<ProjectLibraryEntry>();
             while (reader.Read())
@@ -413,9 +510,7 @@ public sealed partial class LibraryDocumentStore : IDisposable
                 ct.ThrowIfCancellationRequested();
                 var document = JsonSerializer.Deserialize<LibraryProjectDocument>(reader.GetString(0), AdminDocumentJsonOptions);
                 if (document?.Snapshot is not { } snapshot) continue;
-                var entry = ProjectLibraryBrowser.FromFile(snapshot, document.SizeBytes,
-                    document.LastModifiedUtc, document.SourceSha256);
-                entries.Add(ProjectLibraryBrowser.ToSummary(entry));
+                entries.Add(ToBrowserEntry(document));
             }
             return entries.OrderBy(entry => entry.Project.Name, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.Project.FilePath, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -870,6 +965,49 @@ public sealed partial class LibraryDocumentStore : IDisposable
 
     public void Dispose() => _store.Dispose();
 
+    private static ProjectLibraryEntry ToBrowserEntry(LibraryProjectDocument document)
+    {
+        var project = document.Snapshot!;
+        var checksum = ProjectLibraryBrowser.NormalizeSha256(document.SourceSha256) ??
+            ProjectLibraryBrowser.NormalizeSha256(project.SourceSha256);
+        if (document.TrackRecordCount is not int trackCount)
+            return ProjectLibraryBrowser.ToSummary(ProjectLibraryBrowser.FromFile(project, document.SizeBytes,
+                document.LastModifiedUtc, checksum));
+        var browserProject = project with
+        {
+            Tracks = [], Plugins = [], Routing = [], Warnings = [], MediaReferences = [],
+            TimelineItems = [], Metadata = null, MidiNotes = [], NativeMetadataCandidates = [],
+            NativeMixerObservations = [], EqBands = [], WarpPoints = [],
+            NativeMidiNoteCandidates = [], NativeAudioMediaCandidates = []
+        };
+        return new ProjectLibraryEntry(browserProject, document.SizeBytes, document.LastModifiedUtc, checksum,
+            trackCount, document.PluginReferenceCount ?? 0, document.ConfirmedPluginReferenceCount ?? 0,
+            document.CandidatePluginReferenceCount ?? 0, document.UnknownPluginReferenceCount ?? 0,
+            document.ParserWarningCount ?? 0, document.RoutingCount ?? 0,
+            document.TrackKinds?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            document.SearchableTrackNames ?? [], document.SearchablePlugins ?? []);
+    }
+
+    private static void ApplyBrowserSummary(LibraryProjectDocument document, ProjectLibraryEntry entry)
+    {
+        document.TrackRecordCount = entry.TrackRecordCount ?? entry.Project.Tracks.Count;
+        document.PluginReferenceCount = entry.PluginReferenceCount ?? entry.Project.Plugins.Count;
+        document.ConfirmedPluginReferenceCount = entry.ConfirmedPluginReferenceCount ??
+            entry.Project.Plugins.Count(plugin => plugin.Evidence == EvidenceLevel.Confirmed);
+        document.CandidatePluginReferenceCount = entry.CandidatePluginReferenceCount ??
+            entry.Project.Plugins.Count(plugin => plugin.Evidence == EvidenceLevel.Candidate);
+        document.UnknownPluginReferenceCount = entry.UnknownPluginReferenceCount ??
+            entry.Project.Plugins.Count(plugin => plugin.Evidence == EvidenceLevel.Unknown);
+        document.ParserWarningCount = entry.ParserWarningCount ?? entry.Project.Warnings.Count;
+        document.RoutingCount = entry.RoutingCount ?? entry.Project.Routing.Count;
+        document.TrackKinds = entry.TrackKinds?.ToArray() ?? entry.Project.Tracks.Select(track => track.Kind)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        document.SearchableTrackNames = entry.SearchableTrackNames?.ToArray() ?? entry.Project.Tracks
+            .Select(track => track.Name).Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        document.SearchablePlugins = entry.SearchablePlugins?.ToArray() ?? [];
+    }
+
     private static string StableId(string value) => Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes(value.Trim().ToUpperInvariant())));
 
@@ -881,10 +1019,13 @@ public sealed partial class LibraryDocumentStore : IDisposable
             NotSupportedException or System.Security.SecurityException) { return path.Trim(); }
     }
 
-    private static LibraryProjectAssetIndexDocument BuildAssetIndexDocument(ProjectSnapshot project) => new()
+    private static LibraryProjectAssetIndexDocument BuildAssetIndexDocument(ProjectSnapshot project) =>
+        BuildAssetIndexDocument(ProjectAssetIndexer.Build(project));
+
+    private static LibraryProjectAssetIndexDocument BuildAssetIndexDocument(ProjectAssetIndex index) => new()
     {
-        Id = StableId(project.FilePath), ProjectPath = project.FilePath, IndexedUtc = DateTime.UtcNow,
-        Index = ProjectAssetIndexer.Build(project)
+        Id = StableId(index.ProjectPath), ProjectPath = index.ProjectPath, IndexedUtc = DateTime.UtcNow,
+        Index = index
     };
 
     private static long? GetFileSize(string path)

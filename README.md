@@ -8,6 +8,8 @@ The current application version is **1.0.0.0**. The version is shared by the app
 
 The DAWproject reader processes `project.xml` and `metadata.xml` forward-only, without materializing an XML document tree. Archive, XML size/depth and normalized item-count limits remain in force; parsed normalized records are retained for the open project, so peak memory still depends on how much supported content the archive declares.
 
+Folder scans keep compact browser summaries and asset indexes instead of retaining full routing, track, event and candidate arrays for every project until the scan completes. The database retains plugin references and summary counts; opening a project always re-runs its reader to show current full details. Large source files above 1 GiB are not read end-to-end for exact duplicate checksums.
+
 ## Get the app
 
 Open the [Windows CI workflow](https://github.com/AlexanderSeel/CubaseProjectExplorer/actions/workflows/windows-ci.yml) and download artifacts from a successful `main` run:

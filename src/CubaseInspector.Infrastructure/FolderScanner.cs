@@ -8,11 +8,13 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
     // Keep the complete scan pipeline off the UI synchronization context; IProgress<T>
     // still marshals updates to the caller's context when it is a Progress<T> instance.
     public Task<Result<FolderReport>> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
-        CancellationToken cancellationToken = default, ProjectScanTypes? projectTypes = null)
-        => Task.Run(() => ScanCoreAsync(path, progress, cancellationToken, projectTypes ?? ProjectScanTypes.All));
+        CancellationToken cancellationToken = default, ProjectScanTypes? projectTypes = null,
+        bool retainFullSnapshots = true)
+        => Task.Run(() => ScanCoreAsync(path, progress, cancellationToken,
+            projectTypes ?? ProjectScanTypes.All, retainFullSnapshots));
 
     private async Task<Result<FolderReport>> ScanCoreAsync(string path, IProgress<ScanProgress>? progress,
-        CancellationToken cancellationToken, ProjectScanTypes projectTypes)
+        CancellationToken cancellationToken, ProjectScanTypes projectTypes, bool retainFullSnapshots)
     {
         if (!projectTypes.AnyEnabled)
             return Result<FolderReport>.Fail("NO_PROJECT_TYPES", "Enable at least one project file type before scanning.");
@@ -72,6 +74,29 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
             // Publish the determinate phase before the first parse, even for empty folders.
             progress?.Report(new ScanProgress(0, files.Count, path, Stage: ScanStage.Inspecting));
             var results = new ProjectSnapshot?[files.Count];
+            var summaries = retainFullSnapshots ? null : new ProjectLibraryEntry?[files.Count];
+            var assetIndexes = retainFullSnapshots ? null : new ProjectAssetIndex?[files.Count];
+            void StoreResult(int index, ProjectSnapshot project)
+            {
+                if (retainFullSnapshots)
+                {
+                    results[index] = project;
+                    return;
+                }
+                summaries![index] = ProjectLibraryBrowser.ToSummary(ProjectLibraryBrowser.FromFile(project));
+                assetIndexes![index] = ProjectAssetIndexer.Build(project);
+                // Project opening always re-runs the reader. Persist a compact scan
+                // snapshot so thousands of routing, track and event records do not
+                // remain live through the end-of-scan library save. Keep plug-in
+                // references for the separate library-wide plug-in inventory.
+                results[index] = project with
+                {
+                    Tracks = [], Routing = [], Warnings = [], MediaReferences = [], TimelineItems = [],
+                    Metadata = null, MidiNotes = [], NativeMetadataCandidates = [],
+                    NativeMixerObservations = [], EqBands = [], WarpPoints = [],
+                    NativeMidiNoteCandidates = [], NativeAudioMediaCandidates = []
+                };
+            }
             // DAWproject inspection materializes a bounded XML document plus its
             // normalized records. Keep only one such tree live at a time even
             // when the surrounding CPR scan uses several workers.
@@ -83,7 +108,10 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
                 await Parallel.ForEachAsync(Enumerable.Range(0, files.Count), new ParallelOptions
                 {
                     CancellationToken = cancellationToken,
-                    MaxDegreeOfParallelism = Math.Min(4, Environment.ProcessorCount)
+                    // CPR parsing can produce sizeable evidence snapshots. One reader
+                    // keeps the transient parser footprint bounded; progress remains
+                    // responsive and checksums are streamed separately.
+                    MaxDegreeOfParallelism = 1
                 }, async (index, ct) =>
                 {
                     progress?.Report(new ScanProgress(Volatile.Read(ref completed), files.Count,
@@ -109,14 +137,19 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
                                     Volatile.Read(ref completed), files.Count, files[index], Stage: ScanStage.Hashing,
                                     BytesProcessed: processedBytes, TotalBytes: totalBytes)));
                             project = project with { SourceSha256 = checksum };
-                            results[index] = project;
+                            StoreResult(index, project);
+                        }
+                        catch (ProjectChecksumSkippedException exception)
+                        {
+                            var warning = "Source SHA-256 was skipped for this large file; duplicate detection falls back to file path. " + exception.Message;
+                            StoreResult(index, project with { Warnings = project.Warnings.Append(warning).ToArray() });
                         }
                         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
                             or ArgumentException or NotSupportedException or System.Security.SecurityException)
                         {
                             var warning = "Source SHA-256 could not be calculated; duplicate detection falls back to file path. " + exception.Message;
                             project = project with { Warnings = project.Warnings.Append(warning).ToArray() };
-                            results[index] = project;
+                            StoreResult(index, project);
                             failure = new AppError("CHECKSUM_FAILED", warning);
                             errors.Add((files[index], "CHECKSUM_FAILED: " + warning));
                         }
@@ -124,13 +157,15 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
                     else if (failure is not null)
                         errors.Add((files[index], failure.Message));
                     progress?.Report(new ScanProgress(Interlocked.Increment(ref completed), files.Count, files[index],
-                        project, failure));
+                        retainFullSnapshots ? project : null, failure));
                 });
             }
             catch (OperationCanceledException) { interrupted = true; }
             return Result<FolderReport>.Ok(new FolderReport(results.OfType<ProjectSnapshot>().ToList(),
                 errors.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase).ToList(),
-                interrupted || files.Count >= 10000, files.Count, completed, skippedUnrelatedBackups));
+                interrupted || files.Count >= 10000, files.Count, completed, skippedUnrelatedBackups,
+                summaries?.OfType<ProjectLibraryEntry>().ToArray(),
+                assetIndexes?.OfType<ProjectAssetIndex>().ToArray(), projectTypes));
         }
         catch (OperationCanceledException) { return Result<FolderReport>.Fail("CANCELLED", "Folder scan cancelled."); }
         catch (UnauthorizedAccessException e) { return Result<FolderReport>.Fail("ACCESS_DENIED", e.Message); }

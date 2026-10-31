@@ -156,7 +156,7 @@ public sealed partial class AppShellViewModel : ObservableObject
             return;
         }
 
-        await Library.LoadSavedProjectsAsync();
+        await Library.LoadSavedProjectsAsync(_preferences.ProjectScanTypes);
         var currentPath = Library.LastScannedFolder;
         if (string.IsNullOrWhiteSpace(currentPath) || !Directory.Exists(currentPath))
         {

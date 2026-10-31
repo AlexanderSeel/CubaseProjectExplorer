@@ -381,7 +381,7 @@ internal sealed partial class WorkspacePageFactory
             Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] });
         scanSettings.Children.Add(new TextBlock
         {
-            Text = "Choose which formats folder scans inspect and add to the library. These settings apply to new scans and rescans; turning a type off does not remove projects already indexed.",
+            Text = "Choose which formats folder scans inspect and which saved project summaries load into the workspace. Turning a type off keeps its records in the database, but skips opening those source files and hydrating those records until re-enabled.",
             Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], TextWrapping = TextWrapping.Wrap
         });
         var scanCpr = new CheckBox { Content = "Cubase projects (.cpr)", IsChecked = scanTypes.Cpr };

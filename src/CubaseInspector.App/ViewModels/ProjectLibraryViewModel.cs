@@ -45,6 +45,7 @@ public sealed partial class ProjectLibraryViewModel(
     private CancellationTokenSource? _scanCancellation;
     private CancellationTokenSource? _filterCancellation;
     private bool _loadedSavedProjects;
+    private ProjectScanTypes? _loadedProjectTypes;
 
     [ObservableProperty] private bool _isFiltering;
 
@@ -101,10 +102,12 @@ public sealed partial class ProjectLibraryViewModel(
     partial void OnWarningsOnlyChanged(bool value) => ScheduleProjectRefresh();
     partial void OnSortByChanged(string value) => ScheduleProjectRefresh();
 
-    public async Task LoadSavedProjectsAsync()
+    public async Task LoadSavedProjectsAsync(ProjectScanTypes? projectTypes = null)
     {
-        if (_loadedSavedProjects) return;
+        var selectedTypes = projectTypes ?? ProjectScanTypes.All;
+        if (_loadedSavedProjects && _loadedProjectTypes == selectedTypes) return;
         _loadedSavedProjects = true;
+        _loadedProjectTypes = selectedTypes;
         var loadedSuccessfully = false;
         IsLoading = true;
         IsBusy = true;
@@ -113,7 +116,7 @@ public sealed partial class ProjectLibraryViewModel(
         Status = ProgressText;
         try
         {
-            var entries = await documentStore.GetProjectLibraryEntriesAsync();
+            var entries = await documentStore.GetProjectLibraryEntriesAsync(projectTypes: selectedTypes);
             _allEntries.Clear();
             _allEntries.AddRange(ProjectLibraryBrowser.MergeScanResults(entries, []));
             RebuildEntryIndexes();
@@ -222,7 +225,8 @@ public sealed partial class ProjectLibraryViewModel(
 
         try
         {
-            var result = await scanner.ScanAsync(path, progress, _scanCancellation.Token, projectScanTypes);
+            var result = await scanner.ScanAsync(path, progress, _scanCancellation.Token, projectScanTypes,
+                retainFullSnapshots: false);
             if (!result.IsSuccess || result.Value is null)
             {
                 Status = result.Error?.Code == "CANCELLED" ? "Scan cancelled. Completed results are retained."
@@ -230,8 +234,9 @@ public sealed partial class ProjectLibraryViewModel(
                 return;
             }
 
-            var existingEntries = _allEntries.ToArray();
-            var scannedEntries = result.Value.Projects.Select(project =>
+            var selectedTypes = projectScanTypes ?? ProjectScanTypes.All;
+            var existingEntries = _allEntries.Where(entry => IsEnabledType(entry.Project.FilePath, selectedTypes)).ToArray();
+            var scannedEntries = result.Value.ProjectSummaries ?? result.Value.Projects.Select(project =>
                 ProjectLibraryBrowser.ToSummary(ProjectLibraryBrowser.FromFile(project))).ToArray();
             var mergedEntries = await Task.Run(() => ProjectLibraryBrowser.MergeScanResults(existingEntries, scannedEntries));
             _allEntries.Clear();
@@ -244,12 +249,17 @@ public sealed partial class ProjectLibraryViewModel(
             await RefreshProjectsAsync();
             var persistenceNote = string.Empty;
             // A user cancellation stops discovery/inspection, but completed read-only
-            // results are still useful and should survive restarting the library.
+            // results are still useful and should survive restarting the library. A
+            // cancellation pressed during persistence itself is honored between batches.
             try
             {
                 ProgressText = $"Saving {_allEntries.Count:N0} scan results to the library…";
-                await documentStore.SaveScanAsync(path, result.Value, CancellationToken.None);
+                var token = _scanCancellation.IsCancellationRequested
+                    ? CancellationToken.None : _scanCancellation.Token;
+                await documentStore.SaveScanAsync(path, result.Value, token);
             }
+            catch (OperationCanceledException)
+            { persistenceNote = " · library save cancelled; some completed records may already be saved"; }
             catch (Exception ex) { persistenceNote = " · local database save failed: " + ex.Message; }
             var wasCancelled = _scanCancellation!.IsCancellationRequested;
             var scanOutcome = wasCancelled ? "Scan cancelled · completed results retained"
@@ -264,6 +274,15 @@ public sealed partial class ProjectLibraryViewModel(
             Progress = 0;
         }
     }
+
+    private static bool IsEnabledType(string path, ProjectScanTypes types) =>
+        Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".cpr" => types.Cpr,
+            ".bak" => types.Bak,
+            ".dawproject" => types.Dawproject,
+            _ => false
+        };
 
     [RelayCommand]
     private void CancelScan() => _scanCancellation?.Cancel();

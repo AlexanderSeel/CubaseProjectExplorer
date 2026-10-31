@@ -7,6 +7,57 @@ namespace CubaseInspector.Tests;
 
 public sealed class FolderScanCancellationTests
 {
+    [Fact]
+    public async Task ChecksumSkipsOversizedFilesBeforeReadingTheirContents()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-checksum-limit-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "large.dawproject");
+            await File.WriteAllBytesAsync(path, [1, 2, 3]);
+
+            var error = await Assert.ThrowsAsync<ProjectChecksumSkippedException>(() =>
+                ProjectContentChecksum.ComputeAsync(path, maximumFileBytes: 2));
+
+            Assert.Contains("exact SHA-256 is skipped", error.Message);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task CompactScanRetainsLibraryAndAssetSummariesWithoutFullRoutingSnapshot()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-compact-scan-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "one.cpr");
+            await File.WriteAllBytesAsync(path, [1, 2, 3]);
+            var result = await new FolderScanner(new SummarySnapshotInspector())
+                .ScanAsync(directory.FullName, retainFullSnapshots: false);
+
+            Assert.True(result.IsSuccess, result.Error?.Message);
+            var report = result.Value!;
+            var project = Assert.Single(report.Projects);
+            Assert.Empty(project.Tracks);
+            Assert.Empty(project.Routing);
+            Assert.Single(project.Plugins);
+            Assert.Equal(1, Assert.Single(report.ProjectSummaries!).TrackRecordCount);
+            Assert.Equal(1, Assert.Single(report.ProjectSummaries!).RoutingCount);
+            Assert.Single(report.ProjectAssetIndexes!);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    private sealed class SummarySnapshotInspector : IProjectInspector
+    {
+        public Task<Result<ProjectSnapshot>> InspectAsync(string path, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Result<ProjectSnapshot>.Ok(new ProjectSnapshot(path, "One", "CPR candidate", null,
+                null, EvidenceLevel.Candidate,
+                [new TrackInfo("track", "Track", "Audio", null, null, null, null, null)],
+                [new PluginReference("plugin", "Synth", null, "VST3", null, EvidenceLevel.Candidate)],
+                [new RoutingEdge("a", "b", "Output")], ["candidate warning"])));
+    }
+
     private sealed class FirstFastThenWaitInspector : IProjectInspector
     {
         private int _calls;

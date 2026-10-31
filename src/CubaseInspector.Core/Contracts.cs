@@ -149,7 +149,10 @@ public sealed record ScanProgress(int Completed, int Total, string CurrentPath,
 public sealed record FolderReport(IReadOnlyList<ProjectSnapshot> Projects,
     IReadOnlyList<(string Path, string Error)> Failures,
     bool Partial = false, int Discovered = 0, int Completed = 0,
-    int SkippedUnrelatedBackups = 0);
+    int SkippedUnrelatedBackups = 0,
+    IReadOnlyList<ProjectLibraryEntry>? ProjectSummaries = null,
+    IReadOnlyList<ProjectAssetIndex>? ProjectAssetIndexes = null,
+    ProjectScanTypes? ProjectTypes = null);
 public sealed record ProjectChange(string Category, string Entity, string Property, string? Before, string? After, string MatchQuality);
 
 public interface IProjectReader
@@ -172,7 +175,8 @@ public interface IPluginScannerService
 public interface IFolderScanner
 {
     Task<Result<FolderReport>> ScanAsync(string path, IProgress<ScanProgress>? progress = null,
-        CancellationToken cancellationToken = default, ProjectScanTypes? projectTypes = null);
+        CancellationToken cancellationToken = default, ProjectScanTypes? projectTypes = null,
+        bool retainFullSnapshots = true);
 }
 
 public interface IProjectDiff

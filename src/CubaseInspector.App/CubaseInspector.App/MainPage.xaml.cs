@@ -59,7 +59,7 @@ public sealed partial class MainPage : Page
         await Task.Delay(60);
         try
         {
-            await library.LoadSavedProjectsAsync();
+            await library.LoadSavedProjectsAsync(shell.ProjectScanTypes);
             await shell.LibraryAdmin.RefreshCommand.ExecuteAsync(null);
             StatusText.Text = library.Status;
         }

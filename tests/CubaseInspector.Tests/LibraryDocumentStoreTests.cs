@@ -67,6 +67,80 @@ public sealed class LibraryDocumentStoreTests
     }
 
     [Fact]
+    public async Task LibraryProjectionDoesNotHydrateTypesDisabledInScanSettings()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-library-type-filter-");
+        try
+        {
+            using var store = new LibraryDocumentStore(Path.Combine(directory.FullName, "library.db"));
+            await store.SaveScanAsync("C:/Sessions", new FolderReport([
+                new ProjectSnapshot("C:/Sessions/song.cpr", "song", "CPR candidate", null, null,
+                    EvidenceLevel.Candidate, [], [], [], []),
+                new ProjectSnapshot("C:/Sessions/export.dawproject", "export", "DAWproject", null, null,
+                    EvidenceLevel.Confirmed, [], [], [], [])
+            ], [], false, 2, 2));
+
+            var enabled = await store.GetProjectLibraryEntriesAsync(
+                projectTypes: new ProjectScanTypes(Cpr: true, Bak: true, Dawproject: false));
+            var all = await store.GetProjectLibraryEntriesAsync();
+
+            Assert.Equal("song.cpr", Path.GetFileName(Assert.Single(enabled).Project.FilePath));
+            Assert.Equal(2, all.Count);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task LargeScanUsesSmallWriteBatchesAndTruncatesItsWalWhenIdle()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-scan-wal-");
+        var database = Path.Combine(directory.FullName, "library.db");
+        try
+        {
+            using var store = new LibraryDocumentStore(database);
+            var projects = Enumerable.Range(0, 70).Select(index => new ProjectSnapshot(
+                $"C:/Sessions/song-{index}.cpr", $"song-{index}", "CPR candidate", null, null,
+                EvidenceLevel.Candidate, [], [], [], [])).ToArray();
+
+            await store.SaveScanAsync("C:/Sessions", new FolderReport(projects, [], false, projects.Length, projects.Length));
+
+            Assert.Equal(projects.Length, (await store.GetDatabaseOverviewAsync()).Projects);
+            Assert.True(new FileInfo(database + "-wal").Length < 1024 * 1024);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task CompactScanPersistenceKeepsBrowserCountsAndOmitsFullRoutingDetails()
+    {
+        var directory = Directory.CreateTempSubdirectory("cpe-compact-persist-");
+        try
+        {
+            using var store = new LibraryDocumentStore(Path.Combine(directory.FullName, "library.db"));
+            var full = new ProjectSnapshot("C:/Sessions/song.cpr", "song", "CPR candidate", null, null,
+                EvidenceLevel.Candidate,
+                [new TrackInfo("track", "Bass", "Audio", null, null, null, null, null)],
+                [new PluginReference("uid", "Bass Engine", null, "VST3", "track", EvidenceLevel.Candidate)],
+                [new RoutingEdge("channel", "output", "Output")], ["candidate warning"]);
+            var entry = ProjectLibraryBrowser.ToSummary(ProjectLibraryBrowser.FromFile(full));
+            var compact = full with { Tracks = [], Routing = [], Warnings = [] };
+            var assets = ProjectAssetIndexer.Build(full);
+            var report = new FolderReport([compact], [], false, 1, 1, 0, [entry], [assets]);
+
+            await store.SaveScanAsync("C:/Sessions", report);
+
+            var browser = Assert.Single(await store.GetProjectLibraryEntriesAsync());
+            var persisted = Assert.Single(await store.GetProjectsAsync());
+            Assert.Equal(1, browser.TrackRecordCount);
+            Assert.Equal(1, browser.RoutingCount);
+            Assert.Empty(persisted.Snapshot!.Routing);
+            Assert.Empty(persisted.Snapshot.Tracks);
+            Assert.Single(persisted.Snapshot.Plugins);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
     public async Task LibraryPluginUsageStreamsPersistedProjectsAndKeepsEvidenceCounts()
     {
         var directory = Directory.CreateTempSubdirectory("cpe-library-plugin-usage-");

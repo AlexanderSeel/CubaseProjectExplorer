@@ -10,6 +10,10 @@ The DAWproject reader processes `project.xml` and `metadata.xml` forward-only, w
 
 Folder scans keep compact browser summaries and asset indexes instead of retaining full routing, track, event and candidate arrays for every project until the scan completes. The database retains plugin references and summary counts; opening a project always re-runs its reader to show current full details. Large source files above 1 GiB are not read end-to-end for exact duplicate checksums.
 
+## Inspiration and attribution
+
+Cubase Project Explorer’s product direction is inspired in part by the publicly presented project-inspection workflows in [CPR Inspector](https://courses.domsigalas.com/cpr-inspector), created by Dom Sigalas / London Loft Productions Ltd. This project is an independent implementation, is not affiliated with or endorsed by CPR Inspector or its creators, and does not reuse its source code or claim knowledge of its proprietary internals. CPR Inspector is credited here as creative inspiration; the parsing behavior and format findings documented in this repository come from this project’s own research and evidence.
+
 ## Get the app
 
 Open the [Windows CI workflow](https://github.com/AlexanderSeel/CubaseProjectExplorer/actions/workflows/windows-ci.yml) and download artifacts from a successful `main` run:

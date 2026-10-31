@@ -173,7 +173,9 @@ try {
     $lease = "--force-with-lease=${branchRef}:$oldHead"
     Invoke-Git -Arguments @('-C', $clonePath, 'push', $lease, 'origin', "${newRoot}:$branchRef") | Out-Null
     Invoke-Git -Arguments @('-C', $clonePath, 'update-ref', $branchRef, $newRoot, $oldHead) | Out-Null
-    Invoke-Git -Arguments @('-C', $clonePath, 'push', 'origin', "refs/tags/$Version:refs/tags/$Version") | Out-Null
+    # Brace the parameter name because PowerShell otherwise parses `$Version:`
+    # as a scoped variable reference and drops it from the refspec.
+    Invoke-Git -Arguments @('-C', $clonePath, 'push', 'origin', "refs/tags/${Version}:refs/tags/${Version}") | Out-Null
 
     Write-Host '[7/7] Verify the remote now points to the new root commit ...'
     $confirmedLine = Invoke-Git -Arguments @('-C', $clonePath, 'ls-remote', 'origin', $branchRef)

@@ -108,6 +108,24 @@ public sealed class CprPackedMidiTests
     }
 
     [Fact]
+    public void NativeNoteRevisionGateDoesNotApplyRevisionOneOffsetsToRevisionZero()
+    {
+        var body = new byte[112];
+        body[8] = 2; body[9] = 64; body[10] = 100;
+        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(13, 4), 5);
+        for (var index = 0; index < 5; index++)
+        {
+            Encoding.ASCII.GetBytes("adcn").CopyTo(body, 17 + index * 14);
+            body[22 + index * 14] = 1;
+        }
+        BinaryPrimitives.WriteInt64BigEndian(body.AsSpan(87, 8), BitConverter.DoubleToInt64Bits(24));
+
+        Assert.True(CprMidiPartNoteScanner.TryReadRecord(body, 0, true, out _, classVersion: 1));
+        Assert.False(CprMidiPartNoteScanner.TryReadRecord(body, 0, true, out _, classVersion: 0));
+        Assert.False(CprMidiPartNoteScanner.TryReadRecord(body, 0, true, out _, classVersion: 2));
+    }
+
+    [Fact]
     public void NativeFlagsArePreservedAndDoNotDiscardValidNotes()
     {
         var packed = PackedNote();

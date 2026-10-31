@@ -11,7 +11,7 @@ Date: 2026-10-31. This extends [the initial executable findings](CUBASE15_EXECUT
 | PE image base | `0x140000000` |
 | Analysis | PE section/address mapping; `.pdata` routine boundaries; Capstone 5.0.9 x64 disassembly; direct call and RIP-relative string references |
 
-The version resource is declared executable metadata. It does not validate any CPR field. A modern reader's compatibility code does not establish the complete format of earlier Cubase versions.
+The version resource is declared executable metadata. It does not validate any CPR field. This v15 executable does contain backwards-compatible project-reading paths: several registered serializers branch on the saved class revision and conditionally consume fields introduced in later revisions. Those branches are direct evidence of compatibility logic, although a class revision is not a Cubase product release number and does not alone map a file to Cubase 10, 11, 12, 13, or 14.
 
 ## Reproduce the observations
 
@@ -64,6 +64,100 @@ The class-string helper `0x1439e04a0` reads a u32 length and raw bytes. The matc
 **A correction to a permissive older scanner:** after a `-2` declaration marker, this native path reads a full length-prefixed string directly. It does not accept a special four-byte class-reference alternative there. Final class references use the mode width (32 or 64). A mixed-width prefix-reference fallback would need separate fixture evidence.
 
 Class versions are per-class serializer revisions, not application versions, bit depth, or a general project version. Preserve them with exact declaration offsets; do not report a class version of 3 as Cubase 3.
+
+## Backwards compatibility inside the Cubase 15 readers
+
+This pass traced explicit serializer-revision gates. These are not hypothetical
+format guesses: the v15 reader obtains the saved revision for the specific class
+and changes which fields/children it reads. It is therefore correct to use this
+executable to discover older class layouts. Mapping each revision to a Cubase
+release still requires the project-level version metadata or known-version
+fixtures; different classes can revise independently.
+
+| v15 reader | Registered/current class revision | Older-revision behavior visible in the callback | What is not yet established |
+|---|---:|---|---|
+| `MMidiTrackEvent`, reader `sub_141BCCFB0` | 4 | Revision `>0` reads two additional 32-bit values; revision `>1` reads another value and a presence-controlled nested `CmObject`; revision `==2` sets an internal compatibility flag; revision `>=4` reads/applies `FAttributes`. Thus revisions 0–3 intentionally take different paths through the v4 handler. | Names and musical meaning of those added scalar/object fields, exact accepted range for malformed/future revisions, and the Cubase release first writing each revision. |
+| `MMidiNote`, reader `sub_141BB4690` | 1 | After the base callback and three 64-bit values, revision `>0` reads an extra byte; revision 0 omits it. | Meaning/unit of the values and that byte, and historical product-release mapping. |
+| `MAudioTrackEvent`, reader `sub_141E85B90` | 1 | Revision `>0` reads optional `MAutoFadeSetting`; revision 0 leaves that field absent. | Fade payload semantics, complete audio-event layout, and release mapping. |
+| `PAppVersion`, registration at `0x1416F46B0` | 2 | The version-metadata path asks for a `PAppVersion` object's `Version`; when unavailable, branches construct a Cubase or Nuendo `1.x` fallback. This confirms legacy/missing-version accommodation in the application metadata path. | Whether a particular old CPR stores this object in the exact path under study; the fallback must not be mistaken for independent proof of a file's release. |
+
+Relevant IDA export locations: `PAppVersion` registration at line 5,096,739;
+MIDI-track callback at lines 6,836,171–6,836,623; MIDI-note callback at lines
+6,798,584–6,798,830; audio-track registration at line 4,699,273 and callback
+at lines 7,851,957–7,852,302; and `PAppVersion` metadata handling at lines
+11,927,290–11,927,457. Registration and callback addresses above are the
+stable identifiers; IDA line offsets can change when the export is regenerated.
+
+These results materially improve the backward-compatibility map. They do not
+justify a blanket v15-shaped parser for every file: the reader now carries
+class revision through the arrangement record scanner and applies the v15
+`MMidiNote` layout only to revision 1. Revision 0 and other revisions remain
+raw records with a visible limitation instead of being decoded using the v1
+offsets. Other class-specific layout gates still need to be implemented where
+their field semantics are established. Historical fixtures that Cubase 15 opens are especially
+valuable validation inputs: record their `PAppVersion`, class names/revisions,
+and decoded fields, then compare the reader's output to Cubase 15's visible
+project state. Keep the originals read-only and test on copies.
+
+### Read-only cross-version corpus check (2026-10-31)
+
+The user authorized read-only analysis of the local project library and song
+collection. No project was changed and no project path, name, bytes, or fixture
+was copied into the repository. A bounded sample of 1,500 library-document
+metadata prefixes contained saved-by text from Cubase SX and Cubase 5–15;
+the available sample included CPR and BAK records for every release family
+from 10 through 15. This is metadata coverage, not a claim that every release
+or class revision has been fully validated.
+
+One CPR per release (the smallest available CPR in the bounded sample, each
+under 20 MiB) was then opened by the existing read-only structural reader.
+The reader recovered the same version text and inventoried native class
+headers. The observed examples are:
+
+| Saved-by text in project | Container read | Relevant class revisions seen in that CPR |
+|---|---|---|
+| Cubase 10.5.20 | RIFF | `MMidiTrackEvent` 3; `MAudioTrackEvent` 1; `MAudioTrack` 0 |
+| Cubase 11.0.30 | RIFF | `MAudioEvent` 5; `MAudioTrackEvent` 1; `MAudioTrack` 0; no MIDI event in this selected file |
+| Cubase 12.0.70 | RIFF | `MMidiTrackEvent` 3; `MMidiNote` 1 |
+| Cubase 13.0.30 | RIFF | `MMidiTrackEvent` 3; `MMidiNote` 1 |
+| Cubase 14.0.10 | RIFF | `MMidiTrackEvent` 4; `MMidiNote` 1 |
+| Cubase 15.0.6 | RIF2 | `MMidiTrackEvent` 4; `MMidiNote` 1 |
+
+This directly demonstrates why the v15 ASM is useful for older files: the
+v10–13 samples contain revision-3 MIDI track events, and the v15 revision-4
+callback explicitly has a `<4` path; the v14/v15 samples contain revision 4.
+The note samples from v12–15 all carry revision 1, matching the v15 note
+callback's current layout. The audio track/event examples also show saved
+revisions below the current v15 serializer. These are per-file observations,
+not a release-wide revision contract. The bounded sample is deliberately
+small; absence of a class in one chosen file is not evidence that a release
+lacks that class. Continue adding version-stratified fixtures and validate
+decoded musical fields against Cubase-visible state before broadening semantic
+claims.
+
+A second CPR sample selected one of the largest files at or below 8 MiB for
+each version 10–15. All six were read without structural failure and produced
+native note observations; the reader also found audio-path tokens in the
+selected 10–13 projects. The Cubase 13.0.40 example reached the configured
+10,000-note ceiling and was correctly marked partial. The Cubase 14.0.10
+sample was RIF2, while the first Cubase 14.0.10 CPR above was RIFF. This is a
+useful compatibility result: **container framing must be selected from the
+file signature, not inferred from the saved-by Cubase release.** The v15 ASM
+contains both paths, and the local examples show both signatures in a
+Cubase-14-labeled corpus. Audio-token counts and note counts are reader
+observations only; they do not validate file existence, arrangement placement,
+or musical timing.
+
+One size-bounded BAK per generation 10–15 was also inspected. Saved-by text
+and container framing were read in every selected backup. The selected 10–12
+backups contained `MMidiTrackEvent` revision 3; the selected 11–12 backups
+contained `MMidiNote` revision 1; selected 14–15 backups contained track-event
+revision 4 and note revision 1. The selected 13 backup had no instances of
+those target classes, which says nothing about other Cubase 13 backups. This
+CPR/BAK comparison shows that the revision paths occur in both project and
+backup files, while preserving the key boundary: header recognition and note
+field extraction do not yet prove complete track ownership, timing units, or
+release-wide semantics.
 
 ## Body lengths and object consumption
 

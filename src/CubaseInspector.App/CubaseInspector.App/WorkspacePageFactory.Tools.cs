@@ -328,8 +328,8 @@ internal sealed partial class WorkspacePageFactory
         var mediaMidi = new StackPanel { Spacing = 10 };
         mediaMidi.Children.Add(Section("Exported MIDI events", Bounded((project.MidiNotes ?? []).Select(note =>
             $"Track {note.TrackId} · {note.Time:0.###} {note.TimeUnit ?? "unit unknown"} · length {note.Duration:0.###} · pitch {note.Key} · velocity {note.Velocity?.ToString("0.###") ?? "unknown"}"), project.MidiNotes?.Count ?? 0)));
-        mediaMidi.Children.Add(Section("Native MIDI observations", Bounded((project.NativeMidiNoteCandidates ?? []).Select(note =>
-            $"Possible track {note.CandidateTrackName ?? "unknown"} · part {note.CandidatePartName ?? "unknown"} · position {note.PositionTicks:0.###} · length {note.DurationTicks:0.###} · pitch {note.MidiPitch} · offset 0x{note.FileOffset:X}"), project.NativeMidiNoteCandidates?.Count ?? 0)));
+        mediaMidi.Children.Add(Section("MIDI note data", Bounded((project.NativeMidiNoteCandidates ?? []).Select(note =>
+            $"{(string.IsNullOrWhiteSpace(note.CandidatePartName) ? "" : note.CandidatePartName + " · ")}{MidiPitchDisplay.Format(note.MidiPitch)} · position {note.PositionTicks:0.###} (saved) · length {note.DurationTicks:0.###} (saved) · velocity {note.Velocity}"), project.NativeMidiNoteCandidates?.Count ?? 0)));
         mediaMidi.Children.Add(Section("Audio references", Bounded((project.MediaReferences ?? []).Select(item =>
             $"{item.Path} · {item.External switch { true => "external", false => "embedded", _ => "location unknown" }} · {item.Channels?.ToString() ?? "?"} channels · {item.SampleRate?.ToString("N0") ?? "?"} Hz"), project.MediaReferences?.Count ?? 0)));
 
@@ -344,6 +344,8 @@ internal sealed partial class WorkspacePageFactory
         evidenceDetails.Children.Add(Section("Reader warnings and limitations", Bounded(project.Warnings, project.Warnings.Count)));
         evidenceDetails.Children.Add(Section("Source metadata observations", Bounded((project.NativeMetadataCandidates ?? []).Select(item =>
             $"{item.Field} · {item.Value} · offset {item.ArchiveOffset} · {item.Status}"), project.NativeMetadataCandidates?.Count ?? 0)));
+        evidenceDetails.Children.Add(Section("MIDI source locations", Bounded((project.NativeMidiNoteCandidates ?? []).Select(note =>
+            $"{MidiPitchDisplay.Format(note.MidiPitch)} · part label {note.CandidatePartName ?? "not present"} · track hint {note.CandidateTrackName ?? "not linked"} · {note.SourceLayout} · file offset 0x{note.FileOffset:X}"), project.NativeMidiNoteCandidates?.Count ?? 0)));
         evidenceDetails.Children.Add(Note("Each detail list shows up to 100 rows. Markdown export retains the full report. CPR ownership, timing and routing interpretations remain explicit reader evidence."));
         root.Children.Add(DashboardTabs(("Session overview", overview), ("Tracks & plug-ins", arrangement),
             ("Audio & MIDI", mediaMidi), ("Connections & timeline", connections), ("Evidence & source", evidenceDetails)));
@@ -396,7 +398,7 @@ internal sealed partial class WorkspacePageFactory
         terms.Children.Add(Answer("Class marker",
             "A class marker is an internal label Cubase writes for a kind of saved object, such as an audio or MIDI track event. Finding the label helps the reader locate the object. It does not by itself decode every field, identify the visible track, or prove which mixer channel owns it."));
         terms.Children.Add(Answer("Cubase assembly research",
-            "The Cubase 15 assembly export shows which object readers Cubase calls and which named properties it asks for. It is a map of application behavior, not the complete saved-file grammar. The current analysis found track callback references to solo and solo-defeat properties and audio-event handling; it does not yet establish how all those values are encoded or linked in every project version."));
+            "The Cubase 15 assembly shows reader callbacks with older class-revision paths. In the local read-only corpus, selected Cubase 10–13 projects and backups contain MMidiTrackEvent revision 3; selected Cubase 14–15 files contain revision 4. Selected Cubase 11–15 files contain MMidiNote revision 1. These examples confirm the reader is handling real older revisions. A saved class revision is not the Cubase release number, and one sample per release does not establish every field's musical meaning."));
         terms.Children.Add(Answer("Saved class revision and file position",
             "A saved class revision is the revision number for one object type; it is not the Cubase release number. A file position is the byte location of a reader observation, useful for technical review and comparison."));
         terms.Children.Add(Answer("Why do some tracks show level, mute, or solo?",
@@ -408,7 +410,7 @@ internal sealed partial class WorkspacePageFactory
 
         var open = new StackPanel { Spacing = 10 };
         open.Children.Add(Answer("What is still being researched?",
-            "Across native CPR/BAK versions, remaining work includes linking track and mixer objects reliably, decoding saved level/mute/solo/pan fields, confirming sends and bus ownership, plug-in slots and saved state, and MIDI part placement and timing. Cubase 15 assembly clues guide this work; they do not establish compatibility with older releases by themselves."));
+            "Across native CPR/BAK versions, remaining work includes linking track and mixer objects reliably, decoding saved level/mute/solo/pan fields, confirming sends and bus ownership, plug-in slots and saved state, and MIDI part placement and timing. Cubase 15 assembly callbacks combined with older-version project samples now guide revision-aware reading; the remaining questions are field meaning and relationship validation."));
         open.Children.Add(Answer("Why can a value be shown when its link is uncertain?",
             "The reader can find a stored name, path, number, or on/off value before it can prove which visible track or channel owns it. The app shows useful observations in the relevant music workflow, and `(i)` gives the source and the exact limitation. Missing values are shown as unknown rather than zero or off."));
         open.Children.Add(Answer("Will Analyze change my project?",

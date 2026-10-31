@@ -58,13 +58,6 @@ public sealed class CprStructureInspector : ICprStructureInspector
             var end = headerLength + declared;
             var chunks = new List<CprChunkSummary>();
             var warnings = new List<string>();
-            if (isRif2)
-                warnings.Add("RIF2/NUND 64-bit chunk framing verified against two Cubase 15.0.40 projects; nested values remain candidate-only.");
-            else
-            {
-                warnings.Add("RIFF/NUND identifies a Cubase-family candidate; the 32-bit size field and chunk grammar are not verified as universal across Cubase versions.");
-                warnings.Add("This structural inventory applies a big-endian size interpretation as a candidate parsing strategy; it is not a validated format specification.");
-            }
             if (end < file.Length)
                 warnings.Add("File includes trailing bytes not covered by the container size.");
             string? pendingStream = null, pendingClass = null;
@@ -300,7 +293,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
         long archiveFileOffset, CancellationToken ct)
     {
         var counts = new SortedDictionary<string, int>(StringComparer.Ordinal);
-        var interned = new Dictionary<uint, string>();
+        var interned = new Dictionary<uint, (string Name, ushort ClassVersion)>();
         var frames = new Stack<(int End, int Resume, int Depth, int? PreviousTrack,
             (string? Name, long Offset)? PreviousPart)>();
         var hints = new List<CprTrackHint>();
@@ -345,9 +338,10 @@ public sealed class CprStructureInspector : ICprStructureInspector
             }
             string name64;
             int bodyStart64, bodyEnd64;
+            ushort classVersion64;
             if (total < MaxRecords && (isRif2
-                    ? TryRecord64(bytes, position, upper, interned, out name64, out bodyStart64, out bodyEnd64)
-                    : TryRecord(bytes, position, upper, interned, out name64, out bodyStart64, out bodyEnd64)))
+                    ? TryRecord64(bytes, position, upper, interned, out name64, out bodyStart64, out bodyEnd64, out classVersion64)
+                    : TryRecord(bytes, position, upper, interned, out name64, out bodyStart64, out bodyEnd64, out classVersion64)))
             {
                 var name = name64;
                 var bodyStart = bodyStart64;
@@ -356,9 +350,11 @@ public sealed class CprStructureInspector : ICprStructureInspector
                 total++;
                 if (name == "MMidiNote")
                     midiRecordRanges.Add(new CprUninterpretedRange(archiveFileOffset + position, bodyEnd - position));
-                if (name == "MMidiNote" &&
+                if (name == "MMidiNote" && classVersion64 != 1)
+                    limits.Add($"MMidiNote serializer revision {classVersion64} was retained as a raw record; this reader only interprets the Cubase 15 revision 1 note layout.");
+                if (name == "MMidiNote" && classVersion64 == 1 &&
                     CprMidiPartNoteScanner.TryReadRecord(bytes.AsSpan(bodyStart, bodyEnd - bodyStart), archiveFileOffset + bodyStart, isRif2,
-                        out var noteCandidate))
+                        out var noteCandidate, classVersion64))
                 {
                     if (midiNotes.Count < 10000) midiNotes.Add(WithContext(noteCandidate));
                     else limits.Add("10,000 MIDI note candidate limit");
@@ -560,15 +556,17 @@ public sealed class CprStructureInspector : ICprStructureInspector
     }
 
     private static bool TryRecord(byte[] bytes, int start, int limit,
-        Dictionary<uint, string> names, out string className, out int bodyStart, out int bodyEnd)
+        Dictionary<uint, (string Name, ushort ClassVersion)> names, out string className,
+        out int bodyStart, out int bodyEnd, out ushort classVersion)
     {
         className = "";
         bodyStart = bodyEnd = 0;
+        classVersion = 0;
         if (start > limit - 4) return false;
         var firstCode = BigEndian32(bytes, start);
         if (firstCode is not (0xFFFFFFFEu or 0xFFFFFFFFu) &&
             (firstCode < 0x80000000u || !names.ContainsKey(firstCode & 0x7FFFFFFFu))) return false;
-        var pending = new List<(uint Id, string Name)>();
+        var pending = new List<(uint Id, string Name, ushort ClassVersion)>();
         var p = start;
         for (var chain = 0; chain < 16; chain++)
         {
@@ -586,8 +584,8 @@ public sealed class CprStructureInspector : ICprStructureInspector
             }
             else
             {
-                if (!TryClassName(bytes, p, limit, out var name, out var next)) return false;
-                pending.Add(((uint)(p - 4), name));
+                if (!TryClassName(bytes, p, limit, out var name, out var next, out var version)) return false;
+                pending.Add(((uint)(p - 4), name, version));
                 p = next;
             }
         }
@@ -595,9 +593,9 @@ public sealed class CprStructureInspector : ICprStructureInspector
         var code = BigEndian32(bytes, p);
         if (code == 0xFFFFFFFFu)
         {
-            if (!TryClassName(bytes, p + 4, limit, out className, out var next))
+            if (!TryClassName(bytes, p + 4, limit, out className, out var next, out classVersion))
                 return false;
-            pending.Add(((uint)p, className)); // name starts at (p + 4), id is relative to ARCH offset +4
+            pending.Add(((uint)p, className, classVersion)); // name starts at (p + 4), id is relative to ARCH offset +4
             p = next;
         }
         else if (code >= 0x80000000u && code is not (0xFFFFFFFEu or 0xFFFFFFFFu))
@@ -607,9 +605,10 @@ public sealed class CprStructureInspector : ICprStructureInspector
             {
                 var candidate = pending.FirstOrDefault(v => v.Id == id);
                 if (candidate.Name is null) return false;
-                found = candidate.Name;
+                found = (candidate.Name, candidate.ClassVersion);
             }
-            className = found;
+            className = found.Name;
+            classVersion = found.ClassVersion;
             p += 4;
         }
         else return false;
@@ -618,25 +617,27 @@ public sealed class CprStructureInspector : ICprStructureInspector
         bodyStart = p + 4;
         if (size > limit - bodyStart) return false;
         bodyEnd = bodyStart + (int)size;
-        foreach (var entry in pending) names[entry.Id] = entry.Name;
+        foreach (var entry in pending) names[entry.Id] = (entry.Name, entry.ClassVersion);
         return true;
     }
 
-    // Cubase 15 RIF2 records use 64-bit base-class/symbol sentinels and
+    // Cubase RIF2 records use 64-bit base-class/symbol sentinels and
     // 64-bit body sizes; class-name string lengths remain 32-bit.
     // This is a structural inventory only, not a full semantic deserializer.
     private static bool TryRecord64(byte[] bytes, int start, int limit,
-        Dictionary<uint, string> names, out string className, out int bodyStart, out int bodyEnd)
+        Dictionary<uint, (string Name, ushort ClassVersion)> names, out string className,
+        out int bodyStart, out int bodyEnd, out ushort classVersion)
     {
         className = "";
         bodyStart = bodyEnd = 0;
+        classVersion = 0;
         if (start > limit - 8) return false;
         var firstCode = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(start, 8));
         if (firstCode != ulong.MaxValue && firstCode != ulong.MaxValue - 1 &&
             ((firstCode & 0x8000000000000000UL) == 0 ||
              (firstCode & 0x7FFFFFFFFFFFFFFFUL) > uint.MaxValue ||
              !names.ContainsKey((uint)(firstCode & 0x7FFFFFFFFFFFFFFFUL)))) return false;
-        var pending = new List<(uint Id, string Name)>();
+        var pending = new List<(uint Id, string Name, ushort ClassVersion)>();
         var p = start;
         for (var chain = 0; chain < 16; chain++)
         {
@@ -653,8 +654,8 @@ public sealed class CprStructureInspector : ICprStructureInspector
             }
             else
             {
-                if (!TryClassName(bytes, p, limit, out var name, out var next)) return false;
-                pending.Add(((uint)(p - 8), name));
+                if (!TryClassName(bytes, p, limit, out var name, out var next, out var version)) return false;
+                pending.Add(((uint)(p - 8), name, version));
                 p = next;
             }
         }
@@ -662,8 +663,8 @@ public sealed class CprStructureInspector : ICprStructureInspector
         var code = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(p, 8));
         if (code == ulong.MaxValue)
         {
-            if (!TryClassName(bytes, p + 8, limit, out className, out var next)) return false;
-            pending.Add(((uint)p, className));
+            if (!TryClassName(bytes, p + 8, limit, out className, out var next, out classVersion)) return false;
+            pending.Add(((uint)p, className, classVersion));
             p = next;
         }
         else if ((code & 0x8000000000000000UL) != 0 && code != ulong.MaxValue - 1)
@@ -674,9 +675,10 @@ public sealed class CprStructureInspector : ICprStructureInspector
             {
                 var candidate = pending.FirstOrDefault(v => v.Id == (uint)id);
                 if (candidate.Name is null) return false;
-                found = candidate.Name;
+                found = (candidate.Name, candidate.ClassVersion);
             }
-            className = found;
+            className = found.Name;
+            classVersion = found.ClassVersion;
             p += 8;
         }
         else return false;
@@ -685,14 +687,16 @@ public sealed class CprStructureInspector : ICprStructureInspector
         bodyStart = p + 8;
         if (rawSize > (ulong)(limit - bodyStart)) return false;
         bodyEnd = bodyStart + (int)rawSize;
-        foreach (var entry in pending) names[entry.Id] = entry.Name;
+        foreach (var entry in pending) names[entry.Id] = (entry.Name, entry.ClassVersion);
         return true;
     }
 
-    private static bool TryClassName(byte[] bytes, int p, int end, out string name, out int next)
+    private static bool TryClassName(byte[] bytes, int p, int end, out string name, out int next,
+        out ushort classVersion)
     {
         name = "";
         next = p;
+        classVersion = 0;
         if (p > end - 4) return false;
         var len = BigEndian32(bytes, p);
         if (len is < 2 or > 100 || len > end - p - 6) return false;
@@ -701,6 +705,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
         for (var i = p + 4; i < p + 4 + count - 1; i++)
             if (bytes[i] is < 32 or > 126) return false;
         name = Encoding.ASCII.GetString(bytes, p + 4, count - 1);
+        classVersion = BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(p + 4 + count, 2));
         next = p + 4 + count + 2;
         return true;
     }

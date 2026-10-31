@@ -55,7 +55,7 @@ internal sealed partial class WorkspacePageFactory
             await load;
         }));
         root.Children.Add(navigation);
-        root.Children.Add(new TextBlock { Text = "Choose a track to follow its saved effects, buses and outputs. Dashed links are the reader's best interpretation; use the info button on a selected item for source details. Open Audio or MIDI to preview the project's media and notes. Hardware connections and some processing order may not be saved or decoded.",
+        root.Children.Add(new TextBlock { Text = "Choose a track to follow its effects, buses and outputs. Solid lines are direct project links; dashed lines connect related saved project records. Select the info button for exact source details. Open Audio or MIDI to preview this project's media and notes.",
             Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap });
         string? selectedId = null;
         var choosing = false;
@@ -150,8 +150,7 @@ internal sealed partial class WorkspacePageFactory
             var geometry = new PathGeometry(); geometry.Figures.Add(figure);
             var path = new Microsoft.UI.Xaml.Shapes.Path { Data = geometry, Stroke = Accent, StrokeThickness = 2 };
             if (link.Evidence != EvidenceLevel.Confirmed) path.StrokeDashArray = new DoubleCollection { 4, 3 };
-            ToolTipService.SetToolTip(path, link.Label + " · " + link.Evidence + " · " + link.Source +
-                (link.SourceOffset is long offset ? $" · 0x{offset:X}" : ""));
+            ToolTipService.SetToolTip(path, link.Label);
             canvas.Children.Add(path);
             Place(new Polygon { Fill = Accent, Points = new PointCollection { new(0, 0), new(7, 4), new(0, 8) } }, x2 - 7, y2 - 4);
         }

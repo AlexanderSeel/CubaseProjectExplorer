@@ -247,7 +247,7 @@ internal sealed partial class WorkspacePageFactory
                     ("Header format", source?.SourceClassEncoding ?? "Not read"),
                     ("Header offset", source?.SourceOffset is long offset ? $"0x{offset:X}" : "Not supplied"),
                     ("Record end", source?.SourceEndOffset is long endOffset ? $"0x{endOffset:X}" : "Not supplied")));
-                evidence.Children.Add(Note("Serializer version is the saved class revision, not the Cubase application version. Header matches and nested byte ranges are reader interpretations; the raw record has not been validated across Cubase releases."));
+                evidence.Children.Add(Note("Cubase 15's assembly contains readers with revision-gated paths for earlier saved class revisions. This number is the object's serializer revision, not the Cubase release. The exact field meaning and track relationships still need comparison against projects from known Cubase versions."));
                 if (source is not null) evidence.Children.Add(Note(EvidencePresentation.TrackExplanation(source)));
                 ShowInformationWindow("Technical details · " + row.Name, evidence, 900, 620);
             }, "Technical details · source record, version and offsets"));

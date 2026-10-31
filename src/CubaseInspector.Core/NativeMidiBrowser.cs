@@ -9,8 +9,9 @@ public sealed record NativeMidiNoteGroup(string Key, string ProjectName, string 
 {
     public string Name => !string.IsNullOrWhiteSpace(CandidatePartName) ? CandidatePartName
         : !string.IsNullOrWhiteSpace(CandidateTrackName) ? CandidateTrackName : ProjectName;
-    public string Context => CandidateTrackName is { Length: > 0 } track
-        ? "Possible track: " + track : "Track association unavailable";
+    public string Context => Notes.FirstOrDefault()?.CandidateTrackOffset is not null
+        ? CandidateTrackName is { Length: > 0 } track ? "Track label: " + track : "Track label not found"
+        : "No track group is linked to this part";
     public int NoteCount => Notes.Count;
     public string DisplayName => Name == ProjectName ? $"{Name} · {NoteCount:N0} notes"
         : $"{Name} · {ProjectName} · {NoteCount:N0} notes";
@@ -20,7 +21,7 @@ public sealed record NativeMidiNoteGroup(string Key, string ProjectName, string 
     public static string Format(double value) => value.ToString("0.###", CultureInfo.CurrentCulture);
 }
 
-/// <summary>Possible track-level grouping based only on shared enclosing CPR offsets.</summary>
+/// <summary>Browseable MIDI grouping based on shared enclosing CPR offsets.</summary>
 public sealed record NativeMidiTrackGroup(string Key, string ProjectName, string ProjectPath,
     string DisplayName, string Context, long? CandidateTrackOffset,
     IReadOnlyList<NativeMidiNoteGroup> Parts)
@@ -39,12 +40,12 @@ public static class NativeMidiBrowser
                 var orderedParts = group.OrderBy(part => part.Name, StringComparer.OrdinalIgnoreCase).ToArray();
                 var hasTrackOffset = group.Key.CandidateTrackOffset is long;
                 var name = hasTrackOffset
-                    ? first.CandidateTrackName ?? $"Possible track at 0x{group.Key.CandidateTrackOffset:X}"
-                    : "Track association unavailable";
+                    ? first.CandidateTrackName ?? "Unnamed track group"
+                    : "Unassigned MIDI parts";
                 return new NativeMidiTrackGroup(
                     $"{first.ProjectPath}\0{group.Key.CandidateTrackOffset?.ToString() ?? "unassigned"}",
                     first.ProjectName, first.ProjectPath, name,
-                    hasTrackOffset ? $"Shared enclosing track offset 0x{group.Key.CandidateTrackOffset:X} · structural association" : "No enclosing track offset was available",
+                    hasTrackOffset ? "Parts grouped under one saved track record" : "No track link was found for these parts",
                     group.Key.CandidateTrackOffset, Array.AsReadOnly(orderedParts));
             })
             .OrderBy(group => group.ProjectName, StringComparer.OrdinalIgnoreCase)

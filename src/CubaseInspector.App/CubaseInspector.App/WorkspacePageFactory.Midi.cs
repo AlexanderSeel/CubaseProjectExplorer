@@ -25,11 +25,11 @@ internal sealed partial class WorkspacePageFactory
             HorizontalAlignment = HorizontalAlignment.Stretch, Visibility = Visibility.Collapsed,
             PlaceholderText = "Choose a project or part", Margin = new Thickness(0, 0, 0, 4) };
         AutomationProperties.SetName(compactPicker, "Select native MIDI project or part");
-        var title = new TextBlock { Text = "Notes found in native projects", FontSize = 18,
+        var title = new TextBlock { Text = "MIDI notes", FontSize = 18,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
         var context = new TextBlock { Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap };
         var plot = new MidiNotePlot();
-        var timing = new TextBlock { Text = "Stored note positions · source details explain timing and part context",
+        var timing = new TextBlock { Text = "Position and length as saved in the project.",
             Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap };
         var evidence = new TextBlock { Foreground = Muted, TextWrapping = TextWrapping.Wrap, FontSize = 12 };
         var partPicker = new ComboBox { DisplayMemberPath = nameof(NativeMidiNoteGroup.DisplayName),
@@ -47,7 +47,7 @@ internal sealed partial class WorkspacePageFactory
             TextWrapping = TextWrapping.Wrap, Text = "Select a note to see its musical details." };
         var columns = new DataBrowserColumn<IndexedMidiNoteCandidate>[]
         {
-            new("Pitch", "Pitch", note => note.Pitch.ToString(), note => note.Pitch, 0.7),
+            new("Note", "Pitch", note => MidiPitchDisplay.Format(note.Pitch), note => note.Pitch, 0.9),
             new("Position", "Position", note => NativeMidiNoteGroup.Format(note.PositionTicks), note => note.PositionTicks, 1.25),
             new("Length", "Length", note => NativeMidiNoteGroup.Format(note.DurationTicks), note => note.DurationTicks, 1.25),
             new("Velocity", "Velocity", note => note.Velocity.ToString(), note => note.Velocity, 0.8),
@@ -56,7 +56,7 @@ internal sealed partial class WorkspacePageFactory
         var notes = new DataBrowserControl<IndexedMidiNoteCandidate>(columns, noteRows, ["None"], "None",
             (_, _) => "", _ => { }, note =>
             {
-                selectedNote.Text = $"Pitch {note.Pitch} · position {NativeMidiNoteGroup.Format(note.PositionTicks)} · length {NativeMidiNoteGroup.Format(note.DurationTicks)} · velocity {note.Velocity}" +
+                selectedNote.Text = $"{MidiPitchDisplay.Format(note.Pitch)} · position {NativeMidiNoteGroup.Format(note.PositionTicks)} · length {NativeMidiNoteGroup.Format(note.DurationTicks)} · velocity {note.Velocity}" +
                     (note.Channel is int channel ? $" · channel {channel + 1}" : "");
                 selectedNoteEvidence.Text = $"Saved note #{note.Observation} · byte offset 0x{note.FileOffset:X}" +
                     (note.RawFlags is ushort flags ? $" · raw flags 0x{flags:X4}" : "") + $" · {note.SourceLayout}";
@@ -77,7 +77,7 @@ internal sealed partial class WorkspacePageFactory
             noteRows.ReplaceAll(group.Notes.Take(2000));
             plot.SetPreview(NativeMidiBrowser.Preview(group));
             evidence.Text = group.SourceLayout + "\n\n" + (group.Notes.FirstOrDefault()?.Warning ?? "No source evidence available.");
-            timing.Text = "Stored note positions · source details explain timing and part context" +
+            timing.Text = "Position and length as saved in the project." +
                 (group.NoteCount > 2000 ? " · plot and table show the first 2,000 notes; narrow the project/part search to inspect another group" : "");
             selectedNote.Text = "Select a note to see its musical details.";
             selectedNoteEvidence.Text = string.Empty;

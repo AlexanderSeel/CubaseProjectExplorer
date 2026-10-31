@@ -105,9 +105,13 @@ public static class CprMidiPartNoteScanner
         BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64BigEndian(data));
 
     public static bool TryReadRecord(ReadOnlySpan<byte> body, long bodyFileOffset,
-        bool isRif2, out CprRif2MidiNoteCandidate candidate)
+        bool isRif2, out CprRif2MidiNoteCandidate candidate, ushort? classVersion = null)
     {
         candidate = default!;
+        // Cubase 15's v1 reader consumes an extra byte that the v0 reader omits.
+        // Until the v0 body is mapped and fixture-checked, do not interpret it
+        // using the v1 offsets below.
+        if (classVersion is ushort revision && revision != 1) return false;
         if (body.Length < 42 || bodyFileOffset < 0 || bodyFileOffset > long.MaxValue - body.Length) return false;
         var rawCount = BinaryPrimitives.ReadUInt32BigEndian(body.Slice(13, 4));
         // Attribute count changes the body size. The controlled five-attribute

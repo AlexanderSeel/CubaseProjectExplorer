@@ -205,7 +205,7 @@ public static class StudioIoDiagramBuilder
             nodes[id] = new(id, first.CandidatePartName ?? first.CandidateTrackName ?? "MIDI part", "Native MIDI part",
                 $"{group.Count():N0} notes · pitch {group.Min(note => note.MidiPitch)}–{group.Max(note => note.MidiPitch)} · stored timing",
                 first.SourceLayout, first.FileOffset,
-                [$"Possible track: {first.CandidateTrackName ?? "not named"}", $"Part offset: {first.CandidatePartOffset?.ToString("X") ?? "not available"}"],
+                [$"Track label: {first.CandidateTrackName ?? "not found"}", $"Part offset: {first.CandidatePartOffset?.ToString("X") ?? "not available"}"],
                 EvidenceLevel.Candidate);
             if (first.CandidateTrackOffset is long offset && tracksBySourceOffset.TryGetValue(offset, out var track))
                 links.Add(new(id, TrackNodeId(track.Id), "Notes nested under track object", "Exact enclosing track byte offset", first.FileOffset, EvidenceLevel.Candidate));

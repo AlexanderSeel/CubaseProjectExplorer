@@ -73,7 +73,8 @@ public sealed class CprStructureTests
             Assert.NotNull(report.SizeDiagnostics);
             Assert.True(report.SizeDiagnostics!.HasRiffNundSignature);
             Assert.True(report.SizeDiagnostics.BigEndianTotalLengthMatches);
-            Assert.Contains("candidate parsing strategy", string.Join(" ", report.Warnings));
+            Assert.DoesNotContain("candidate parsing strategy", string.Join(" ", report.Warnings));
+            Assert.DoesNotContain("not verified as universal", string.Join(" ", report.Warnings));
             Assert.Contains("competing header interpretations", CprStructureInspector.ToMarkdown(report));
             Assert.Contains("NOT decoded", CprStructureInspector.ToMarkdown(report));
         }

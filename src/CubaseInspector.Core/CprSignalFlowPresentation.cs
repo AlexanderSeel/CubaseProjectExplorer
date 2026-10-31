@@ -16,9 +16,23 @@ public static class CprSignalFlowPresentation
             return project with { Tracks = project.Tracks.Select(track => track with
                 { ChannelId = track.ChannelId ?? "cpr-observation-" + track.Id }).ToArray() };
 
-        var tracks = records.Select(item => new TrackInfo(item.Id, item.Record.Name, "Mixer record", item.Id,
-            null, null, item.Record.Mute, item.Record.Solo, EvidenceLevel.Candidate,
-            "CPR named record", item.Record.ArchiveOffset, Pan: item.Record.Pan)).ToArray();
+        var tracks = records.Select(item =>
+        {
+            var candidateFields = item.Record.CandidateFields ?? [];
+            var lastFieldOffset = candidateFields.Count == 0 ? item.Record.ArchiveOffset
+                : candidateFields.Max(field => field.ArchiveOffset);
+            var owners = project.Tracks.Where(track => track.Evidence == EvidenceLevel.Candidate &&
+                track.SourceOffset is long start && track.SourceEndOffset is long end &&
+                item.Record.ArchiveOffset >= start && lastFieldOffset < end)
+                .OrderBy(track => track.SourceEndOffset!.Value - track.SourceOffset!.Value).ToArray();
+            var parent = owners.Length > 0 && (owners.Length == 1 ||
+                owners[0].SourceEndOffset!.Value - owners[0].SourceOffset!.Value <
+                owners[1].SourceEndOffset!.Value - owners[1].SourceOffset!.Value)
+                ? owners[0].Id : null;
+            return new TrackInfo(item.Id, item.Record.Name, "Mixer record", item.Id,
+                null, null, item.Record.Mute, item.Record.Solo, EvidenceLevel.Candidate,
+                "CPR named record", item.Record.ArchiveOffset, ParentTrackId: parent, Pan: item.Record.Pan);
+        }).ToArray();
         var owners = new Dictionary<(string Stream, uint Uid), HashSet<string>>();
         foreach (var item in records)
             foreach (var field in item.Record.CandidateFields ?? [])
@@ -34,21 +48,25 @@ public static class CprSignalFlowPresentation
             foreach (var field in item.Record.CandidateFields ?? [])
             {
                 var output = field.Path.Equals("OutputBus/Value", StringComparison.OrdinalIgnoreCase) ||
-                    field.Path.Equals("OutputBus/Bus UID", StringComparison.OrdinalIgnoreCase);
+                    field.Path.Equals("OutputBus/Bus UID", StringComparison.OrdinalIgnoreCase) ||
+                    field.Path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase);
+                var input = field.Path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase);
                 var send = field.Path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) &&
                     (field.Path.EndsWith("/Output/Value", StringComparison.OrdinalIgnoreCase) ||
                      field.Path.EndsWith("/Output/Bus UID", StringComparison.OrdinalIgnoreCase) ||
                      field.Path.EndsWith("/OutputBus/Value", StringComparison.OrdinalIgnoreCase));
-                if ((!output && !send) || !TryUid(field, out var uid)) continue;
+                if ((!input && !output && !send) || !TryUid(field, out var uid)) continue;
                 var key = (item.Record.SourceStream, uid);
                 var target = owners.TryGetValue(key, out var matches) && matches.Count == 1
                     ? matches.Single() : $"Bus UID {uid} [{item.Record.SourceStream}]";
-                var namePath = field.Path[..field.Path.LastIndexOf('/')] + "/Name";
+                var nameSeparator = field.Path.LastIndexOf('/');
+                var namePath = nameSeparator >= 0 ? field.Path[..nameSeparator] + "/Name" : field.Path + "/Name";
                 var names = (item.Record.CandidateFields ?? []).Where(value =>
                         value.Path.Equals(namePath, StringComparison.OrdinalIgnoreCase) && value.Type == "string")
                     .Select(value => value.Value).Where(value => !string.IsNullOrWhiteSpace(value))
                     .Distinct(StringComparer.Ordinal).ToArray();
-                edges.Add(new(item.Id, target, send ? "Send" : "Output", Evidence: EvidenceLevel.Candidate,
+                edges.Add(new(input ? target : item.Id, input ? item.Id : target,
+                    input ? "Input" : send ? "Send" : "Output", Evidence: EvidenceLevel.Candidate,
                     SourceOffset: field.ArchiveOffset, SourcePath: item.Record.SourceStream + "/" + field.Path,
                     TargetLabel: names.Length == 1 ? names[0] : null));
             }

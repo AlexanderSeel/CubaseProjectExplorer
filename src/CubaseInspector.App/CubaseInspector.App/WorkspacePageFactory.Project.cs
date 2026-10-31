@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Shapes;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Foundation;
 using Windows.UI;
 
@@ -161,6 +162,7 @@ internal sealed partial class WorkspacePageFactory
 
     private UIElement TracksPage()
     {
+        var project = shell.Workspace.Project;
         var root = Page("Tracks & Channels", shell.Workspace.TrackEvidence + " · saved values are shown only when supplied by the source.");
         var search = FilterTextBox("Search tracks or channels", 240);
         var kinds = new[] { "All" }.Concat(shell.Workspace.Tracks.Select(track => track.Kind)
@@ -195,6 +197,74 @@ internal sealed partial class WorkspacePageFactory
             detail.Text = $"{row.Name} · {row.Type}\nChannel: {row.Channel} · Destination: {row.Destination}\nSaved value: {row.SavedValue} · {row.Status}\nSource quality: {row.Evidence}";
             selected.Visibility = Visibility.Visible;
         }
+        void ShowTrackAudioReferences(TrackDisplayRow row)
+        {
+            if (project is null || row.Source is not { } track)
+            {
+                ShowInformationWindow("Audio paths · " + row.Name, Note("No project media references are available in the current workspace."), 720, 420);
+                return;
+            }
+            var references = TrackAudioReferencesPresentation.Build(project, track);
+            var content = new StackPanel { Spacing = 10 };
+            content.Children.Add(new TextBlock { Text = $"{references.Associated.Count:N0} references associated with this track · {references.Unassigned.Count:N0} other path observations without a confirmed track link",
+                Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"], TextWrapping = TextWrapping.Wrap });
+            content.Children.Add(Note("Paths below are the literal values stored or found in the project. The app has not checked whether each file currently exists at that location."));
+            UIElement ReferenceCard(TrackAudioReference item)
+            {
+                var card = new StackPanel { Spacing = 6 };
+                card.Children.Add(new TextBlock { Text = item.Name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    TextWrapping = TextWrapping.Wrap });
+                var path = new TextBox { Text = item.Path, IsReadOnly = true, AcceptsReturn = true,
+                    TextWrapping = TextWrapping.Wrap, MinHeight = 38, MaxHeight = 88 };
+                ToolTipService.SetToolTip(path, item.Path);
+                card.Children.Add(path);
+                Button? copy = null;
+                copy = Button("Copy path", () =>
+                {
+                    var package = new DataPackage();
+                    package.SetText(item.Path);
+                    Clipboard.SetContent(package);
+                    if (copy is not null) copy.Content = "Path copied";
+                });
+                var meta = new TextBlock { Text = $"{item.Association} · {item.Evidence} · {item.Kind}\n{item.Details}\nSource: {item.Source}" +
+                    (item.SourceOffset is long offset ? $" · 0x{offset:X}" : ""),
+                    Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], TextWrapping = TextWrapping.Wrap };
+                card.Children.Add(copy);
+                card.Children.Add(meta);
+                return new Border { Padding = new Thickness(10), Margin = new Thickness(0, 3, 0, 3), Background = Surface,
+                    BorderBrush = Divider, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Child = card };
+            }
+            void AddReferences(string title, IReadOnlyList<TrackAudioReference> items)
+            {
+                if (items.Count == 0) return;
+                var section = new StackPanel { Spacing = 6 };
+                section.Children.Add(new TextBlock { Text = title + $" ({items.Count:N0})" + (items.Count > 200 ? " · first 200 shown" : ""),
+                    Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] });
+                foreach (var item in items.Take(200)) section.Children.Add(ReferenceCard(item));
+                content.Children.Add(section);
+            }
+            if (references.Associated.Count > 0)
+                AddReferences("Track media references", references.Associated);
+            else
+                content.Children.Add(Note("No audio path could be linked to this track from the available project fields."));
+            AddReferences("Other paths found in this project · track not resolved", references.Unassigned);
+            if (references.Associated.Count > 200 || references.Unassigned.Count > 200)
+                content.Children.Add(Note("This details window shows the first 200 paths in each section to keep large projects responsive. Use Sample Finder to search the broader indexed library."));
+            if (references.Associated.Count > 0)
+            {
+                var search = Button("Search these paths in Sample Finder", async () =>
+                {
+                    var load = mediaLibrary.LoadOpenProjectAsync(project);
+                    mediaLibrary.SetSampleProjectScope(project.FilePath);
+                    mediaLibrary.Search = references.Associated[0].Path;
+                    shell.NavigateTo("Samples");
+                    navigate("Samples");
+                    await load;
+                });
+                content.Children.Add(search);
+            }
+            ShowInformationWindow("Audio paths · " + row.Name, content, 980, 720);
+        }
         var browser = new DataBrowserControl<TrackDisplayRow>(
             [new("Track", "Name", row => row.Name, row => row.Name),
              new("Type", "Type", row => row.Type, row => row.Type),
@@ -210,6 +280,9 @@ internal sealed partial class WorkspacePageFactory
                 var inspect = new MenuFlyoutItem { Text = "Show track details" };
                 inspect.Click += (_, _) => ShowTrackDetails(row);
                 menu.Items.Add(inspect);
+                var media = new MenuFlyoutItem { Text = "Audio paths & sample references…" };
+                media.Click += (_, _) => ShowTrackAudioReferences(row);
+                menu.Items.Add(media);
                 return menu;
             });
         Refresh(); root.Children.Add(browser); root.Children.Add(empty); root.Children.Add(selected);

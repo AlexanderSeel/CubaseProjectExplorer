@@ -388,7 +388,8 @@ public sealed class CprStructureInspector : ICprStructureInspector
                     if (hints.Count < 4096)
                     {
                         nextTrack = hints.Count;
-                        hints.Add(new CprTrackHint(name, null, position));
+                        hints.Add(new CprTrackHint(name, null, archiveFileOffset + position,
+                            ArchiveEndOffset: archiveFileOffset + bodyEnd));
                     }
                     else
                     {
@@ -438,7 +439,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
                 midiNotes.Add(note with
                 {
                     CandidateTrackName = part.Track is int owner ? hints[owner].Name : null,
-                    CandidateTrackOffset = part.Track is int ownerIndex ? archiveFileOffset + hints[ownerIndex].ArchiveOffset : null,
+                    CandidateTrackOffset = part.Track is int ownerIndex ? hints[ownerIndex].ArchiveOffset : null,
                     CandidatePartOffset = archiveFileOffset + part.Header
                 });
             if (scan.Partial) limits.Add("Packed MIDI byte/note scan budget reached; part observations are partial");
@@ -449,7 +450,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
         CprRif2MidiNoteCandidate WithContext(CprRif2MidiNoteCandidate note) => note with
         {
             CandidateTrackName = activeTrack is int owner ? hints[owner].Name : null,
-            CandidateTrackOffset = activeTrack is int track ? archiveFileOffset + hints[track].ArchiveOffset : null,
+            CandidateTrackOffset = activeTrack is int track ? hints[track].ArchiveOffset : null,
             CandidatePartName = note.CandidatePartName ?? activePart?.Name,
             CandidatePartOffset = activePart?.Offset
         };

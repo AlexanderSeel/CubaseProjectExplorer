@@ -5,7 +5,7 @@ using Microsoft.UI.Xaml.Media;
 namespace CubaseInspector.App.ViewModels;
 
 public sealed record TrackDisplayRow(string Name, string Type, string Channel, string Destination,
-    string SavedValue, string Status, string Evidence)
+    string SavedValue, string Status, string Evidence, TrackInfo? Source = null)
 {
     public static TrackDisplayRow From(TrackInfo track) => new(
         track.Name,
@@ -14,7 +14,7 @@ public sealed record TrackDisplayRow(string Name, string Type, string Channel, s
         track.DestinationChannelId ?? "Unknown",
         track.Volume is double volume ? volume.ToString("0.###", CultureInfo.CurrentCulture) : "Unknown",
         $"Mute {Flag(track.Mute)} · Solo {Flag(track.Solo)}",
-        EvidencePresentation.Label(track.Evidence));
+        EvidencePresentation.Label(track.Evidence), track);
 
     private static string Flag(bool? value) => value switch { true => "On", false => "Off", _ => "Unknown" };
 }

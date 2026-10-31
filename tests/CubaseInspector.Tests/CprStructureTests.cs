@@ -109,12 +109,16 @@ public sealed class CprStructureTests
             var hint = Assert.Single(structural.Value!.Arrangement!.TrackHints);
             Assert.Equal("MAudioTrackEvent", hint.RecordClass);
             Assert.Equal("Vox", hint.Name);
+            Assert.True(hint.ArchiveOffset > 0);
+            Assert.True(hint.ArchiveEndOffset > hint.ArchiveOffset);
             var snapshot = await new CprEvidenceReader().ReadAsync(file);
             Assert.Equal(EvidenceLevel.Candidate, snapshot.Value!.Evidence);
             var candidateTrack = Assert.Single(snapshot.Value.Tracks);
             Assert.Equal("Vox", candidateTrack.Name);
             Assert.Equal("Audio", candidateTrack.Kind);
             Assert.Equal(EvidenceLevel.Candidate, candidateTrack.Evidence);
+            Assert.Equal(hint.ArchiveOffset, candidateTrack.SourceOffset);
+            Assert.Equal(hint.ArchiveEndOffset, candidateTrack.SourceEndOffset);
             Assert.Null(candidateTrack.Volume);
             Assert.Null(candidateTrack.ChannelId);
         }

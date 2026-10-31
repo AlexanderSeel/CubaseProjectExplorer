@@ -76,4 +76,45 @@ public sealed class CprSignalFlowPresentationTests
 
         Assert.Contains("Bus UID 42", Assert.Single(view.Routing).ToChannelId);
     }
+
+    [Fact]
+    public void ReadsOutputBusValueAndInputBusValueReferencesAgainstUniqueBusOwners()
+    {
+        var view = CprSignalFlowPresentation.Create(Project(
+            Mixer("Input bus", 100, new CprNamedRecordValue("OwnInputBus/Bus UID", "i64", "17", 110)),
+            Mixer("Track channel", 200,
+                new CprNamedRecordValue("InputBusValue", "i64", "17", 210),
+                new CprNamedRecordValue("OutputBusValue", "i64", "18", 220)),
+            Mixer("Output bus", 300, new CprNamedRecordValue("OwnInputBus/Bus UID", "i64", "18", 310))));
+
+        var channel = view.Tracks.Single(track => track.Name == "Track channel");
+        var incoming = Assert.Single(view.Routing, edge => edge.Kind == "Input");
+        var output = Assert.Single(view.Routing, edge => edge.Kind == "Output");
+        Assert.Equal("cpr-mixer-0-64", incoming.FromChannelId);
+        Assert.Equal(channel.Id, incoming.ToChannelId);
+        Assert.Equal(channel.Id, output.FromChannelId);
+        Assert.Equal("cpr-mixer-2-12C", output.ToChannelId);
+        Assert.EndsWith("InputBusValue", incoming.SourcePath);
+        Assert.EndsWith("OutputBusValue", output.SourcePath);
+        Assert.All(view.Routing, edge => Assert.Equal(EvidenceLevel.Candidate, edge.Evidence));
+    }
+
+    [Fact]
+    public void AssociatesMixerRecordToTrackOnlyWhenTheWholeNamedRecordIsInsideOneTrackBody()
+    {
+        var track = new TrackInfo("arr-track", "Bass", "MIDI", null, null, null, null, null,
+            EvidenceLevel.Candidate, "MMidiTrackEvent", 90, SourceEndOffset: 180);
+        var project = Project(Mixer("Mixer Bass", 110,
+            new CprNamedRecordValue("Name/String", "string", "Mixer Bass", 112),
+            new CprNamedRecordValue("OutputBusValue", "i64", "42", 150))) with { Tracks = [track] };
+
+        var mixer = Assert.Single(CprSignalFlowPresentation.Create(project).Tracks,
+            item => item.SourceRecordClass == "CPR named record");
+        Assert.Equal("arr-track", mixer.ParentTrackId);
+
+        project = project with { Tracks = [track, track with { Id = "also-matches" }] };
+        mixer = Assert.Single(CprSignalFlowPresentation.Create(project).Tracks,
+            item => item.SourceRecordClass == "CPR named record");
+        Assert.Null(mixer.ParentTrackId);
+    }
 }

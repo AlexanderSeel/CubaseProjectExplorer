@@ -54,7 +54,7 @@ public sealed class CprEvidenceReader : IProjectReader
 
         var warnings = new List<string>
         {
-            "Binary .cpr mode provides candidate observations from supported structural readers and bounded token scans; BPM, routing, channel settings, plugin instance structure and state are not fully decoded.",
+            "CPR inspection retains supported track, MIDI, media-path, mixer, insert, EQ and routing observations for review. Native ownership, timing, parameter meaning, EQ placement, send tap order, plugin state and version-wide layouts are not confirmed; use source fields and offsets to judge each interpretation.",
             "CPR plugin UID/name tokens are candidate metadata, not verified VST2/VST3 identities, assignments, installation, or plugin-instance counts."
         };
         if (Path.GetExtension(path).Equals(".bak", StringComparison.OrdinalIgnoreCase))
@@ -141,7 +141,7 @@ public sealed class CprEvidenceReader : IProjectReader
                 _ => "Unknown"
             },
             null, null, null, null, null, EvidenceLevel.Candidate,
-            h.RecordClass, h.ArchiveOffset)).ToList();
+            h.RecordClass, h.ArchiveOffset, SourceEndOffset: h.ArchiveEndOffset)).ToList();
         if (tracks.Count > 0)
             warnings.Add("Candidate CPR track count includes hidden/device carrier records; do not compare it directly with Cubase visible track count.");
         var fieldCandidates = structural.IsSuccess
@@ -187,7 +187,13 @@ public sealed class CprEvidenceReader : IProjectReader
             var candidateFields = record.Values.Where(value => IsMixerCandidatePath(value.Path))
                 .OrderBy(value => value.Path.StartsWith("OwnInputBus/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("OutputBus/", StringComparison.OrdinalIgnoreCase) ||
-                    value.Path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                    value.Path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase) ? 0 :
+                    value.Path.Equals("postInsertsPreFader", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("InsertFolder/", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("EQ/", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("ChannelEQ/", StringComparison.OrdinalIgnoreCase) ? 1 : 2)
                 .Take(512).ToArray();
             // Include named records even when mixer fields are absent so the view can
             // show what the reader found without implying that a channel was omitted.
@@ -221,9 +227,15 @@ public sealed class CprEvidenceReader : IProjectReader
             path.StartsWith("Pan/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("Panner/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("EQ/", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("ChannelEQ/", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("InsertFolder/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("OwnInputBus/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("OutputBus/", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase);
+            path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("postInsertsPreFader", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("directRoutingFolder/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<CprMetadataCandidate> ReadNamedRecordMixerObservations(

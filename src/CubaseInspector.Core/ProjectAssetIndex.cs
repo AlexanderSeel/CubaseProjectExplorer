@@ -12,7 +12,11 @@ public sealed record IndexedMidiTrack(
 public sealed record IndexedMidiNoteCandidate(
     string ProjectPath, string ProjectName, int Observation, long FileOffset,
     double PositionTicks, double DurationTicks, int Pitch, int Velocity,
-    EvidenceLevel Evidence, string Warning);
+    EvidenceLevel Evidence, string Warning,
+    string SourceLayout = "RIF2 MMidiNote/112-byte",
+    string? CandidateTrackName = null, string? CandidatePartName = null,
+    long? CandidateTrackOffset = null, long? CandidatePartOffset = null, int? Channel = null,
+    ushort? RawFlags = null);
 
 /// <summary>Native CPR media path nested under an audio event, without a confirmed path or track link.</summary>
 public sealed record IndexedMediaReferenceCandidate(
@@ -36,7 +40,9 @@ public static class ProjectAssetIndexer
             new IndexedMidiNoteCandidate(project.FilePath, project.Name, index + 1, note.FileOffset,
                 note.PositionTicks, note.DurationTicks, note.MidiPitch, note.Velocity,
                 EvidenceLevel.Candidate,
-                "Cubase 15.0.40 RIF2 layout candidate. Track ownership, note timebase, clip placement and semantics are unverified."))
+                note.Evidence + " Possible enclosing track/part labels are structural candidates; ownership, timebase and clip placement remain unverified.",
+                note.SourceLayout, note.CandidateTrackName, note.CandidatePartName,
+                note.CandidateTrackOffset, note.CandidatePartOffset, note.Channel, note.RawFlags))
             .ToArray();
         var nativeMediaCandidates = (project.NativeAudioMediaCandidates ?? []).Select((media, index) =>
             new IndexedMediaReferenceCandidate(project.FilePath, project.Name, index + 1,

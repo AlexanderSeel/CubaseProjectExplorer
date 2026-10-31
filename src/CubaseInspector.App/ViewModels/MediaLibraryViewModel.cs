@@ -60,6 +60,7 @@ public sealed partial class MediaLibraryViewModel(
     public ResettableObservableCollection<NativeSampleCandidateRow> NativeSampleCandidates { get; } = [];
     public ResettableObservableCollection<MidiTrackLibraryRow> MidiTracks { get; } = [];
     public ResettableObservableCollection<IndexedMidiNoteCandidate> NativeMidiCandidates { get; } = [];
+    public ResettableObservableCollection<NativeMidiNoteGroup> NativeMidiGroups { get; } = [];
     public ObservableCollection<MediaDuplicateGroup> IdenticalSampleGroups { get; } = [];
     public IReadOnlyList<string> SampleTypes { get; private set; } = ["All"];
     public IReadOnlyList<SampleProjectScopeOption> SampleProjects { get; private set; } = [];
@@ -508,16 +509,20 @@ public sealed partial class MediaLibraryViewModel(
         var candidates = _allMidiCandidates.Where(row => query.Length == 0 ||
                 row.ProjectName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                 row.ProjectPath.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                (row.CandidateTrackName?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (row.CandidatePartName?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                row.SourceLayout.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                 row.Pitch.ToString().Contains(query, StringComparison.OrdinalIgnoreCase) ||
                 $"Unassigned note {row.Observation}".Contains(query, StringComparison.OrdinalIgnoreCase))
             .OrderBy(row => row.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(row => row.Observation).ToArray();
         NativeMidiCandidates.ReplaceAll(candidates);
+        NativeMidiGroups.ReplaceAll(NativeMidiBrowser.Group(candidates));
         OnPropertyChanged(nameof(MidiSummary));
     }
 
     public string SampleSummary => $"{Samples.Count:N0} confirmed uses · {NativeSampleCandidates.Count:N0} candidate CPR paths shown of {_allNativeSampleCandidates.Length:N0}";
-    public string MidiSummary => $"{MidiTracks.Count:N0} shown of {_allMidiTracks.Length:N0} indexed MIDI tracks · {_allMidiCandidates.Length:N0} unverified CPR note observations";
+    public string MidiSummary => $"{MidiTracks.Count:N0} exported tracks · {NativeMidiGroups.Count:N0} native note groups · {NativeMidiCandidates.Count:N0} of {_allMidiCandidates.Length:N0} candidate notes";
 
     public void SetSampleProjectScope(string? projectPath)
     {

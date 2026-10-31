@@ -20,3 +20,16 @@ Use the newest successful [Windows CI run](https://github.com/AlexanderSeel/Cuba
 Test 1280×720, 1920×1080 and 2560×1440 when available at 100%, 125%, 150% and 200% DPI; include light/dark/high-contrast, long filenames, Unicode, empty/no-results/error states. Use keyboard-only Tab/Shift+Tab and a screen reader where possible. Check overlaps, clipping, focus order and large-library scroll behavior.
 
 Record screenshots, artifact/run ID, OS/DPI details, reproducible problems and manual acceptance results in PLAN.md. **A green CI build does not constitute visual acceptance.**
+
+For the native MIDI browser: choose Native CPR notes; verify the exported-track
+pane reserves no space. Select project/part groups, including duplicate names
+at different offsets and mixed encodings within one part. Compare the compact
+note table with the raw JSON precision and source offsets. Confirm the plot's
+axis says stored units are unverified and no native MIDI export is offered.
+Filter by project, possible track/part or pitch; test zero results and clear
+the query. Select Exported MIDI with no confirmed tracks and check its explicit
+empty state. At narrow width, a compact project/part selector should replace
+the group grid above the selected-group plot/table without horizontal clipping. Review the
+Evidence & source popup with keyboard and a screen reader. Re-scan projects
+before expecting new parser layouts in saved indexes; index refresh alone
+does not re-read project files.

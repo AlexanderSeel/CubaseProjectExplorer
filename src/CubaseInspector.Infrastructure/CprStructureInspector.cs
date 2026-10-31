@@ -276,11 +276,17 @@ public sealed class CprStructureInspector : ICprStructureInspector
     {
         var counts = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var interned = new Dictionary<uint, string>();
-        var frames = new Stack<(int End, int Resume, int Depth, int? PreviousTrack)>();
+        var frames = new Stack<(int End, int Resume, int Depth, int? PreviousTrack,
+            (string? Name, long Offset)? PreviousPart)>();
         var hints = new List<CprTrackHint>();
         var midiNotes = new List<CprRif2MidiNoteCandidate>();
         var audioMediaCandidates = new List<CprAudioMediaReferenceCandidate>();
         var activeTrack = (int?)null;
+        (string? Name, long Offset)? activePart = null;
+        var packedMidiScanBytes = 0;
+        var packedParts = new List<(int Start, int End, int Header, int? Track)>();
+        var midiRecordRanges = new List<CprUninterpretedRange>();
+        const int maxPackedMidiBytes = 32 * 1024 * 1024;
         var position = 0;
         var upper = bytes.Length;
         var depth = 0;
@@ -299,6 +305,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
                 position = previous.Resume;
                 depth = previous.Depth;
                 activeTrack = previous.PreviousTrack;
+                activePart = previous.PreviousPart;
                 continue;
             }
             if (total >= MaxRecords)
@@ -322,12 +329,19 @@ public sealed class CprStructureInspector : ICprStructureInspector
                 var bodyEnd = bodyEnd64;
                 counts[name] = counts.GetValueOrDefault(name) + 1;
                 total++;
-                if (isRif2 && name == "MMidiNote" &&
-                    TryRif2Note(bytes, bodyStart, bodyEnd, archiveFileOffset,
+                if (name == "MMidiNote")
+                    midiRecordRanges.Add(new CprUninterpretedRange(archiveFileOffset + position, bodyEnd - position));
+                if (name == "MMidiNote" &&
+                    CprMidiPartNoteScanner.TryReadRecord(bytes.AsSpan(bodyStart, bodyEnd - bodyStart), archiveFileOffset + bodyStart, isRif2,
                         out var noteCandidate))
                 {
-                    if (midiNotes.Count < 10000) midiNotes.Add(noteCandidate);
+                    if (midiNotes.Count < 10000) midiNotes.Add(WithContext(noteCandidate));
                     else limits.Add("10,000 MIDI note candidate limit");
+                }
+                if (name == "MMidiPart")
+                {
+                    if (packedParts.Count < 4096) packedParts.Add((bodyStart, bodyEnd, position, activeTrack));
+                    else limits.Add("4,096 packed MIDI part scan limit");
                 }
 
                 // Audio path strings observed in the corpus are contained by
@@ -365,6 +379,9 @@ public sealed class CprStructureInspector : ICprStructureInspector
                 }
 
                 var nextTrack = activeTrack;
+                var nextPart = name == "MMidiPart"
+                    ? (ReadBoundedName(bytes, bodyStart, bodyEnd), archiveFileOffset + position)
+                    : activePart;
                 if (name is "MAudioTrackEvent" or "MMidiTrackEvent" or "MInstrumentTrackEvent"
                     or "MFolderTrack" or "MSamplerTrackEvent" or "MDeviceTrackEvent")
                 {
@@ -381,10 +398,11 @@ public sealed class CprStructureInspector : ICprStructureInspector
                 }
                 if (depth < MaxDepth && bodyEnd > bodyStart)
                 {
-                    frames.Push((upper, bodyEnd, depth, activeTrack));
+                    frames.Push((upper, bodyEnd, depth, activeTrack, activePart));
                     upper = bodyEnd;
                     position = bodyStart;
                     activeTrack = nextTrack;
+                    activePart = nextPart;
                     depth++;
                 }
                 else
@@ -395,8 +413,46 @@ public sealed class CprStructureInspector : ICprStructureInspector
             }
             else position++;
         }
+        // A size byte (e.g. a 154-byte body ends in 0x9A) can resemble a compact
+        // MIDI status. Exclude recognized note record ranges before scanning
+        // packed streams so the same note is never counted through both paths.
+        var excluded = new List<CprUninterpretedRange>();
+        foreach (var range in midiRecordRanges.OrderBy(range => range.FileOffset))
+        {
+            if (excluded.Count > 0 && excluded[^1].FileOffset + excluded[^1].ByteCount >= range.FileOffset)
+            {
+                var previous = excluded[^1];
+                excluded[^1] = previous with { ByteCount = (int)(Math.Max(previous.FileOffset + previous.ByteCount,
+                    range.FileOffset + range.ByteCount) - previous.FileOffset) };
+            }
+            else excluded.Add(range);
+        }
+        foreach (var part in packedParts)
+        {
+            ct.ThrowIfCancellationRequested();
+            var scan = CprMidiPartNoteScanner.Scan(bytes.AsSpan(part.Start, part.End - part.Start),
+                archiveFileOffset + part.Start, 10000 - midiNotes.Count,
+                Math.Min(CprMidiPartNoteScanner.MaximumScanBytes, maxPackedMidiBytes - packedMidiScanBytes), ct, isRif2, excluded);
+            packedMidiScanBytes += scan.BytesScanned;
+            foreach (var note in scan.Notes)
+                midiNotes.Add(note with
+                {
+                    CandidateTrackName = part.Track is int owner ? hints[owner].Name : null,
+                    CandidateTrackOffset = part.Track is int ownerIndex ? archiveFileOffset + hints[ownerIndex].ArchiveOffset : null,
+                    CandidatePartOffset = archiveFileOffset + part.Header
+                });
+            if (scan.Partial) limits.Add("Packed MIDI byte/note scan budget reached; part observations are partial");
+        }
         return new CprArchiveSummary(stream, size, bytes.Length,
-            total, limits.Count > 0, counts, hints, midiNotes, audioMediaCandidates, limits.ToArray());
+            total, limits.Count > 0, counts, hints, midiNotes.OrderBy(note => note.FileOffset).ToArray(), audioMediaCandidates, limits.ToArray());
+
+        CprRif2MidiNoteCandidate WithContext(CprRif2MidiNoteCandidate note) => note with
+        {
+            CandidateTrackName = activeTrack is int owner ? hints[owner].Name : null,
+            CandidateTrackOffset = activeTrack is int track ? archiveFileOffset + hints[track].ArchiveOffset : null,
+            CandidatePartName = note.CandidatePartName ?? activePart?.Name,
+            CandidatePartOffset = activePart?.Offset
+        };
     }
 
     private static IReadOnlyList<(string Path, int Start)> ReadAudioPathCandidates(byte[] bytes, int start, int end,
@@ -437,33 +493,6 @@ public sealed class CprStructureInspector : ICprStructureInspector
     }
 
     private static bool IsPathStringByte(byte value) => value is >= 32 and not 127;
-
-    // This body grammar is anchored by a controlled Cubase 15.0.40 A/B pair.
-    // Require the exact 112-byte note layout; do not extrapolate it to other
-    // builds or treat a found "adcn" string as an independent note boundary.
-    private static bool TryRif2Note(byte[] bytes, int start, int end, long archiveFileOffset,
-        out CprRif2MidiNoteCandidate candidate)
-    {
-        candidate = default!;
-        if (end - start != 112 || start < 0 || end > bytes.Length)
-            return false;
-        var body = bytes.AsSpan(start, 112);
-        if (!body.Slice(73, 4).SequenceEqual("adcn"u8) ||
-            body[77] != 0 || body[78] != 1 ||
-            BinaryPrimitives.ReadUInt32BigEndian(body.Slice(79, 4)) != 32)
-            return false;
-        var position = BitConverter.Int64BitsToDouble(
-            BinaryPrimitives.ReadInt64BigEndian(body.Slice(0, 8)));
-        var duration = BitConverter.Int64BitsToDouble(
-            BinaryPrimitives.ReadInt64BigEndian(body.Slice(87, 8)));
-        if (!double.IsFinite(position) || !double.IsFinite(duration) ||
-            position < 0 || position > 1e10 || duration <= 0 || duration > 1e10 ||
-            body[9] > 127 || body[10] > 127)
-            return false;
-        candidate = new CprRif2MidiNoteCandidate(
-            archiveFileOffset + start, position, duration, body[9], body[10]);
-        return true;
-    }
 
     private static string? ReadBoundedName(byte[] bytes, int start, int end)
     {
@@ -727,8 +756,9 @@ public sealed class CprStructureInspector : ICprStructureInspector
         }
         if (report.Arrangement?.MidiNoteCandidates is { Count: > 0 } midiNotes)
         {
-            b.AppendLine().AppendLine("## RIF2 MIDI note candidates (Cubase 15.0.40)")
-                .AppendLine("Values have been observed in one controlled test pair. Track ownership, other builds and complete MIDI semantics remain unverified.")
+            b.AppendLine().AppendLine("## Native CPR MIDI note candidates")
+                .AppendLine("Layouts: " + string.Join(", ", midiNotes.Select(note => note.SourceLayout).Distinct()))
+                .AppendLine("Track/part labels are candidate byte containment. Timing units, placement and complete MIDI semantics remain unverified.")
                 .AppendLine().AppendLine("| File offset | Position (ticks) | Duration (ticks) | MIDI pitch | Velocity |")
                 .AppendLine("|---:|---:|---:|---:|---:|");
             foreach (var note in midiNotes)

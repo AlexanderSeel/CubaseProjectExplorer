@@ -134,10 +134,10 @@ internal sealed partial class WorkspacePageFactory
             if (noteCandidates.Count > preview.Length)
                 noteRows = preview.Append($"{noteCandidates.Count - preview.Length:N0} additional candidates are preserved in JSON inspection output.");
             var candidateNotes = new StackPanel { Spacing = 6 };
-            candidateNotes.Children.Add(Note("Cubase 15.0.40 RIF2 note-layout candidates. Tick units, tempo, clip placement, and track ownership are not verified; these are not normalized MIDI events."));
+            candidateNotes.Children.Add(Note(string.Join(", ", noteCandidates.Select(note => note.SourceLayout).Distinct()) + ". Timing units, tempo, clip placement and track ownership remain unverified."));
             candidateNotes.Children.Add(Section("Observed note records · first " + preview.Length + " of " + noteCandidates.Count,
                 noteRows));
-            root.Children.Add(new Expander { Header = $"Unverified RIF2 MIDI note candidates · {noteCandidates.Count:N0}",
+            root.Children.Add(new Expander { Header = $"Native MIDI note candidates · {noteCandidates.Count:N0}",
                 Content = candidateNotes, IsExpanded = false });
         }
         if (vm.Project?.WarpPoints is { Count: > 0 } warpPoints)

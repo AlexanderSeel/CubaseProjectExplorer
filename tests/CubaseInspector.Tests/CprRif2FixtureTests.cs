@@ -49,6 +49,12 @@ public sealed class CprRif2FixtureTests
     private static byte[] Note(double position, int pitch, int velocity)
     {
         var body = new byte[112];
+        body[16] = 5;
+        for (var attribute = 0; attribute < 5; attribute++)
+        {
+            Encoding.ASCII.GetBytes("test").CopyTo(body, 17 + attribute * 14);
+            body[17 + attribute * 14 + 5] = 1;
+        }
         BinaryPrimitives.WriteInt64BigEndian(body.AsSpan(0, 8),
             BitConverter.DoubleToInt64Bits(position));
         body[9] = checked((byte)pitch);

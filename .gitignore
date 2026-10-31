@@ -1,5 +1,6 @@
 **/bin/
 **/obj/
+**/__pycache__/
 .vs/
 .vscode/
 TestResults/
@@ -14,4 +15,8 @@ dist/*
 tests/private-fixtures/
 artifacts/
 Cubase15.exe
+# Local IDA exports/databases contain the proprietary executable's code.
+Cubase15.exe.asm
+Cubase15.i64
+Cubase15.idb
 Git-History-Backups/

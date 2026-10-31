@@ -195,12 +195,16 @@ public sealed record CprTrackHint(string RecordClass, string? Name, int ArchiveO
 public sealed record CprChunkSummary(string Id, long Offset, long PayloadBytes, string? StreamName, string? ArchiveClass);
 
 /// <summary>
-/// Version-scoped RIF2 MMidiNote field observation. Values are not automatically
+/// Native MIDI field observation (historical type name retained for persisted/API compatibility). Values are not automatically
 /// promoted to confirmed, track-owned MIDI in a normalized project snapshot.
 /// </summary>
 public sealed record CprRif2MidiNoteCandidate(long FileOffset, double PositionTicks,
     double DurationTicks, int MidiPitch, int Velocity,
-    string Evidence = "Cubase 15.0.40 MMidiNote/112-byte layout observed in controlled fixtures");
+    string Evidence = "Cubase 15.0.40 MMidiNote/112-byte layout observed in controlled fixtures",
+    string SourceLayout = "RIF2 MMidiNote/112-byte",
+    string? CandidateTrackName = null, string? CandidatePartName = null,
+    long? CandidateTrackOffset = null, long? CandidatePartOffset = null,
+    int? Channel = null, ushort? RawFlags = null);
 public sealed record CprArchiveSummary(string StreamName, long DeclaredBytes, int BytesScanned, int RecordsFound,
     bool Partial, IReadOnlyDictionary<string, int> ClassCounts, IReadOnlyList<CprTrackHint> TrackHints,
     IReadOnlyList<CprRif2MidiNoteCandidate>? MidiNoteCandidates = null,

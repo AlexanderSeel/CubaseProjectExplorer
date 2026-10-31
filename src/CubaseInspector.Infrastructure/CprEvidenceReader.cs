@@ -158,7 +158,7 @@ public sealed class CprEvidenceReader : IProjectReader
             ? structural.Value?.Arrangement?.AudioMediaCandidates
             : null;
         if (nativeMidiNoteCandidates is { Count: > 0 })
-            warnings.Add($"RIF2 MIDI note observations: {nativeMidiNoteCandidates.Count:N0} Cubase 15.0.40-layout candidates. Timing units, track/clip ownership and arrangement semantics remain unverified; these are not normalized MIDI notes.");
+            warnings.Add($"{(nativeMidiNoteCandidates.All(note => note.SourceLayout.StartsWith("RIF2", StringComparison.Ordinal)) ? "RIF2 MIDI note observations" : "Native CPR MIDI note observations")}: {nativeMidiNoteCandidates.Count:N0} candidates from {string.Join(", ", nativeMidiNoteCandidates.Select(note => note.SourceLayout).Distinct())}. Timing units, track/clip ownership and arrangement semantics remain unverified; these are not normalized MIDI notes.");
         if (nativeAudioMediaCandidates is { Count: > 0 })
             warnings.Add($"CPR audio media: {nativeAudioMediaCandidates.Count:N0} file-path token candidate(s) found inside MAudioEvent records nested under audio-track records. Path existence and track/media ownership are unverified.");
         return Result<ProjectSnapshot>.Ok(new ProjectSnapshot(path, Path.GetFileNameWithoutExtension(path),

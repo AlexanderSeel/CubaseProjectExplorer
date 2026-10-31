@@ -11,7 +11,7 @@ using Windows.UI;
 namespace CubaseInspector.App;
 
 internal sealed record DataBrowserColumn<T>(string Header, string SortKey,
-    Func<T, string?> Display, Func<T, IComparable?> SortValue);
+    Func<T, string?> Display, Func<T, IComparable?> SortValue, double? WidthWeight = null);
 
 /// <summary>Shared, virtualized table/card browser for indexed project and media records.</summary>
 internal sealed class DataBrowserControl<T> : Grid where T : class
@@ -48,7 +48,8 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
     public DataBrowserControl(IReadOnlyList<DataBrowserColumn<T>> columns, IReadOnlyList<T> source,
         IReadOnlyList<string> groupModes, string initialGroupMode, Func<T, string, string> groupKey,
         Action<string> groupChanged, Func<T, Task> activate, Func<T, MenuFlyout?> contextMenu,
-        DataTemplate? cardTemplate = null, bool cardsInitiallyVisible = false)
+        DataTemplate? cardTemplate = null, bool cardsInitiallyVisible = false,
+        double minimumRowsHeight = 320, double maximumRowsHeight = 620, bool showToolbar = true)
     {
         if (columns.Count is < 1 or > 8) throw new ArgumentOutOfRangeException(nameof(columns), "The shared browser supports 1–8 columns.");
         _columns = columns;
@@ -122,6 +123,7 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
         toolbar.Children.Add(_cardPager);
         Children.Add(new Border { BorderBrush = (Brush)Application.Current.Resources["InspectorDividerBrush"],
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Visibility = showToolbar ? Visibility.Visible : Visibility.Collapsed,
             Margin = new Thickness(0, 0, 0, 8), Child = toolbar });
 
         _grid = new DataGrid
@@ -131,13 +133,23 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
             CanUserResizeColumns = true,
             CanUserReorderColumns = true,
             IsReadOnly = true,
+            RowHeight = 34,
+            ColumnHeaderHeight = 36,
+            Background = (Brush)Application.Current.Resources["InspectorSurfaceBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["InspectorDividerBrush"],
+            BorderThickness = new Thickness(1),
             SelectionMode = DataGridSelectionMode.Single,
             HeadersVisibility = DataGridHeadersVisibility.Column,
             GridLinesVisibility = DataGridGridLinesVisibility.Horizontal,
             ItemsSource = _rows,
-            MinHeight = 320,
-            MaxHeight = 620
+            MinHeight = minimumRowsHeight,
+            MaxHeight = maximumRowsHeight
         };
+        var headerStyle = new Style(typeof(CommunityToolkit.WinUI.UI.Controls.Primitives.DataGridColumnHeader));
+        headerStyle.Setters.Add(new Setter(Control.BackgroundProperty, Application.Current.Resources["InspectorSurfaceBrush"]));
+        headerStyle.Setters.Add(new Setter(Control.ForegroundProperty, Application.Current.Resources["InspectorTextSecondaryBrush"]));
+        headerStyle.Setters.Add(new Setter(Control.FontSizeProperty, 12d));
+        _grid.ColumnHeaderStyle = headerStyle;
         AutomationProperties.SetName(_grid, "Sortable results grid. Select a group heading to collapse or expand it.");
         for (var index = 0; index < columns.Count; index++)
         {
@@ -147,7 +159,7 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
                 Header = column.Header,
                 Binding = new Binding { Path = new PropertyPath($"Value{index}") },
                 Tag = index,
-                Width = new DataGridLength(index == 0 ? 2 : 1, DataGridLengthUnitType.Star)
+                Width = new DataGridLength(column.WidthWeight ?? (index == 0 ? 2 : 1), DataGridLengthUnitType.Star)
             });
         }
         _grid.Sorting += GridSorting;
@@ -167,8 +179,8 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
             SelectionMode = ListViewSelectionMode.Single,
             IsItemClickEnabled = false,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            MinHeight = 320,
-            MaxHeight = 620,
+            MinHeight = minimumRowsHeight,
+            MaxHeight = maximumRowsHeight,
             ItemTemplate = cardTemplate ?? BuildCardTemplate(columns.Count)
         };
         AutomationProperties.SetName(_cards, "Results cards. Select a group heading to collapse or expand it.");

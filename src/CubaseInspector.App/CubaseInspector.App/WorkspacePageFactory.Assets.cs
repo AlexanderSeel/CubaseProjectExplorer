@@ -288,23 +288,28 @@ internal sealed partial class WorkspacePageFactory
     private UIElement MidiTracksPage()
     {
         _ = mediaLibrary.LoadCommand.ExecuteAsync(null);
-        var root = Page("MIDI tracks", "Browse MIDI tracks indexed from saved DAWproject snapshots. Standard MIDI export is offered only when track, timing and tempo evidence are unambiguous.");
+        var root = Page("MIDI tracks", "Inspect native note candidates and exported MIDI tracks. Select a project or part to preview its notes.");
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var search = FilterTextBox("Search track or project…", 300);
+        var search = FilterTextBox("Search project, part or pitch…", 300);
         search.Text = mediaLibrary.MidiSearch;
         search.TextChanged += (_, _) => mediaLibrary.MidiSearch = search.Text;
         var refresh = Button("Refresh index", async () => await mediaLibrary.RebuildIndexCommand.ExecuteAsync(null));
+        refresh.IsEnabled = !mediaLibrary.IsBusy;
         actions.Children.Add(search); actions.Children.Add(refresh); AddPageActions(root, actions);
         var summary = new TextBlock { Margin = new Thickness(0, 8, 0, 6), Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] };
         var loadRing = new ProgressRing { Width = 18, Height = 18, IsActive = mediaLibrary.IsBusy,
             Visibility = mediaLibrary.IsBusy ? Visibility.Visible : Visibility.Collapsed };
-        void UpdateSummary() => summary.Text = mediaLibrary.Status + "  ·  " + mediaLibrary.MidiSummary;
+        void UpdateSummary() => summary.Text = mediaLibrary.IsBusy ? "Loading MIDI index…"
+            : mediaLibrary.Status.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+              mediaLibrary.Status.StartsWith("Could not", StringComparison.OrdinalIgnoreCase)
+                ? mediaLibrary.Status : mediaLibrary.MidiSummary;
         UpdateSummary();
         PropertyChangedEventHandler statusChanged = (_, args) =>
         {
             if (args.PropertyName is nameof(mediaLibrary.Status) or nameof(mediaLibrary.MidiSummary)) UpdateSummary();
             if (args.PropertyName == nameof(mediaLibrary.IsBusy))
             {
+                UpdateSummary();
                 loadRing.IsActive = mediaLibrary.IsBusy;
                 loadRing.Visibility = mediaLibrary.IsBusy ? Visibility.Visible : Visibility.Collapsed;
                 refresh.IsEnabled = !mediaLibrary.IsBusy;
@@ -426,51 +431,46 @@ internal sealed partial class WorkspacePageFactory
                 return menu;
             });
         Grid.SetColumn(detail, 1); layout.Children.Add(midiBrowser); layout.Children.Add(detail);
-        root.Children.Add(layout);
-        var nativeCandidates = new ListView { ItemsSource = mediaLibrary.NativeMidiCandidates,
-            SelectionMode = ListViewSelectionMode.None, MaxHeight = 320 };
-        nativeCandidates.ItemTemplate = new DataTemplate(() =>
+        var nativePanel = NativeMidiPanel(out var cleanupNative);
+        var source = new ComboBox { ItemsSource = new[] { "Native CPR notes", "Exported MIDI" },
+            SelectedIndex = mediaLibrary.NativeMidiGroups.Count == 0 && mediaLibrary.MidiTracks.Count > 0 ? 1 : 0,
+            MinWidth = 190, HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetName(source, "MIDI data source");
+        var sourceRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        sourceRow.Children.Add(new TextBlock { Text = "Source", Foreground = Muted, VerticalAlignment = VerticalAlignment.Center });
+        sourceRow.Children.Add(source);
+        var exportedEmpty = Empty("No exported MIDI tracks match this view. Choose Native CPR notes to inspect native observations, or index a DAWproject export.");
+        root.Children.Add(sourceRow); root.Children.Add(nativePanel); root.Children.Add(layout); root.Children.Add(exportedEmpty);
+        var initialSourceChosen = mediaLibrary.NativeMidiGroups.Count + mediaLibrary.MidiTracks.Count > 0;
+        void UpdateSource()
         {
-            var details = new StackPanel { Spacing = 3 };
-            foreach (var (label, path) in new[]
-                     {
-                         ("ProjectName", nameof(IndexedMidiNoteCandidate.ProjectName)),
-                         ("Note", nameof(IndexedMidiNoteCandidate.Observation)),
-                         ("Pitch", nameof(IndexedMidiNoteCandidate.Pitch)),
-                         ("PositionTicks", nameof(IndexedMidiNoteCandidate.PositionTicks)),
-                         ("DurationTicks", nameof(IndexedMidiNoteCandidate.DurationTicks)),
-                         ("Velocity", nameof(IndexedMidiNoteCandidate.Velocity)),
-                         ("FileOffset", nameof(IndexedMidiNoteCandidate.FileOffset))
-                     })
+            if (!initialSourceChosen && mediaLibrary.NativeMidiGroups.Count + mediaLibrary.MidiTracks.Count > 0)
             {
-                var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-                line.Children.Add(new TextBlock { Text = label + ":", FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-                var text = new TextBlock { FontSize = 10, TextTrimming = TextTrimming.CharacterEllipsis };
-                text.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath(path) });
-                line.Children.Add(text);
-                details.Children.Add(line);
+                initialSourceChosen = true;
+                source.SelectedIndex = mediaLibrary.NativeMidiGroups.Count > 0 ? 0 : 1;
             }
-            var warning = new TextBlock { FontSize = 10, Foreground = Muted, TextWrapping = TextWrapping.Wrap };
-            warning.SetBinding(TextBlock.TextProperty, new Microsoft.UI.Xaml.Data.Binding { Path = new PropertyPath(nameof(IndexedMidiNoteCandidate.Warning)) });
-            details.Children.Add(warning);
-            return new Border { Background = Surface, Margin = new Thickness(4), Padding = new Thickness(10),
-                BorderBrush = Divider, BorderThickness = new Thickness(1), Child = details };
-        });
-        var candidateRows = new StackPanel { Spacing = 6 };
-        candidateRows.Children.Add(Note("Best-effort native observations from the supplied Cubase 15.0.40 RIF2 examples. They are retained as candidates with byte offsets; no track ownership, clip placement, or timebase is inferred, so Standard MIDI export is intentionally unavailable."));
-        candidateRows.Children.Add(nativeCandidates);
-        var candidateExpander = new Expander { Header = "Unassigned native CPR MIDI note observations · candidate evidence",
-            Content = candidateRows, IsExpanded = false };
-        candidateExpander.Visibility = mediaLibrary.NativeMidiCandidates.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        NotifyCollectionChangedEventHandler candidatesChanged = (_, _) =>
-            candidateExpander.Visibility = mediaLibrary.NativeMidiCandidates.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        mediaLibrary.NativeMidiCandidates.CollectionChanged += candidatesChanged;
-        root.Children.Add(candidateExpander);
+            var native = source.SelectedIndex == 0;
+            nativePanel.Visibility = native ? Visibility.Visible : Visibility.Collapsed;
+            layout.Visibility = !native && mediaLibrary.MidiTracks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            exportedEmpty.Visibility = !native && mediaLibrary.MidiTracks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (!native && mediaLibrary.MidiTracks.Count > 0 && selectedTrack is null)
+            {
+                var first = mediaLibrary.MidiTracks[0]; midiBrowser.SelectItem(first); _ = ShowMidiTrackAsync(first);
+            }
+        }
+        source.SelectionChanged += (_, _) => UpdateSource();
+        PropertyChangedEventHandler sourceChanged = (_, args) =>
+        {
+            if (args.PropertyName is nameof(mediaLibrary.MidiSummary) or nameof(mediaLibrary.IsBusy)) UpdateSource();
+        };
+        mediaLibrary.PropertyChanged += sourceChanged;
+        UpdateSource();
         root.Unloaded += (_, _) =>
         {
             mediaLibrary.PropertyChanged -= statusChanged;
             mediaLibrary.PropertyChanged -= rollChanged;
-            mediaLibrary.NativeMidiCandidates.CollectionChanged -= candidatesChanged;
+            mediaLibrary.PropertyChanged -= sourceChanged;
+            cleanupNative();
             mediaLibrary.ClearMidiPianoRoll();
         };
         return root;

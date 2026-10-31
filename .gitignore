@@ -1,0 +1,16 @@
+**/bin/
+**/obj/
+.vs/
+.vscode/
+TestResults/
+*.user
+*.cpr
+*.dawproject
+*.npr
+*.tmp
+dist/*
+.build-check/*
+# Source CPR regression files contain private Windows paths and machine identifiers.
+tests/private-fixtures/
+artifacts/
+Cubase15.exe

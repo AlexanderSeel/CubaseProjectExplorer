@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup><PackageReference Include="Shiny.DocumentDb.Sqlite" Version="14.1.0" /><PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" /><ProjectReference Include="../CubaseInspector.Core/CubaseInspector.Core.csproj" /><PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" /></ItemGroup>
+</Project>

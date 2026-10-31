@@ -1,0 +1,64 @@
+# Implementation plan
+
+Updated: 2026-10-31
+
+This is the open-work roadmap. The current feature inventory is in [README.md](README.md); format evidence and test procedures remain in the linked research documents. Completed implementation history belongs in Git, not in this checklist.
+
+## Current validation snapshot
+
+- On 2026-10-31, the Release test suite passed 408/408 tests with the private-fixture environment enabled, including detailed ARCH bounds, references, class versions, unknown classes, malformed lengths, cancellation and aggregate safety limits. Both original Cubase 15.0.40 fixture hashes match `docs/CPR_RIF2_TEST_FIXTURES.md`; the controlled MIDI file still exposes 16 note-layout candidates and the empty file exposes none. Five pre-existing xUnit2031 analyzer warnings remain.
+- [Further static analysis](docs/research/CUBASE15_SERIALIZER_ANALYSIS.md) of the unchanged user-supplied Cubase 15.0.40 executable confirms additional ROOT/ARCH framing, class serialization versions, mode-dependent body sizes and registration-to-reader chains. Actual CLI JSON/Markdown smoke tests inventory all seven ARCH streams in each controlled fixture: 225 and 342 class-header candidates respectively, seven anonymous tempo-track raw fields each, no reached inventory limits and unchanged source hashes. Raw fields retain original bits and build-specific provenance. No BPM, tempo map, plugin identity, musical ownership or all-version support is promoted from this evidence.
+- Eight additional uncontrolled `D:\Cubase` RIFF samples with saved-by hints SX 3.1.1, 6.5.0, 6.5.2, 7.0.0, 7.0.6, Artist 7.0.1, 8.5.30 and 11.0.10 passed CLI structure smoke checks: 49 ARCH inventories, 26,296 class-header candidates, unchanged source SHA-256 values. Range retention limits were explicit in the 11.0.10 sample and range/detail limits in Artist 7.0.1; the other six samples reached no inventory limits. This is uncontrolled compatibility evidence, not per-version musical-field validation. Reports remain under ignored `artifacts/validation/native-reader/`.
+- Uno Desktop Release built with zero warnings/errors to an isolated output directory, and CLI Release built with zero warnings/errors. The app copies its generated multi-size ICO to the output root and now explicitly applies that ICO through `AppWindow.SetIcon` at launch; the output icon SHA-256 matches the source ICO. This source/build check does not replace a live title-bar/taskbar visual check. `git diff --check` passed.
+- CPR fixture review confirms candidate note offsets/pitch/velocity/duration and narrowly guarded tempo-track raw-field offsets/bits. It does not verify note ownership, timebase, clip placement, tempo-field units or MIDI export semantics. The two Cubase 15 fixtures do not establish support for older Cubase layouts or native sample-path recovery.
+- The user-provided `D:\Cubase` corpus inventory contains 83,123 files (1,159 `.cpr`, 2,368 `.bak`, 65,492 `.wav`, 83.85 GiB total). A read-only pass over 3,527 CPR/BAK files parsed 3,515 and reported 10 not recognized and 2 unsupported. It observed 19,193 `MAudioTrackEvent` and 23,964 `MMidiTrackEvent` candidate class records, 59,705 native mixer observations (59,605 volume anchors), but no verified native media references. A follow-up focused review of three CPR examples found nested audio path tokens within `MAudioEvent` records under candidate audio-track records; all remain explicitly unverified path/track candidates. The local library database contains 3,436 project records, 19,068 candidate Audio-track records and 59,705 mixer observations, while its pre-existing CPR asset indexes have no normalized native media or MIDI records. Corpus breadth improves pattern discovery but is not equivalent to per-version Cubase validation.
+- Database Administration now exposes SQLite table names, columns and row counts; paged/searchable record JSON; typed CRUD for supported library document types; table preview query preparation; and a bounded, read-only SQL runner capped at 500 rows. Existing backup/import/path/cleanup/compact workflows remain available. Raw SQL writes and unknown document-type CRUD are intentionally not exposed. Added regression coverage passes; manual responsive/keyboard and lock/failure-state review remains open.
+- The app shell, shared browser, startup screen, database loading, scanning and media/MIDI workflows still need a complete current Windows acceptance pass. A build is not visual, keyboard, accessibility, playback or scale approval.
+
+## P0 — Evidence, format reliability and data integrity
+
+- [ ] Build a permission-cleared, versioned corpus for native CPR/BAK across Cubase SX through current releases and compare each supported field against Cubase. The user-supplied `D:\Cubase` corpus has been inventoried/read-only parsed for pattern discovery, but its projects are not permission-cleared differential fixtures. Record expected UI values, version/edition, provenance and unsupported cases; do not commit private projects.
+- [ ] Validate native RIFF/32-bit and RIF2/64-bit container variants, byte order, chunk boundaries, compression, nesting and safety limits with genuine fixtures. Keep the best available structural read and bounded token fallback for unsupported/malformed versions, with structural errors and all candidate evidence explicit; do not discard a file only because one parser path fails.
+- [ ] Establish version-specific track identity, hierarchy, ordering, plugin ownership/instances/state, MIDI, tempo, mixer, sends, routing and crash-backup behavior. Promote each field independently only after repeatable fixture and Cubase comparison.
+- [ ] Validate detailed ARCH record inventories against independently controlled projects for each Cubase generation. Compare serialization versions, declaration/reference offsets, prefix classes and enclosing byte ranges; validate anonymous binary-derived fields before assigning musical units. The scanner resolves previously recognized declarations only; native seek-back/reference resolution and unsupported class bodies remain open.
+- [ ] Expand differential and adversarial coverage for malformed CPR, ZIP/XML limits, duplicate IDs, cancellation, partial files and large inputs. Preserve the distinction between absent, unknown, unsupported, corrupt, candidate and confirmed values throughout UI, indexes and reports.
+- [ ] Validate DAWproject field coverage against genuine exports, including nested clips, automation, device state and MIDI timing. Keep exported values scoped to what the exporter actually declares.
+- [ ] Validate catalog name/alias matching using confirmed plugin names and vendor conflicts; report ambiguous and advisory matches without presenting them as identity.
+
+## P1 — Windows app acceptance and workflow quality
+
+- [ ] Complete [manual UX acceptance](docs/UX_MANUAL_TEST.md) with populated CPR/BAK and DAWproject libraries: startup and DB hydration, scan/rescan across roots, cancellation, parse failures, filters, grouping, sorting, paged card/details switching, context actions, exports, calendar, search and navigation. Verify card selection does not trigger row actions and large sets remain responsive.
+- [ ] Manually verify project SHA-256 deduplication across repeated scans and relocated exact copies, including stale canonical paths, legacy index cleanup and hash-read failures. The checksum represents exact file bytes, not musical/semantic identity.
+- [ ] Review the shared workspace header/action bar and browser toolbar across every page. Keep primary actions easy to find, group infrequent commands in overflow menus, and use dismissible anchored popups for optional filters and diagnostics such as scan issues. Validate narrow-window overflow and keyboard dismissal.
+- [ ] Review every page at narrow and wide window sizes and 100–200% DPI, in light/dark/high-contrast themes, with long Unicode paths, empty/error/loading states and large libraries. Check keyboard-only navigation, focus order, accessible names, UI Automation and screen-reader behavior.
+- [ ] Measure DataBrowser and global search responsiveness on realistic large indexes. Verify selection and grouping behavior after filtering, sorting, switching views and returning from a result.
+- [ ] Manually validate Sample Finder playback on supported formats, WAV waveform rendering, MIDI piano-roll legibility, media collection/export, duplicate-scan progress/cancellation and MIDI export. Confirm unsupported or ambiguous references remain unavailable with a reason.
+- [ ] Verify the project-scoped Sample Finder action with projects that have confirmed media references. The provided CPR examples contain no confirmed native media references; do not count CPR string tokens or empty structural placeholders as usable samples.
+- [ ] Review the unassigned native CPR MIDI candidate panel and global-search entries against controlled Cubase 15.0.40 fixtures, ensuring candidate warnings stay visible and no Standard MIDI export is offered. Add independently verified examples from earlier Cubase releases before extending the parser's version coverage.
+- [ ] Review generated app icon/startup artwork, active loading spinner and loading counts on Windows. Confirm the shell stays responsive while saved project/plugin/catalog data loads, the shortened previous/current breadcrumb behaves with back/forward history, and failure states remain understandable.
+- [ ] Manually review Database Administration at narrow/wide sizes and keyboard-only: fast counts on entry, active/next-launch paths, export/import merge conflict behavior, cleanup confirmation and checksum duplicate handling, integrity/compact progress, and failures when the database is locked or unwritable. Verify the generated multi-size app icon is used for both the app window and taskbar after restarting the rebuilt app.
+- [ ] Validate the Project Calendar's year/month view with populated dates, all-unknown dates and stale/missing source paths; ensure current file attributes are read when available and retained database modification metadata is used only as a fallback.
+
+## P2 — Catalog, inventory and studio-data fidelity
+
+- [ ] Confirm catalog provider reuse terms, attribution and failure behavior. Keep source provenance; test append/update behavior, duplicate products, offline imports and optional source-supplied image downloads. Do not imply image ownership or confirmed plugin identity.
+- [ ] Validate local VST2/VST3 discovery, declared `moduleinfo.json` metadata, CID associations, bundle artwork and dependency preflight on supported Windows installations. Never execute plugins or claim that metadata proves loadability.
+- [ ] Extend typed DAWproject diff confidence for moved/duplicate tracks and plugin instances, missing IDs and ambiguous ownership. Validate the currently supported send, routing and enabled-state comparisons against genuine Cubase exports.
+- [ ] Research sidechains, group/FX nesting, send levels and physical audio/MIDI I/O only from independently verifiable sources. Keep physical hardware state unknown until verified.
+- [ ] Consider a read-only missing-media locator that scans only user-selected folders, ranks exact hashes above weaker metadata, explains ambiguity and exports proposed mappings without editing projects.
+- [ ] Keep reports consistent about provenance, timestamps, candidate evidence, privacy, logical disk size and shared plugin bundles. PDF generation remains a future feature.
+
+## P3 — Distribution and external formats
+
+- [ ] Assess signed MSIX/MSI distribution, prerequisites, upgrade/uninstall behavior, clean Windows 11 smoke tests and checksums. Current distribution is unsigned.
+- [ ] Complete threat, privacy, accessibility and performance review for untrusted project files, ZIP/XML parsing, catalog networking/caches, error logging and exported paths/UIDs.
+- [ ] Consider pre-CPR `.arr`/`.all` only with a separately documented grammar and licensed fixtures; never route these formats through the CPR reader.
+
+## Gated — Writing plugin-disabled CPR copies
+
+No native CPR writer or plugin-deactivation feature is approved. Keep this gate closed until all preceding evidence exists.
+
+- [ ] Verify per-version plugin instance selection, chunk/state encoding, offsets, checksums and preservation of unrelated/unknown bytes using independent fixtures.
+- [ ] Review dry-run diffs, destination safety, rollback/rejection, cancellation and unchanged-source guarantees.
+- [ ] Round-trip copies through Cubase across multiple versions; verify plugin state, track/tempo/routing integrity, playback, reopen and crash behavior with independent review.
+- [ ] Only then consider a separate, opt-in copy workflow with a preview and precise outcome reporting. A byte-identical safety copy is not a plugin-disabled project.

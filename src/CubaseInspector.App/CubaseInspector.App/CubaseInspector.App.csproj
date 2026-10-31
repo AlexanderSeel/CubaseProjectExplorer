@@ -1,0 +1,45 @@
+<Project Sdk="Uno.Sdk/6.7.30">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-desktop</TargetFrameworks>
+
+    <OutputType>Exe</OutputType>
+    <UnoSingleProject>true</UnoSingleProject>
+
+    <!-- Display name -->
+    <!-- App Identifier -->
+    <ApplicationId>com.companyname.cubaseinspector-app</ApplicationId>
+    <!-- Versions -->
+    <ApplicationDisplayVersion>$(ProductDisplayVersion)</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+    <!-- Package Publisher -->
+    <ApplicationPublisher>CubaseInspector.App</ApplicationPublisher>
+    <!-- Package Description -->
+    <ApplicationTitle>Cubase Project Explorer</ApplicationTitle>
+    <Description>Inspect, organize and compare Cubase project files.</Description>
+    <ApplicationIcon>Assets\Icons\cpe_app_icon.ico</ApplicationIcon>
+    <UnoIconBackgroundFile>Assets\Icons\cpe_app_icon.png</UnoIconBackgroundFile>
+    <UnoIconForegroundFile>Assets\Icons\icon_foreground_empty.svg</UnoIconForegroundFile>
+
+    <!--
+      UnoFeatures are used to quickly add and manage features enabled for your app.
+      https://aka.platform.uno/singleproject-features
+    -->
+    <UnoFeatures>
+      Hosting;
+      Toolkit;
+      Mvvm;
+      SkiaRenderer;
+      MediaPlayerElement;
+    </UnoFeatures>
+  </PropertyGroup>
+  <ItemGroup>
+    <UnoIcon Include="Assets\Icons\cpe_app_icon.png" ForegroundFile="Assets\Icons\icon_foreground_empty.svg" />
+    <UnoImage Include="Assets\Icons\cpe_app_icon.png" />
+    <Content Include="Assets\Icons\cpe_app_icon.ico" Link="icon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <PackageReference Include="Uno.CommunityToolkit.WinUI.UI.Controls.DataGrid" />
+    <ProjectReference Include="../../CubaseInspector.Core/CubaseInspector.Core.csproj" />
+    <ProjectReference Include="../../CubaseInspector.Infrastructure/CubaseInspector.Infrastructure.csproj" />
+    <Compile Include="../Services/**/*.cs" Link="Services/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../ViewModels/**/*.cs" Link="ViewModels/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

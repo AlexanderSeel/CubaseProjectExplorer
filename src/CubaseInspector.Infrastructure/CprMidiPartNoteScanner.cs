@@ -20,6 +20,8 @@ public static class CprMidiPartNoteScanner
     private static readonly byte[] Utf8Bom = [0xEF, 0xBB, 0xBF];
     private const string Source = "RIFF MMidiPart packed-note candidate; layout research: " +
         "bandpassrecords/daw-project-manager@6d5d82ac352ddb83212e1240612e24a252d03d5c. " +
+        "Exact discriminator and complete 25-byte note suffix: Cubase15.exe readers 0x141bc6e90 / 0x141bb4690, " +
+        "factory 0x141bb14b0 (b4a9c748 SHA-256 build). " +
         "Timing units, part placement and musical ownership remain unverified.";
 
     public static CprMidiPartNoteScan Scan(ReadOnlySpan<byte> body, long bodyFileOffset,
@@ -39,6 +41,7 @@ public static class CprMidiPartNoteScanner
             return new(notes, scanned, scanned < body.Length);
         var offset = nameEnd;
         var excludedIndex = 0;
+        var steps = 0;
         if (excludedRecords is { Count: > 0 })
         {
             var lo = 0; var hi = excludedRecords.Count;
@@ -51,9 +54,9 @@ public static class CprMidiPartNoteScanner
             }
             excludedIndex = lo;
         }
-        while (offset <= data.Length - 56)
+        while (offset <= data.Length - 57)
         {
-            if ((offset & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
+            if ((steps++ & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
             while (excludedRecords is not null && excludedIndex < excludedRecords.Count &&
                    excludedRecords[excludedIndex].FileOffset + excludedRecords[excludedIndex].ByteCount <= bodyFileOffset + offset)
                 excludedIndex++;
@@ -69,14 +72,14 @@ public static class CprMidiPartNoteScanner
             // u32 attribute count. Each scalar attribute is tag4 + type2 + value8.
             var header = data.Slice(offset, 18);
             var rawCount = BinaryPrimitives.ReadUInt32BigEndian(header.Slice(14, 4));
-            if (header[0] is < 0x90 or > 0x9F || header[9] > 15 || header[10] > 127 ||
+            if (header[0] is not (0x80 or 0x90) || header[9] > 15 || header[10] > 127 ||
                 header[11] > 127 || rawCount is < 1 or > 16)
             { offset++; continue; }
             var count = (int)rawCount;
             var durationOffset = offset + 18 + count * 14;
-            if (durationOffset > data.Length - 24) { offset++; continue; }
+            if (durationOffset > data.Length - 25) { offset++; continue; }
             if (excludedRecords is not null && excludedIndex < excludedRecords.Count &&
-                excludedRecords[excludedIndex].FileOffset < bodyFileOffset + durationOffset + 24)
+                excludedRecords[excludedIndex].FileOffset < bodyFileOffset + durationOffset + 25)
             { offset++; continue; }
             var attributesValid = true;
             for (var index = 0; index < count; index++)
@@ -96,7 +99,7 @@ public static class CprMidiPartNoteScanner
                 isRif2 ? "RIF2 packed MMidiPart" : "RIFF packed MMidiPart",
                 CandidatePartName: partName, Channel: header[9],
                 RawFlags: BinaryPrimitives.ReadUInt16BigEndian(header.Slice(12, 2))));
-            offset = durationOffset + 24;
+            offset = durationOffset + 25;
         }
         return new(notes.AsReadOnly(), scanned, scanned < body.Length);
     }
@@ -105,28 +108,21 @@ public static class CprMidiPartNoteScanner
         BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64BigEndian(data));
 
     public static bool TryReadRecord(ReadOnlySpan<byte> body, long bodyFileOffset,
-        bool isRif2, out CprRif2MidiNoteCandidate candidate, ushort? classVersion = null)
+        bool isRif2, out CprRif2MidiNoteCandidate candidate, ushort? classVersion = null,
+        ushort? eventClassVersion = null)
     {
         candidate = default!;
-        // Cubase 15's v1 reader consumes an extra byte that the v0 reader omits.
-        // Until the v0 body is mapped and fixture-checked, do not interpret it
-        // using the v1 offsets below.
+        // This musical-field matcher supports only the fixture-backed modern
+        // combination. Older layouts remain anonymous raw-field observations.
+        // Span-only callers can match a shape; the project inspector additionally
+        // requires the archive's explicit, unambiguous MMidiEvent declaration.
         if (classVersion is ushort revision && revision != 1) return false;
-        if (body.Length < 42 || bodyFileOffset < 0 || bodyFileOffset > long.MaxValue - body.Length) return false;
-        var rawCount = BinaryPrimitives.ReadUInt32BigEndian(body.Slice(13, 4));
-        // Attribute count changes the body size. The controlled five-attribute
-        // body is 112 bytes; a six-attribute Cubase 14 body is 126 bytes.
-        if (rawCount > 16) return false;
-        var count = (int)rawCount;
-        if (body.Length != 17 + count * 14 + 25 || body[8] > 15 || body[9] > 127 || body[10] > 127) return false;
-        for (var index = 0; index < count; index++)
-        {
-            var attribute = body.Slice(17 + index * 14, 14);
-            if (attribute[..4].IndexOfAnyExceptInRange((byte)32, (byte)126) >= 0 ||
-                BinaryPrimitives.ReadUInt16BigEndian(attribute.Slice(4, 2)) is not (1 or 4)) return false;
-        }
+        if (eventClassVersion is ushort baseRevision && baseRevision != 2) return false;
+        if (bodyFileOffset < 0 || bodyFileOffset > long.MaxValue - body.Length ||
+            !CprMidiNoteLayout.TryLocate(body, 2, 1, out var wireLayout) ||
+            body[8] > 15 || body[9] > 127 || body[10] > 127) return false;
         var position = ReadDouble(body[..8]);
-        var duration = ReadDouble(body.Slice(17 + count * 14, 8));
+        var duration = ReadDouble(body.Slice(wireLayout.TailOffset, 8));
         if (!double.IsFinite(position) || !double.IsFinite(duration) || Math.Abs(position) >= 1e9 ||
             duration is < 0 or >= 1e8) return false;
         var layout = (isRif2 ? "RIF2" : "RIFF") +
@@ -138,7 +134,7 @@ public static class CprMidiPartNoteScanner
         return true;
     }
 
-    private static bool TryName(ReadOnlySpan<byte> data, out string? name, out int next)
+    internal static bool TryName(ReadOnlySpan<byte> data, out string? name, out int next)
     {
         name = null;
         next = 0;

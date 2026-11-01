@@ -17,7 +17,7 @@ public sealed class CprPackedMidiTests
     private static byte[] PackedNote(double start = 120.125, double duration = 131.92000000000007,
         byte pitch = 36, byte velocity = 102)
     {
-        var value = new byte[56]; value[0] = 0x90; value[9] = 2; value[10] = pitch; value[11] = velocity; value[17] = 1;
+        var value = new byte[57]; value[0] = 0x90; value[9] = 2; value[10] = pitch; value[11] = velocity; value[17] = 1;
         Encoding.ASCII.GetBytes("adcn").CopyTo(value, 18); value[23] = 1;
         BinaryPrimitives.WriteInt64BigEndian(value.AsSpan(1, 8), BitConverter.DoubleToInt64Bits(start));
         BinaryPrimitives.WriteInt64BigEndian(value.AsSpan(32, 8), BitConverter.DoubleToInt64Bits(duration));
@@ -53,6 +53,18 @@ public sealed class CprPackedMidiTests
         Assert.Empty(CprMidiPartNoteScanner.Scan(Join(Name("Part"), PackedNote()[..^1]), 0).Notes);
         note = PackedNote(); note[17] = 255;
         Assert.Empty(CprMidiPartNoteScanner.Scan(Join(Name("Part"), note), 0).Notes);
+    }
+
+    [Theory]
+    [InlineData(0x80, 1)]
+    [InlineData(0x90, 1)]
+    [InlineData(0x91, 0)]
+    [InlineData(0x9F, 0)]
+    public void PackedDiscriminatorIsExactAndChannelRemainsASeparateField(byte status, int expected)
+    {
+        var note = PackedNote();
+        note[0] = status;
+        Assert.Equal(expected, CprMidiPartNoteScanner.Scan(Join(Name("Part"), note), 0).Notes.Count);
     }
 
     [Fact]

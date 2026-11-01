@@ -42,7 +42,10 @@ public sealed class CprRif2FixtureTests
     private static byte[] NamedClass(string name, byte[] body)
     {
         var n = Encoding.ASCII.GetBytes(name + "\0");
-        return Join(U64(ulong.MaxValue), U32((uint)n.Length), n,
+        var inherited = name == "MMidiNote"
+            ? Join(U64(ulong.MaxValue - 1), U32(11), Encoding.ASCII.GetBytes("MMidiEvent\0"), [0, 2])
+            : Array.Empty<byte>();
+        return Join(inherited, U64(ulong.MaxValue), U32((uint)n.Length), n,
             [0, 1], U64((ulong)body.Length), body);
     }
 

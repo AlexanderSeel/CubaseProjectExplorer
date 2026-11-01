@@ -64,6 +64,13 @@ public sealed class CprArchiveRecordScannerTests
         Assert.Equal(0UL, reference.ClassSymbolArchiveOffset);
         Assert.Equal((ushort)0x1234, reference.ClassVersion);
         Assert.Null(reference.ParentHeaderFileOffset);
+        var declaration = Assert.Single(report.ClassDeclarations!);
+        Assert.Equal("FutureUnknownObject", declaration.ClassName);
+        Assert.Equal((ushort)0x1234, declaration.ClassVersion);
+        Assert.Equal(0UL, declaration.SymbolArchiveOffset);
+        Assert.Equal(1000, declaration.DeclarationFileOffset);
+        Assert.Equal(inline.BodyFileOffset, declaration.AvailableAtFileOffset);
+        Assert.Equal(EvidenceLevel.Candidate, declaration.Evidence);
         var unknown = Assert.Single(report.UninterpretedRanges);
         Assert.Equal(inline.BodyFileOffset, unknown.FileOffset);
         Assert.Equal(3, unknown.ByteCount);
@@ -111,6 +118,16 @@ public sealed class CprArchiveRecordScannerTests
         Assert.Equal((ushort)9, concrete.ClassVersion);
         Assert.Equal("BaseObject", report.Records[1].ClassName);
         Assert.Equal((ushort)7, report.Records[1].ClassVersion);
+        Assert.Equal(2, report.ClassDeclarations!.Count);
+        Assert.Equal("BaseObject", report.ClassDeclarations[0].ClassName);
+        Assert.Equal((ushort)7, report.ClassDeclarations[0].ClassVersion);
+        Assert.Equal(0UL, report.ClassDeclarations[0].SymbolArchiveOffset);
+        Assert.Equal(1000, report.ClassDeclarations[0].DeclarationFileOffset);
+        Assert.Equal(concrete.BodyFileOffset, report.ClassDeclarations[0].AvailableAtFileOffset);
+        Assert.Equal("ConcreteObject", report.ClassDeclarations[1].ClassName);
+        Assert.Equal((ushort)9, report.ClassDeclarations[1].ClassVersion);
+        Assert.Equal((ulong)prefix.Length, report.ClassDeclarations[1].SymbolArchiveOffset);
+        Assert.Equal(concrete.BodyFileOffset, report.ClassDeclarations[1].AvailableAtFileOffset);
     }
 
     [Theory]
@@ -143,6 +160,102 @@ public sealed class CprArchiveRecordScannerTests
         Assert.Empty(report.Records);
         Assert.Equal(0, report.RecordsFound);
         Assert.Equal(malformed.Length + (wide ? 16 : 8), report.UninterpretedBytes);
+        Assert.Empty(report.ClassDeclarations!);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void RecoversEarlierDirectDeclarationsWithoutAddingAnObjectBody(bool wide, bool baseClass)
+    {
+        var declaration = baseClass
+            ? Join(Number((wide ? ulong.MaxValue : uint.MaxValue) - 1, wide),
+                Name("PreviouslyOpaque", 3), Record("Concrete", [], wide, 8))
+            : Record("PreviouslyOpaque", [], wide, 3);
+        var nested = declaration;
+        for (var i = 0; i < 49; i++) nested = Record("Nested", nested, wide);
+        var target = (ulong)(nested.Length - declaration.Length);
+        var bytes = Join(nested, Reference(target, [0x11], wide));
+        var report = Scan(bytes, wide);
+
+        Assert.True(report.Partial); // The existing depth bound still applies.
+        Assert.Equal(50, report.RecordsFound);
+        var reference = report.Records[^1];
+        Assert.Equal("PreviouslyOpaque", reference.ClassName);
+        Assert.Equal((ushort)3, reference.ClassVersion);
+        Assert.Equal("interned-class-reference", reference.ClassEncoding);
+        Assert.Equal(target, reference.ClassSymbolArchiveOffset);
+        Assert.Equal(1, reference.BodyBytes);
+        Assert.Equal(1000 + nested.Length, reference.HeaderFileOffset);
+        Assert.Equal(1, report.ClassCounts["PreviouslyOpaque"]);
+        Assert.DoesNotContain(report.Records, record => record.HeaderFileOffset == 1000 + (long)target);
+        var recovered = Assert.Single(report.ClassDeclarations!, item => item.ClassName == "PreviouslyOpaque");
+        Assert.Equal((ushort)3, recovered.ClassVersion);
+        Assert.Equal(target, recovered.SymbolArchiveOffset);
+        Assert.Equal(1000 + (long)target, recovered.DeclarationFileOffset);
+        Assert.Equal(reference.BodyFileOffset, recovered.AvailableAtFileOffset);
+        Assert.True(recovered.AvailableAtFileOffset > recovered.DeclarationFileOffset);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FutureOutsideBufferNullAndChainedReferencesStayOpaque(bool wide)
+    {
+        var width = wide ? 8 : 4;
+        var future = Reference((ulong)(width * 6), [], wide);
+        var outside = Reference(0x100000, [], wide);
+        var cycle = Reference((ulong)(width * 4), [], wide);
+        var declaration = Record("LaterDeclaration", [], wide, 4);
+        var chain = Reference((ulong)(width * 4), [], wide);
+        var nullReference = Number(0, wide);
+        var bytes = Join(future, outside, cycle, declaration, chain, nullReference);
+        var report = Scan(bytes, wide);
+
+        var only = Assert.Single(report.Records);
+        Assert.Equal("LaterDeclaration", only.ClassName);
+        Assert.Single(report.ClassDeclarations!);
+        Assert.Equal(bytes.Length - declaration.Length, report.UninterpretedBytes);
+        Assert.Contains("future, outside-buffer, chained and malformed", report.Grammar);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FailedLazyReferenceDoesNotCommitTheRecoveredDeclaration(bool wide)
+    {
+        var declaration = Record("PreviouslyOpaque", [], wide, 3);
+        var nested = declaration;
+        for (var i = 0; i < 49; i++) nested = Record("Nested", nested, wide);
+        var target = (ulong)(nested.Length - declaration.Length);
+        var malformed = Join(Number((wide ? 0x8000000000000000UL : 0x80000000UL) | target, wide),
+            Number(wide ? ulong.MaxValue : uint.MaxValue, wide));
+        var report = Scan(Join(nested, malformed), wide);
+
+        Assert.Equal(49, report.RecordsFound);
+        Assert.DoesNotContain(report.ClassDeclarations!, item => item.ClassName == "PreviouslyOpaque");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LazyDeclarationRecoveryHonorsTheSharedSymbolBudget(bool wide)
+    {
+        var declaration = Record("PreviouslyOpaque", [], wide, 3);
+        var nested = declaration;
+        for (var i = 0; i < 49; i++) nested = Record("Nested", nested, wide);
+        var target = (ulong)(nested.Length - declaration.Length);
+        var bytes = Join(nested, Reference(target, [], wide));
+        var report = CprArchiveRecordScanner.Scan("Any", null, bytes, 0, bytes.Length, wide, maxSymbols: 49);
+
+        Assert.True(report.Partial);
+        Assert.Equal(49, report.RecordsFound);
+        Assert.Equal(49, report.SymbolsFound);
+        Assert.Equal(49, report.ClassDeclarations!.Count);
+        Assert.DoesNotContain(report.ClassDeclarations, item => item.ClassName == "PreviouslyOpaque");
+        Assert.Contains(report.LimitReasons, reason => reason.Contains("Class symbol limit", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -227,6 +340,45 @@ public sealed class CprArchiveRecordScannerTests
         Assert.Equal(budget == 0 ? 0 : 1, report.SymbolsFound);
         Assert.Equal(budget == 0 ? bytes.Length : bytes.Length - first.Length,
             report.UninterpretedBytes);
+        Assert.Contains(report.LimitReasons, reason => reason.Contains("Class symbol limit", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FullSymbolBudgetStillAllowsRecordsUsingRecognizedDeclarations(bool wide)
+    {
+        var declaration = Record("KnownClass", [0x11], wide, 3);
+        var bytes = Join(declaration, Reference(0, [0x22], wide), Reference(0, [], wide));
+        var report = CprArchiveRecordScanner.Scan("Any", null, bytes, 0, bytes.Length, wide, maxSymbols: 1);
+
+        Assert.False(report.Partial);
+        Assert.Equal(1, report.SymbolsFound);
+        Assert.Equal(3, report.RecordsFound);
+        Assert.Single(report.ClassDeclarations!);
+        Assert.Equal(3, report.ClassCounts["KnownClass"]);
+        Assert.Equal(new ushort?[] { 3, 3, 3 }, report.Records.Select(record => record.ClassVersion));
+        Assert.Equal(2, report.UninterpretedBytes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FullSymbolBudgetStopsAtNextNewClassWithoutLosingEarlierReference(bool wide)
+    {
+        var declaration = Record("KnownClass", [], wide, 3);
+        var reused = Reference(0, [], wide);
+        var next = Record("NewClass", [], wide, 4);
+        var bytes = Join(declaration, reused, next);
+        var report = CprArchiveRecordScanner.Scan("Any", null, bytes, 0, bytes.Length, wide, maxSymbols: 1);
+
+        Assert.True(report.Partial);
+        Assert.Equal(1, report.SymbolsFound);
+        Assert.Equal(2, report.RecordsFound);
+        Assert.Single(report.ClassDeclarations!);
+        Assert.Equal(2, report.ClassCounts["KnownClass"]);
+        Assert.DoesNotContain("NewClass", report.ClassCounts.Keys);
+        Assert.Equal(next.Length, report.UninterpretedBytes);
         Assert.Contains(report.LimitReasons, reason => reason.Contains("Class symbol limit", StringComparison.Ordinal));
     }
 

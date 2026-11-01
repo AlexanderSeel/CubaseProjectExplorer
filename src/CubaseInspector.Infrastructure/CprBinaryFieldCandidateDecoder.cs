@@ -29,7 +29,8 @@ public static class CprBinaryFieldCandidateDecoder
         "docs/research/CUBASE15_SERIALIZER_ANALYSIS.md";
 
     public static IReadOnlyList<CprBinaryFieldCandidate> Read(CprClassRecordCandidate record,
-        ReadOnlySpan<byte> archiveData, long archiveFileOffset)
+        ReadOnlySpan<byte> archiveData, long archiveFileOffset,
+        ushort? midiEventRevision = null, ushort? midiNoteRevision = null)
     {
         ArgumentNullException.ThrowIfNull(record);
         var isTempoEvent = string.Equals(record.ClassName, "MTempoEvent", StringComparison.Ordinal) &&
@@ -38,13 +39,19 @@ public static class CprBinaryFieldCandidateDecoder
             record.ClassVersion == 3 && record.BodyBytes == 54;
         var isTimeSignature = string.Equals(record.ClassName, "MTimeSignatureEvent", StringComparison.Ordinal) &&
             record.ClassVersion == 2 && record.BodyBytes >= 20;
-        if ((!isTempoEvent && !isTempoTrack && !isTimeSignature) || archiveData.Length < record.BodyBytes ||
+        var isMidiNote = string.Equals(record.ClassName, "MMidiNote", StringComparison.Ordinal) &&
+            record.ClassVersion is 0 or 1;
+        if ((!isTempoEvent && !isTempoTrack && !isTimeSignature && !isMidiNote) ||
+            record.BodyBytes < 0 || archiveData.Length < record.BodyBytes ||
             archiveFileOffset < 0 || archiveFileOffset > long.MaxValue - archiveData.Length ||
             record.BodyFileOffset < archiveFileOffset)
             return [];
         var relative = record.BodyFileOffset - archiveFileOffset;
         if (relative > archiveData.Length - record.BodyBytes) return [];
         var body = archiveData.Slice((int)relative, (int)record.BodyBytes);
+
+        if (isMidiNote) return midiNoteRevision == record.ClassVersion
+            ? ReadMidiNote(record, body, midiEventRevision) : [];
 
         if (isTimeSignature)
         {
@@ -106,6 +113,47 @@ public static class CprBinaryFieldCandidateDecoder
             Field("body+20", "u32-be", BinaryPrimitives.ReadUInt32BigEndian(body.Slice(20, 4))
                 .ToString(CultureInfo.InvariantCulture), record.BodyFileOffset + 20, body.Slice(20, 4))
         });
+    }
+
+    private static IReadOnlyList<CprBinaryFieldCandidate> ReadMidiNote(CprClassRecordCandidate record,
+        ReadOnlySpan<byte> body, ushort? midiEventRevision)
+    {
+        if (midiEventRevision is not ushort eventRevision ||
+            record.ClassVersion is not ushort noteRevision ||
+            !CprMidiNoteLayout.TryLocate(body, eventRevision, noteRevision, out var layout)) return [];
+        var source = "Cubase15.exe MMidiEvent reader 0x141bb0390 / MMidiNote reader 0x141bb4690; " +
+            "SHA-256 b4a9c748537ead87981aebe18a01aae3acba8bfc76d1c1150c0054de75515aa0; " +
+            $"MMidiEvent serialization version {eventRevision}, MMidiNote serialization version {noteRevision}; " +
+            "big-endian candidate; field semantics unverified; scalar attributes remain opaque; " +
+            "docs/research/CUBASE15_BACKWARD_COMPATIBILITY.md";
+        var fields = new List<CprBinaryFieldCandidate>();
+        fields.Add(DoubleField(0, body[..8]));
+        for (var offset = 8; offset < 11; offset++)
+            fields.Add(Field($"body+{offset}", "u8", body[offset].ToString(CultureInfo.InvariantCulture),
+                record.BodyFileOffset + offset, body.Slice(offset, 1), source));
+        if (eventRevision > 0)
+            fields.Add(Field("body+11", "u16-be", BinaryPrimitives.ReadUInt16BigEndian(body.Slice(11, 2))
+                .ToString(CultureInfo.InvariantCulture), record.BodyFileOffset + 11, body.Slice(11, 2), source));
+        if (eventRevision == 2)
+            fields.Add(Field("body+13", "u32-be", layout.AttributeCount.ToString(CultureInfo.InvariantCulture),
+                record.BodyFileOffset + 13, body.Slice(13, 4), source));
+        for (var index = 0; index < 3; index++)
+        {
+            var offset = layout.TailOffset + index * 8;
+            fields.Add(DoubleField(offset, body.Slice(offset, 8)));
+        }
+        if (noteRevision == 1)
+        {
+            var offset = layout.TailOffset + 24;
+            fields.Add(Field($"body+{offset}", "u8", body[offset].ToString(CultureInfo.InvariantCulture),
+                record.BodyFileOffset + offset, body.Slice(offset, 1), source));
+        }
+        return fields.AsReadOnly();
+
+        CprBinaryFieldCandidate DoubleField(int offset, ReadOnlySpan<byte> bytes) =>
+            Field($"body+{offset}", "f64-be", BitConverter.Int64BitsToDouble(
+                BinaryPrimitives.ReadInt64BigEndian(bytes)).ToString("R", CultureInfo.InvariantCulture),
+                record.BodyFileOffset + offset, bytes, source);
     }
 
     private static CprBinaryFieldCandidate Field(string field, string type, string value,

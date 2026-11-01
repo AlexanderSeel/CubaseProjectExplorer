@@ -1,6 +1,4 @@
-using System.Buffers.Binary;
 using System.Collections.ObjectModel;
-using System.Text;
 using CubaseInspector.Core;
 
 namespace CubaseInspector.Infrastructure;
@@ -17,7 +15,6 @@ public static class CprArchiveRecordScanner
     private const int MaxRanges = 4096;
     private const int MaxSymbols = 250_000;
     private const int MaxDepth = 48;
-    private const int MaxPrefixClasses = 16;
 
     public static CprArchiveRecordInventory Scan(string streamName, string? archiveClass,
         byte[] data, long archiveFileOffset, long declaredBytes, bool isRif2,
@@ -40,7 +37,7 @@ public static class CprArchiveRecordScanner
             throw new ArgumentOutOfRangeException(nameof(maxSymbols));
         ct.ThrowIfCancellationRequested();
 
-        var symbols = new Dictionary<ulong, Symbol>();
+        var headers = new CprArchiveClassHeaderReader();
         var counts = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var records = new List<CprClassRecordCandidate>();
         var ranges = new List<CprUninterpretedRange>();
@@ -72,7 +69,7 @@ public static class CprArchiveRecordScanner
                 AddRemainingUnknown();
                 break;
             }
-            if (!TryRecord(data, position, upper, isRif2, symbols, maxSymbols,
+            if (!headers.TryRead(data, position, upper, isRif2, maxSymbols,
                     out var parsed, out var prefixLimit, out var symbolLimit))
             {
                 if (symbolLimit)
@@ -121,8 +118,9 @@ public static class CprArchiveRecordScanner
             new ReadOnlyDictionary<string, int>(counts), records.AsReadOnly(), unknownBytes,
             ranges.AsReadOnly(), reasons.Order(StringComparer.Ordinal).ToArray(),
             (isRif2 ? "RIF2 64-bit" : "RIFF 32-bit") +
-            " candidate class framing; references resolve only previously recognized declarations",
-            symbols.Count);
+            " candidate class framing; references resolve recognized symbols or bounded earlier direct declarations; " +
+            "future, outside-buffer, chained and malformed reference targets remain opaque",
+            headers.SymbolsFound, headers.GetDeclarations(archiveFileOffset));
 
         void AddRemainingUnknown()
         {
@@ -145,121 +143,5 @@ public static class CprArchiveRecordScanner
         }
     }
 
-    private static bool TryRecord(byte[] bytes, int start, int limit, bool wide,
-        Dictionary<ulong, Symbol> symbols, int maxSymbols,
-        out ParsedRecord parsed, out bool prefixLimit, out bool symbolLimit)
-    {
-        parsed = default!;
-        prefixLimit = false;
-        symbolLimit = false;
-        var width = wide ? 8 : 4;
-        if (start > limit - width) return false;
-        var inlineToken = wide ? ulong.MaxValue : uint.MaxValue;
-        var prefixToken = inlineToken - 1;
-        var referenceBit = wide ? 0x8000000000000000UL : 0x80000000UL;
-        var firstToken = Number(bytes, start, wide);
-        if (firstToken != inlineToken && firstToken != prefixToken &&
-            ((firstToken & referenceBit) == 0 || !symbols.ContainsKey(firstToken & ~referenceBit)))
-            return false;
-        var p = start;
-        var pending = new Dictionary<ulong, Symbol>();
-        var symbolLimitReached = false;
-        var prefixes = new List<string>();
-        while (p <= limit - width && Number(bytes, p, wide) == prefixToken)
-        {
-            if (prefixes.Count >= MaxPrefixClasses)
-            {
-                prefixLimit = true;
-                return false;
-            }
-            var symbolOffset = (ulong)p;
-            p += width;
-            // The native -2 branch reads a full u32-length class name followed
-            // by its u16 serialization version in both container modes.
-            if (!TryName(bytes, ref p, limit, out var symbol) || !Register(symbolOffset, symbol))
-            {
-                symbolLimit = symbolLimitReached;
-                return false;
-            }
-            prefixes.Add(symbol.Name);
-        }
-
-        if (p > limit - width) return false;
-        var token = Number(bytes, p, wide);
-        var classOffset = (ulong)p;
-        p += width;
-        Symbol cls;
-        string encoding;
-        ulong symbolArchiveOffset;
-        if (token == inlineToken)
-        {
-            if (!TryName(bytes, ref p, limit, out cls) || !Register(classOffset, cls))
-            {
-                symbolLimit = symbolLimitReached;
-                return false;
-            }
-            symbolArchiveOffset = classOffset;
-            encoding = "inline-class-name";
-        }
-        else if ((token & referenceBit) != 0 && token != prefixToken)
-        {
-            symbolArchiveOffset = token & ~referenceBit;
-            if (!Lookup(symbolArchiveOffset, out cls)) return false;
-            encoding = "interned-class-reference";
-        }
-        else return false;
-        if (p > limit - width) return false;
-        var length = Number(bytes, p, wide);
-        var bodyStart = p + width;
-        if (length > (ulong)(limit - bodyStart)) return false;
-        var bodyEnd = bodyStart + (int)length;
-
-        // Failed probes must never poison the symbol table for later candidates.
-        foreach (var entry in pending) symbols.Add(entry.Key, entry.Value);
-        parsed = new ParsedRecord(cls.Name, bodyStart, bodyEnd, encoding, token,
-            symbolArchiveOffset, cls.Version, prefixes.AsReadOnly());
-        return true;
-
-        bool Lookup(ulong id, out Symbol symbol) =>
-            pending.TryGetValue(id, out symbol!) || symbols.TryGetValue(id, out symbol!);
-
-        bool Register(ulong id, Symbol symbol)
-        {
-            if (Lookup(id, out var existing)) return existing == symbol;
-            if (symbols.Count + pending.Count >= maxSymbols)
-            {
-                symbolLimitReached = true;
-                return false;
-            }
-            pending.Add(id, symbol);
-            return true;
-        }
-    }
-
-    private static bool TryName(byte[] bytes, ref int position, int end, out Symbol symbol)
-    {
-        symbol = default!;
-        if (position > end - 4) return false;
-        var length = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(position, 4));
-        if (length is < 2 or > 100 || length > end - position - 6) return false;
-        var nameStart = position + 4;
-        if (bytes[nameStart + (int)length - 1] != 0) return false;
-        for (var i = nameStart; i < nameStart + length - 1; i++)
-            if (bytes[i] is < 32 or > 126) return false;
-        var versionOffset = nameStart + (int)length;
-        symbol = new Symbol(Encoding.ASCII.GetString(bytes, nameStart, (int)length - 1),
-            BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(versionOffset, 2)));
-        position = versionOffset + 2;
-        return true;
-    }
-
-    private static ulong Number(byte[] bytes, int position, bool wide) => wide
-        ? BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(position, 8))
-        : BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(position, 4));
-
-    private sealed record Symbol(string Name, ushort Version);
-    private sealed record ParsedRecord(string ClassName, int BodyStart, int BodyEnd,
-        string Encoding, ulong Token, ulong SymbolOffset, ushort Version,
-        IReadOnlyList<string> PrefixClasses);
     private readonly record struct Frame(int End, int Resume, int Depth, long? Parent);
 }

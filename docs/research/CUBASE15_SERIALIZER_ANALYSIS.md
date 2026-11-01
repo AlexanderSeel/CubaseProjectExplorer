@@ -67,6 +67,10 @@ Class versions are per-class serializer revisions, not application versions, bit
 
 ## Backwards compatibility inside the Cubase 15 readers
 
+The [2026-11-01 inherited-revision investigation](CUBASE15_BACKWARD_COMPATIBILITY.md)
+adds the independent `MMidiEvent`/`MMidiNote` layout matrix, archive-wide named
+revision lookup, declaration recognition order and current raw-field validation.
+
 This pass traced explicit serializer-revision gates. These are not hypothetical
 format guesses: the v15 reader obtains the saved revision for the specific class
 and changes which fields/children it reads. It is therefore correct to use this

@@ -110,6 +110,8 @@ public sealed class CprStructureInspector : ICprStructureInspector
                 }
                 else if (id == "ARCH")
                 {
+                    byte[]? arrangementData = null;
+                    CprArchiveRecordInventory? archiveInventory = null;
                     stream = pendingStream;
                     cls = pendingClass;
                     pendingStream = pendingClass = null;
@@ -118,7 +120,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
                         var count = (int)Math.Min(size, MaxArrangementBytes);
                         var data = new byte[count];
                         await file.ReadExactlyAsync(data, ct);
-                        arrangement = ScanArrangement(stream ?? "Unnamed", size, data, isRif2, payloadOffset, ct);
+                        arrangementData = data;
                         if (namedScanBytes + count <= MaxNamedScanBytes &&
                             namedRecordCandidates.Count < MaxNamedCandidates)
                         {
@@ -126,8 +128,6 @@ public sealed class CprStructureInspector : ICprStructureInspector
                                 payloadOffset, MaxNamedCandidates - namedRecordCandidates.Count));
                             namedScanBytes += count;
                         }
-                        if (arrangement.Partial)
-                            warnings.Add("Arrangement evidence is partial: " + string.Join("; ", arrangement.LimitReasons ?? []));
                     }
                     else if (versionCandidate is null && cls == "PAppVersion")
                     {
@@ -151,9 +151,13 @@ public sealed class CprStructureInspector : ICprStructureInspector
                     if (!isRif2 && size <= MaxNamedArchiveBytes && metadataScanBytes + size <= MaxMetadataScanBytes &&
                         metadataCandidates.Count < 128)
                     {
-                        file.Position = payloadOffset;
-                        var metadataData = new byte[(int)size];
-                        await file.ReadExactlyAsync(metadataData, ct);
+                        var metadataData = arrangementData;
+                        if (metadataData is null || metadataData.Length != size)
+                        {
+                            file.Position = payloadOffset;
+                            metadataData = new byte[(int)size];
+                            await file.ReadExactlyAsync(metadataData, ct);
+                        }
                         metadataScanBytes += size;
                         var metadataReadErrors = new List<string>();
                         metadataCandidates.AddRange(CprMetadataCandidateScanner.Scan(metadataData, payloadOffset, metadataReadErrors)
@@ -165,21 +169,30 @@ public sealed class CprStructureInspector : ICprStructureInspector
                     {
                         var count = inventoryRecords >= MaxRecords ? 0 :
                             (int)Math.Min(size, MaxInventoryBytes - inventoryBytes);
-                        file.Position = payloadOffset;
-                        var archiveData = new byte[count];
-                        await file.ReadExactlyAsync(archiveData, ct);
+                        var archiveData = arrangementData;
+                        if (archiveData is null || archiveData.Length != count)
+                        {
+                            file.Position = payloadOffset;
+                            archiveData = new byte[count];
+                            await file.ReadExactlyAsync(archiveData, ct);
+                        }
                         var inventory = CprArchiveRecordScanner.Scan(stream ?? "Unnamed", cls,
                             archiveData, payloadOffset, size, isRif2, ct,
                             MaxInventoryRecords - inventoryDetails, MaxRecords - inventoryRecords,
                             MaxInventoryRanges - inventoryRanges, MaxRecords - inventorySymbols);
+                        var midiEventRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiEvent");
+                        var midiNoteRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiNote");
                         inventory = inventory with
                         {
                             Records = inventory.Records.Select(record => record with
                             {
-                                RawFields = CprBinaryFieldCandidateDecoder.Read(record, archiveData, payloadOffset)
+                                RawFields = CprBinaryFieldCandidateDecoder.Read(record, archiveData, payloadOffset,
+                                    midiEventRevision?.RevisionAt(record.BodyFileOffset),
+                                    midiNoteRevision?.RevisionAt(record.BodyFileOffset))
                             }).ToArray()
                         };
                         inventories.Add(inventory);
+                        archiveInventory = inventory;
                         inventoryBytes += count;
                         inventoryRecords += inventory.RecordsFound;
                         inventoryDetails += inventory.Records.Count;
@@ -187,6 +200,13 @@ public sealed class CprStructureInspector : ICprStructureInspector
                         inventorySymbols += inventory.SymbolsFound;
                     }
                     else omittedInventories++;
+                    if (arrangementData is not null)
+                    {
+                        arrangement = ScanArrangement(stream ?? "Unnamed", size, arrangementData, isRif2,
+                            payloadOffset, ct, archiveInventory);
+                        if (arrangement.Partial)
+                            warnings.Add("Arrangement evidence is partial: " + string.Join("; ", arrangement.LimitReasons ?? []));
+                    }
                 }
                 else pendingStream = pendingClass = null;
                 chunks.Add(new CprChunkSummary(id, cursor, size, stream, cls));
@@ -300,10 +320,11 @@ public sealed class CprStructureInspector : ICprStructureInspector
     }
 
     private static CprArchiveSummary ScanArrangement(string stream, long size, byte[] bytes, bool isRif2,
-        long archiveFileOffset, CancellationToken ct)
+        long archiveFileOffset, CancellationToken ct,
+        CprArchiveRecordInventory? archiveInventory)
     {
         var counts = new SortedDictionary<string, int>(StringComparer.Ordinal);
-        var interned = new Dictionary<uint, (string Name, ushort ClassVersion)>();
+        var headers = new CprArchiveClassHeaderReader();
         var frames = new Stack<(int End, int Resume, int Depth, int? PreviousTrack,
             (string? Name, long Offset)? PreviousPart)>();
         var hints = new List<CprTrackHint>();
@@ -312,7 +333,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
         var activeTrack = (int?)null;
         (string? Name, long Offset)? activePart = null;
         var packedMidiScanBytes = 0;
-        var packedParts = new List<(int Start, int End, int Header, int? Track)>();
+        var packedParts = new List<(int Start, int End, int Header, int? Track, ushort Revision)>();
         var midiRecordRanges = new List<CprUninterpretedRange>();
         const int maxPackedMidiBytes = 32 * 1024 * 1024;
         var position = 0;
@@ -321,6 +342,10 @@ public sealed class CprStructureInspector : ICprStructureInspector
         var total = 0;
         var iterations = 0;
         var limits = new HashSet<string>(StringComparer.Ordinal);
+        var eventEvidence = CprClassRevisionEvidence.Find(archiveInventory?.ClassDeclarations, "MMidiEvent");
+        var noteEvidence = CprClassRevisionEvidence.Find(archiveInventory?.ClassDeclarations, "MMidiNote");
+        var declarationScanEnd = archiveInventory is null ? archiveFileOffset :
+            archiveInventory.PayloadFileOffset + archiveInventory.BytesScanned;
         if (bytes.Length < size) limits.Add("128 MiB arrangement byte limit");
         while (true)
         {
@@ -341,37 +366,36 @@ public sealed class CprStructureInspector : ICprStructureInspector
                 limits.Add("250,000 arrangement record limit");
                 break;
             }
-            if (interned.Count >= MaxRecords)
+            if (headers.TryRead(bytes, position, upper, isRif2, MaxRecords,
+                    out var header, out var prefixLimit, out var symbolLimit))
             {
-                limits.Add("250,000 arrangement class-symbol limit");
-                break;
-            }
-            string name64;
-            int bodyStart64, bodyEnd64;
-            ushort classVersion64;
-            if (total < MaxRecords && (isRif2
-                    ? TryRecord64(bytes, position, upper, interned, out name64, out bodyStart64, out bodyEnd64, out classVersion64)
-                    : TryRecord(bytes, position, upper, interned, out name64, out bodyStart64, out bodyEnd64, out classVersion64)))
-            {
-                var name = name64;
-                var bodyStart = bodyStart64;
-                var bodyEnd = bodyEnd64;
+                var name = header.ClassName;
+                var bodyStart = header.BodyStart;
+                var bodyEnd = header.BodyEnd;
+                var classVersion64 = header.Version;
                 counts[name] = counts.GetValueOrDefault(name) + 1;
                 total++;
                 if (name == "MMidiNote")
-                    midiRecordRanges.Add(new CprUninterpretedRange(archiveFileOffset + position, bodyEnd - position));
-                if (name == "MMidiNote" && classVersion64 != 1)
-                    limits.Add($"MMidiNote serializer revision {classVersion64} was retained as a raw record; this reader only interprets the Cubase 15 revision 1 note layout.");
-                if (name == "MMidiNote" && classVersion64 == 1 &&
-                    CprMidiPartNoteScanner.TryReadRecord(bytes.AsSpan(bodyStart, bodyEnd - bodyStart), archiveFileOffset + bodyStart, isRif2,
-                        out var noteCandidate, classVersion64))
                 {
-                    if (midiNotes.Count < 10000) midiNotes.Add(WithContext(noteCandidate));
-                    else limits.Add("10,000 MIDI note candidate limit");
+                    midiRecordRanges.Add(new CprUninterpretedRange(archiveFileOffset + position, bodyEnd - position));
+                    var withinDeclarationScan = archiveFileOffset + bodyEnd <= declarationScanEnd;
+                    var eventRevision = withinDeclarationScan ? eventEvidence?.RevisionAt(archiveFileOffset + bodyStart) : null;
+                    var noteRevision = withinDeclarationScan ? noteEvidence?.RevisionAt(archiveFileOffset + bodyStart) : null;
+                    if (classVersion64 != 1)
+                        limits.Add($"MMidiNote serializer revision {classVersion64} was retained as a raw record; this reader only interprets the Cubase 15 revision 1 note layout.");
+                    if (bodyEnd > bodyStart && (eventRevision != 2 || noteRevision != 1))
+                        limits.Add("MMidiNote body was retained without musical interpretation: inherited MMidiEvent or named MMidiNote revisions are missing, conflicting, unsupported or outside the scanned declaration context; modern observations require explicit revisions 2 and 1 available before the body.");
+                    if (classVersion64 == 1 && eventRevision == 2 && noteRevision == 1 &&
+                        CprMidiPartNoteScanner.TryReadRecord(bytes.AsSpan(bodyStart, bodyEnd - bodyStart), archiveFileOffset + bodyStart, isRif2,
+                            out var noteCandidate, classVersion64, eventRevision))
+                    {
+                        if (midiNotes.Count < 10000) midiNotes.Add(WithContext(noteCandidate));
+                        else limits.Add("10,000 MIDI note candidate limit");
+                    }
                 }
                 if (name == "MMidiPart")
                 {
-                    if (packedParts.Count < 4096) packedParts.Add((bodyStart, bodyEnd, position, activeTrack));
+                    if (packedParts.Count < 4096) packedParts.Add((bodyStart, bodyEnd, position, activeTrack, header.Version));
                     else limits.Add("4,096 packed MIDI part scan limit");
                 }
 
@@ -446,7 +470,16 @@ public sealed class CprStructureInspector : ICprStructureInspector
                     position = bodyEnd;
                 }
             }
-            else position++;
+            else
+            {
+                if (symbolLimit)
+                {
+                    limits.Add("250,000 arrangement class-symbol limit");
+                    break;
+                }
+                if (prefixLimit) limits.Add("16-class arrangement declaration prefix limit");
+                position++;
+            }
         }
         // A size byte (e.g. a 154-byte body ends in 0x9A) can resemble a compact
         // MIDI status. Exclude recognized note record ranges before scanning
@@ -462,12 +495,16 @@ public sealed class CprStructureInspector : ICprStructureInspector
             }
             else excluded.Add(range);
         }
+        var eventStreams = new CprMidiPartEventStreamReader(archiveInventory, isRif2);
         foreach (var part in packedParts)
         {
             ct.ThrowIfCancellationRequested();
-            var scan = CprMidiPartNoteScanner.Scan(bytes.AsSpan(part.Start, part.End - part.Start),
-                archiveFileOffset + part.Start, 10000 - midiNotes.Count,
-                Math.Min(CprMidiPartNoteScanner.MaximumScanBytes, maxPackedMidiBytes - packedMidiScanBytes), ct, isRif2, excluded);
+            var maximumBytes = Math.Min(CprMidiPartNoteScanner.MaximumScanBytes, maxPackedMidiBytes - packedMidiScanBytes);
+            var partBody = bytes.AsSpan(part.Start, part.End - part.Start);
+            if (!eventStreams.TryRead(partBody, archiveFileOffset + part.Start, part.Revision,
+                    10000 - midiNotes.Count, maximumBytes, ct, out var scan))
+                scan = CprMidiPartNoteScanner.Scan(partBody, archiveFileOffset + part.Start,
+                    10000 - midiNotes.Count, maximumBytes, ct, isRif2, excluded);
             packedMidiScanBytes += scan.BytesScanned;
             foreach (var note in scan.Notes)
                 midiNotes.Add(note with
@@ -565,161 +602,6 @@ public sealed class CprStructureInspector : ICprStructureInspector
         return candidate is not null;
     }
 
-    private static bool TryRecord(byte[] bytes, int start, int limit,
-        Dictionary<uint, (string Name, ushort ClassVersion)> names, out string className,
-        out int bodyStart, out int bodyEnd, out ushort classVersion)
-    {
-        className = "";
-        bodyStart = bodyEnd = 0;
-        classVersion = 0;
-        if (start > limit - 4) return false;
-        var firstCode = BigEndian32(bytes, start);
-        if (firstCode is not (0xFFFFFFFEu or 0xFFFFFFFFu) &&
-            (firstCode < 0x80000000u || !names.ContainsKey(firstCode & 0x7FFFFFFFu))) return false;
-        var pending = new List<(uint Id, string Name, ushort ClassVersion)>();
-        var p = start;
-        for (var chain = 0; chain < 16; chain++)
-        {
-            if (p > limit - 4) return false;
-            var marker = BigEndian32(bytes, p);
-            if (marker != 0xFFFFFFFEu) break;
-            p += 4;
-            if (p > limit - 4) return false;
-            var nameCode = BigEndian32(bytes, p);
-            if (nameCode >= 0x80000000u && nameCode is not (0xFFFFFFFEu or 0xFFFFFFFFu))
-            {
-                var id = nameCode & 0x7FFFFFFFu;
-                if (!names.ContainsKey(id) && !pending.Any(v => v.Id == id)) return false;
-                p += 4;
-            }
-            else
-            {
-                if (!TryClassName(bytes, p, limit, out var name, out var next, out var version)) return false;
-                pending.Add(((uint)(p - 4), name, version));
-                p = next;
-            }
-        }
-        if (p > limit - 8) return false;
-        var code = BigEndian32(bytes, p);
-        if (code == 0xFFFFFFFFu)
-        {
-            if (!TryClassName(bytes, p + 4, limit, out className, out var next, out classVersion))
-                return false;
-            pending.Add(((uint)p, className, classVersion)); // name starts at (p + 4), id is relative to ARCH offset +4
-            p = next;
-        }
-        else if (code >= 0x80000000u && code is not (0xFFFFFFFEu or 0xFFFFFFFFu))
-        {
-            var id = code & 0x7FFFFFFFu;
-            if (!names.TryGetValue(id, out var found))
-            {
-                var candidate = pending.FirstOrDefault(v => v.Id == id);
-                if (candidate.Name is null) return false;
-                found = (candidate.Name, candidate.ClassVersion);
-            }
-            className = found.Name;
-            classVersion = found.ClassVersion;
-            p += 4;
-        }
-        else return false;
-        if (p > limit - 4) return false;
-        var size = BigEndian32(bytes, p);
-        bodyStart = p + 4;
-        if (size > limit - bodyStart) return false;
-        bodyEnd = bodyStart + (int)size;
-        foreach (var entry in pending) names[entry.Id] = (entry.Name, entry.ClassVersion);
-        return true;
-    }
-
-    // Cubase RIF2 records use 64-bit base-class/symbol sentinels and
-    // 64-bit body sizes; class-name string lengths remain 32-bit.
-    // This is a structural inventory only, not a full semantic deserializer.
-    private static bool TryRecord64(byte[] bytes, int start, int limit,
-        Dictionary<uint, (string Name, ushort ClassVersion)> names, out string className,
-        out int bodyStart, out int bodyEnd, out ushort classVersion)
-    {
-        className = "";
-        bodyStart = bodyEnd = 0;
-        classVersion = 0;
-        if (start > limit - 8) return false;
-        var firstCode = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(start, 8));
-        if (firstCode != ulong.MaxValue && firstCode != ulong.MaxValue - 1 &&
-            ((firstCode & 0x8000000000000000UL) == 0 ||
-             (firstCode & 0x7FFFFFFFFFFFFFFFUL) > uint.MaxValue ||
-             !names.ContainsKey((uint)(firstCode & 0x7FFFFFFFFFFFFFFFUL)))) return false;
-        var pending = new List<(uint Id, string Name, ushort ClassVersion)>();
-        var p = start;
-        for (var chain = 0; chain < 16; chain++)
-        {
-            if (p > limit - 8 || BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(p, 8)) != ulong.MaxValue - 1)
-                break;
-            p += 8;
-            if (p > limit - 4) return false;
-            var nameCode = BigEndian32(bytes, p);
-            if (nameCode >= 0x80000000u && nameCode is not (0xFFFFFFFEu or 0xFFFFFFFFu))
-            {
-                var id = nameCode & 0x7FFFFFFFu;
-                if (!names.ContainsKey(id) && !pending.Any(v => v.Id == id)) return false;
-                p += 4;
-            }
-            else
-            {
-                if (!TryClassName(bytes, p, limit, out var name, out var next, out var version)) return false;
-                pending.Add(((uint)(p - 8), name, version));
-                p = next;
-            }
-        }
-        if (p > limit - 8) return false;
-        var code = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(p, 8));
-        if (code == ulong.MaxValue)
-        {
-            if (!TryClassName(bytes, p + 8, limit, out className, out var next, out classVersion)) return false;
-            pending.Add(((uint)p, className, classVersion));
-            p = next;
-        }
-        else if ((code & 0x8000000000000000UL) != 0 && code != ulong.MaxValue - 1)
-        {
-            var id = code & 0x7FFFFFFFFFFFFFFFUL;
-            if (id > uint.MaxValue) return false;
-            if (!names.TryGetValue((uint)id, out var found))
-            {
-                var candidate = pending.FirstOrDefault(v => v.Id == (uint)id);
-                if (candidate.Name is null) return false;
-                found = (candidate.Name, candidate.ClassVersion);
-            }
-            className = found.Name;
-            classVersion = found.ClassVersion;
-            p += 8;
-        }
-        else return false;
-        if (p > limit - 8) return false;
-        var rawSize = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(p, 8));
-        bodyStart = p + 8;
-        if (rawSize > (ulong)(limit - bodyStart)) return false;
-        bodyEnd = bodyStart + (int)rawSize;
-        foreach (var entry in pending) names[entry.Id] = (entry.Name, entry.ClassVersion);
-        return true;
-    }
-
-    private static bool TryClassName(byte[] bytes, int p, int end, out string name, out int next,
-        out ushort classVersion)
-    {
-        name = "";
-        next = p;
-        classVersion = 0;
-        if (p > end - 4) return false;
-        var len = BigEndian32(bytes, p);
-        if (len is < 2 or > 100 || len > end - p - 6) return false;
-        var count = (int)len;
-        if (bytes[p + 4 + count - 1] != 0) return false;
-        for (var i = p + 4; i < p + 4 + count - 1; i++)
-            if (bytes[i] is < 32 or > 126) return false;
-        name = Encoding.ASCII.GetString(bytes, p + 4, count - 1);
-        classVersion = BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(p + 4 + count, 2));
-        next = p + 4 + count + 2;
-        return true;
-    }
-
     public static string ToMarkdown(CprStructureReport report)
     {
         var b = new StringBuilder("# CPR structure inventory\n\n");
@@ -759,6 +641,14 @@ public sealed class CprStructureInspector : ICprStructureInspector
                     .AppendLine($"- Class symbols retained: {inventory.SymbolsFound}")
                     .AppendLine($"- Uninterpreted scanned bytes: {inventory.UninterpretedBytes}; partial: {inventory.Partial}");
                 foreach (var reason in inventory.LimitReasons) b.AppendLine("- Limit: " + reason);
+                if (inventory.ClassDeclarations is { Count: > 0 } declarations)
+                {
+                    b.AppendLine().AppendLine("Class declarations (serializer revisions are independent of Cubase release numbers):")
+                        .AppendLine().AppendLine("| Class | Revision | Declaration file offset | Symbol offset |")
+                        .AppendLine("|---|---:|---:|---:|");
+                    foreach (var declaration in declarations)
+                        b.AppendLine($"| {EscapeTable(declaration.ClassName)} | {declaration.ClassVersion} | {declaration.DeclarationFileOffset} | {declaration.SymbolArchiveOffset} |");
+                }
                 b.AppendLine().AppendLine("| Class | Header file offset | Body file offset | Body bytes | Depth | Enclosing header | Class version | Encoding | Class token | Symbol offset | Prefix classes |")
                     .AppendLine("|---|---:|---:|---:|---:|---:|---:|---|---|---:|---|");
                 foreach (var record in inventory.Records)

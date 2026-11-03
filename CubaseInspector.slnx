@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="src/CubaseInspector.Core/CubaseInspector.Core.csproj" />
+  <Project Path="src/CubaseInspector.Infrastructure/CubaseInspector.Infrastructure.csproj" />
+  <Project Path="src/CubaseInspector.Cli/CubaseInspector.Cli.csproj" />
+  <Project Path="src/CubaseInspector.App/CubaseInspector.App/CubaseInspector.App.csproj" />
+  <Project Path="tests/CubaseInspector.Tests/CubaseInspector.Tests.csproj" />
+</Solution>

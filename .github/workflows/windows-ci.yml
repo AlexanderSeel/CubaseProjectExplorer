@@ -1,0 +1,264 @@
+name: Windows validation
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore CubaseInspector.slnx -p:Configuration=Release
+      - name: Test core + parsing
+        run: dotnet test tests/CubaseInspector.Tests/CubaseInspector.Tests.csproj -c Release --no-restore
+      - name: Build CLI
+        run: dotnet build src/CubaseInspector.Cli/CubaseInspector.Cli.csproj -c Release --no-restore
+      - name: Build Uno Desktop
+        run: dotnet build src/CubaseInspector.App/CubaseInspector.App/CubaseInspector.App.csproj -c Release --no-restore
+      - name: Publish standalone Windows CLI
+        shell: pwsh
+        run: |
+          dotnet publish src/CubaseInspector.Cli/CubaseInspector.Cli.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o dist/cli-win-x64
+
+      - name: Real CPR donor smoke test (no fixture redistribution)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $uri = 'https://raw.githubusercontent.com/omeriko9/MyDAW/ee232374b9ce2e6e243a3d29e7afefcfd17f0354/engine/assets/cpr-donor-c5.cpr'
+          $source = Join-Path $env:RUNNER_TEMP 'mydaw-public-cubase5-donor.cpr'
+          Invoke-WebRequest -Uri $uri -OutFile $source
+          if ((Get-Item $source).Length -ne 133463) { throw 'Public donor length changed' }
+          $exe = 'dist/cli-win-x64/CubaseInspector.Cli.exe'
+          $json = (& $exe cpr-structure $source --json) | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "cpr-structure failed: $json" }
+          $parsed = $json | ConvertFrom-Json
+          if ($parsed.Chunks.Count -ne 12) { throw "Expected 12 chunks, got $($parsed.Chunks.Count)" }
+          if ($parsed.Arrangement.ClassCounts.MAudioTrackEvent -ne 7) { throw 'Expected 7 candidate audio records' }
+          $names = @($parsed.Arrangement.TrackHints | ForEach-Object { $_.Name })
+          foreach ($track in 1..7) {
+            if ($names -notcontains "Track$track") { throw "Missing Track$track in donor structure" }
+          }
+          if ($parsed.VersionTextCandidate -notmatch '5\.1\.1') { throw 'Version 5.1.1 not detected' }
+          Write-Host ('External CPR smoke test passed: ' + ($names -join ', '))
+          $read = (& $exe inspect $source --json) | Out-String
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy inspect command must load the real CPR' }
+          $snapshot = $read | ConvertFrom-Json
+          if ($snapshot.Evidence -ne 1) { throw 'CPR data must remain candidate-level, not confirmed' }
+          if ($snapshot.Tracks.Count -ne 7) { throw 'Expected 7 candidate track records in CPR evidence' }
+          foreach ($track in $snapshot.Tracks) {
+            if ($track.Evidence -ne 1) { throw 'Native CPR tracks must remain candidate-level' }
+            if ($null -ne $track.Volume -or $null -ne $track.ChannelId) { throw 'Native CPR channel settings must not be invented' }
+          }
+          # Reuse the public CPR bytes with a .bak extension to verify the full backup
+          # code path without bundling or redistributing any Steinberg project.
+          $backup = Join-Path $env:RUNNER_TEMP 'mydaw-public-donor.bak'
+          Copy-Item -LiteralPath $source -Destination $backup
+          $backupOutput = (& $exe inspect $backup --json) | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "Real CPR-backed .bak failed: $backupOutput" }
+          $backupResult = $backupOutput | ConvertFrom-Json
+          if ($backupResult.Evidence -ne 1 -or $backupResult.Tracks.Count -ne 7) {
+            throw 'Expected candidate-level results for the .bak inspection'
+          }
+          if (-not (($backupResult.Warnings | Out-String) -match 'backup')) {
+            throw 'Crash-backup provenance warning is missing'
+          }
+          Write-Host 'RIFF/NUND .bak donor integration test passed'
+
+      - name: Real Cubase 14 plugin UID/name smoke (external public fixture)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Public MIT-licensed test data from fgimian/cubase-project-plugins,
+          # pinned to one revision; fetched only during CI, never redistributed.
+          $uri = 'https://raw.githubusercontent.com/fgimian/cubase-project-plugins/76fc14f8d2a6feefe839cf11cb371a60f8103f2b/testdata/Example%20Project%20%28Cubase%2014%29.cpr'
+          $source = Join-Path $env:RUNNER_TEMP 'public-cubase14-plugin-metadata.cpr'
+          Invoke-WebRequest -Uri $uri -OutFile $source
+          if ((Get-Item $source).Length -ne 820131) { throw 'Pinned public Cubase 14 test fixture changed' }
+          $exe = 'dist/cli-win-x64/CubaseInspector.Cli.exe'
+          $json = (& $exe inspect $source --json) | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "CPR inspection failed: $json" }
+          $snapshot = $json | ConvertFrom-Json
+          if ($snapshot.Evidence -ne 1) { throw 'Native CPR plugin metadata must remain candidate-only' }
+          $plugins = @($snapshot.Plugins)
+          foreach ($name in @('Sylenth1','Omnisphere','StudioEQ','Hive')) {
+            if (@($plugins | Where-Object { $_.Name -eq $name -and $_.Evidence -eq 1 }).Count -lt 1) {
+              throw "Expected CPR property-token plugin name not decoded: $name"
+            }
+          }
+          if (@($plugins | Where-Object {
+            $_.Evidence -eq 0 -or $_.Format -eq 'VST3'
+          }).Count -gt 0) { throw 'Native CPR candidate plugin must not be upgraded to verified VST3' }
+          Write-Host ('Cubase 14 source plugin metadata decoded: ' +
+            (@($plugins | Select-Object -ExpandProperty Name -Unique) -join ', '))
+
+      - name: Real Cubase 14 full-scan plugin diagnostics smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Join-Path $env:RUNNER_TEMP 'public-cubase14-plugin-metadata.cpr'
+          if (-not (Test-Path $source)) { throw 'Prior Cubase 14 fixture missing' }
+          $exe = 'dist/cli-win-x64/CubaseInspector.Cli.exe'
+          $json = (& $exe cpr-plugins $source --json) | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "cpr-plugins failed: $json" }
+          $report = $json | ConvertFrom-Json
+          if ($report.Partial -or $report.FileBytes -ne $report.ScannedBytes) {
+            throw 'Small public Cubase 14 fixture should be scanned in full'
+          }
+          if ($report.NamedUidTokens -lt 12) {
+            throw "Expected at least 12 named UID observations, got $($report.NamedUidTokens)"
+          }
+          $expected = @($report.Records | Where-Object {
+            $_.Name -eq 'Sylenth1' -and $_.ByteOffset -ge 0
+          })
+          if ($expected.Count -lt 1) { throw 'Diagnostic report did not preserve source offsets' }
+          $csv = (& $exe cpr-plugins $source --csv --unresolved-only) | Out-String
+          if ($LASTEXITCODE -ne 0 -or $csv -notmatch 'FileOffset,StoredUidOrMarker') {
+            throw 'Filtered CSV diagnostic report is unavailable'
+          }
+          Write-Host ('Public Cubase 14 diagnostic smoke passed: ' + $report.NamedUidTokens + ' named candidates')
+
+      - name: Real CPR 13-to-14 candidate UID comparison smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $old = Join-Path $env:RUNNER_TEMP 'public-cubase13-plugin-metadata.cpr'
+          $new = Join-Path $env:RUNNER_TEMP 'public-cubase14-plugin-metadata.cpr'
+          $uri = 'https://raw.githubusercontent.com/fgimian/cubase-project-plugins/76fc14f8d2a6feefe839cf11cb371a60f8103f2b/testdata/Example%20Project%20%28Cubase%2013%29.cpr'
+          Invoke-WebRequest -Uri $uri -OutFile $old
+          if ((Get-Item $old).Length -ne 803328) { throw 'Pinned public Cubase 13 fixture changed' }
+          if ((Get-Item $new).Length -ne 820131) { throw 'Pinned public Cubase 14 fixture missing' }
+          $exe = 'dist/cli-win-x64/CubaseInspector.Cli.exe'
+          $json = (& $exe diff $old $new --json) | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "CPR compare failed: $json" }
+          $report = $json | ConvertFrom-Json
+          if ($null -eq $report.BeforeUids -or $null -eq $report.AfterUids) {
+            throw 'CPR diff must return candidate comparison metadata, not confirmed project state'
+          }
+          if ($report.BeforeUids -lt 5 -or $report.AfterUids -lt 5) {
+            throw 'Unexpectedly few candidate UIDs decoded from real Cubase sample files'
+          }
+          $markdown = (& $exe diff $old $new --markdown) | Out-String
+          if ($LASTEXITCODE -ne 0 -or $markdown -notmatch 'Native CPR candidate UID comparison') {
+            throw 'CPR Markdown comparison report unavailable'
+          }
+          if ($markdown -notmatch 'unverified binary property-token') {
+            throw 'Candidate evidence disclaimer missing from CPR comparison report'
+          }
+          Write-Host "Real CPR comparison passed: Cubase 13 UID count $($report.BeforeUids), Cubase 14 UID count $($report.AfterUids)"
+
+      - name: Private fixture runner smoke with pinned public CPR samples
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $temp = $env:RUNNER_TEMP
+          $samples = @(
+            @{ id = 'cubase5-public'; file = 'mydaw-public-cubase5-donor.cpr'; savedBy = 'Cubase 5.1.1'; expectedChunks = 12; expectedTrackHints = 7 },
+            @{ id = 'cubase13-public'; file = 'public-cubase13-plugin-metadata.cpr'; savedBy = 'Cubase 13' },
+            @{ id = 'cubase14-public'; file = 'public-cubase14-plugin-metadata.cpr'; savedBy = 'Cubase 14' }
+          )
+          $manifest = foreach ($sample in $samples) {
+            $source = Join-Path $temp $sample.file
+            if (-not (Test-Path -LiteralPath $source)) { throw "Missing fixture: $($sample.id)" }
+            $row = @{
+              id = $sample.id
+              file = $sample.file
+              savedBy = $sample.savedBy
+              sha256 = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+              expectedStatus = 'readable'
+            }
+            if ($sample.ContainsKey('expectedChunks')) {
+              $row.expectedChunks = $sample.expectedChunks
+              $row.expectedTrackHints = $sample.expectedTrackHints
+            }
+            $row
+          }
+          # Derive a deliberately truncated-header fixture from the pinned public donor.
+          # Only the private runner temp copy is modified; the source donor remains intact.
+          $invalidName = 'public-cubase5-truncated-header.bak'
+          $invalidPath = Join-Path $temp $invalidName
+          $badBytes = [IO.File]::ReadAllBytes((Join-Path $temp 'mydaw-public-cubase5-donor.cpr'))
+          for ($i = 4; $i -le 7; $i++) { $badBytes[$i] = 255 }
+          [IO.File]::WriteAllBytes($invalidPath, $badBytes)
+          $manifest = @($manifest) + @{
+            id = 'cubase5-corrupt-backup'
+            file = $invalidName
+            sha256 = (Get-FileHash -LiteralPath $invalidPath -Algorithm SHA256).Hash
+            expectedStatus = 'invalid'
+            expectedErrorCode = 'TRUNCATED_CPR'
+          }
+          $path = Join-Path $temp 'public-fixtures-manifest.json'
+          ConvertTo-Json -InputObject @($manifest) -Depth 5 | Set-Content -LiteralPath $path -Encoding utf8
+          & ./scripts/Test-PrivateCprFixtures.ps1 -Manifest $path `
+            -Cli 'dist/cli-win-x64/CubaseInspector.Cli.exe' `
+            -OutputDirectory (Join-Path $temp 'private-fixture-smoke-reports')
+          $reports = Join-Path $temp 'private-fixture-smoke-reports'
+          $result = @(Get-Content -LiteralPath (Join-Path $reports 'fixture-results.json') -Raw | ConvertFrom-Json)
+          if ($result.Count -ne 4 -or @($result | Where-Object Outcome -ne 'Pass').Count -gt 0) {
+            throw 'Fixture runner did not validate all three public Cubase project samples.'
+          }
+          foreach ($entry in @($result | Where-Object ExpectedStatus -eq 'readable')) {
+            $coveragePath = Join-Path $reports $entry.CoverageReport
+            if (-not (Test-Path -LiteralPath $coveragePath)) {
+              throw "Missing field coverage output for $($entry.Id)"
+            }
+            $coverage = Get-Content -LiteralPath $coveragePath -Raw | ConvertFrom-Json
+            # EvidenceLevel.Candidate = 1; ProjectFieldState.Unknown = 3.
+            if ($coverage.Evidence -ne 1 -or $coverage.Fields.Routing -ne 3 -or
+                $coverage.Fields.'Insert slot' -ne 3 -or $coverage.Fields.Tempo -ne 3) {
+              throw "Native CPR field coverage incorrectly claims decoded fields for $($entry.Id)"
+            }
+          }
+
+      - name: Upload standalone CLI (Windows x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: CubaseProjectExplorer-CLI-win-x64
+          path: dist/cli-win-x64/
+          retention-days: 30
+
+      - name: Stage Uno Desktop Windows GUI build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'src/CubaseInspector.App/CubaseInspector.App/bin/Release/net10.0-desktop/win-x64/publish'
+          dotnet publish src/CubaseInspector.App/CubaseInspector.App/CubaseInspector.App.csproj -c Release -f net10.0-desktop -r win-x64 --self-contained true -o $source
+          New-Item -ItemType Directory -Force -Path 'dist/uno-desktop-win-x64' | Out-Null
+          Copy-Item -Path "$source/*" -Destination 'dist/uno-desktop-win-x64' -Recurse -Force
+          Copy-Item 'scripts/Install-CubaseProjectExplorer.ps1' 'dist/uno-desktop-win-x64/Install-CubaseProjectExplorer.ps1'
+          Copy-Item 'docs/INSTALL_WINDOWS.md' 'dist/uno-desktop-win-x64/INSTALL_WINDOWS.md'
+          # This is a PowerShell script, not a native process; a prior CLI run may
+          # leave LASTEXITCODE nonzero even when CheckOnly succeeds. Throwing is fatal
+          # under ErrorActionPreference=Stop, so no LASTEXITCODE check belongs here.
+          & ./scripts/Install-CubaseProjectExplorer.ps1 -PackageDir 'dist/uno-desktop-win-x64' -CheckOnly
+
+      - name: Smoke test user-local install and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = Join-Path $env:LOCALAPPDATA 'Programs/CubaseProjectExplorer-CI'
+          $package = 'dist/uno-desktop-win-x64'
+          if (Test-Path -LiteralPath $target) { throw 'Unexpected existing CI install directory.' }
+          try {
+            & ./scripts/Install-CubaseProjectExplorer.ps1 -PackageDir $package -InstallDir $target
+            if (-not (Test-Path -LiteralPath (Join-Path $target '.cubase-project-explorer-install.txt'))) {
+              throw 'Installer did not write its safety marker.'
+            }
+            if (@(Get-ChildItem -LiteralPath $target -Filter 'CubaseInspector.App.exe' -Recurse -File).Count -ne 1) {
+              throw 'Installed Uno Desktop executable missing.'
+            }
+          }
+          finally {
+            if (Test-Path -LiteralPath (Join-Path $target '.cubase-project-explorer-install.txt')) {
+              & ./scripts/Install-CubaseProjectExplorer.ps1 -InstallDir $target -Uninstall
+            }
+          }
+          if (Test-Path -LiteralPath $target) { throw 'Uninstaller did not remove the app directory.' }
+
+      - name: Upload Uno Desktop build (Windows x64, with user-local installer)
+        uses: actions/upload-artifact@v4
+        with:
+          name: CubaseProjectExplorer-Uno-Desktop-win-x64
+          path: dist/uno-desktop-win-x64/
+          retention-days: 30
+          if-no-files-found: error

@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <ProductVersionMajor>1</ProductVersionMajor>
+    <ProductVersionMinor>0</ProductVersionMinor>
+    <ProductVersionPatch>0</ProductVersionPatch>
+    <ProductVersionRevision>0</ProductVersionRevision>
+    <ProductVersion>$(ProductVersionMajor).$(ProductVersionMinor).$(ProductVersionPatch).$(ProductVersionRevision)</ProductVersion>
+    <ProductDisplayVersion>$(ProductVersionMajor).$(ProductVersionMinor).$(ProductVersionPatch)</ProductDisplayVersion>
+    <Version>$(ProductVersion)</Version>
+    <AssemblyVersion>$(ProductVersion)</AssemblyVersion>
+    <FileVersion>$(ProductVersion)</FileVersion>
+    <InformationalVersion>$(ProductVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+</Project>

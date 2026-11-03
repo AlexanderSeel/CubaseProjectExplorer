@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "uno-material": {
+      "source": "mtmattei/unoplatformskills",
+      "sourceType": "github",
+      "skillPath": "uno-material/SKILL.md",
+      "computedHash": "6825ef9724e7c0689da97478aca22501dfda3b989aea186abea6e63cec492286"
+    }
+  }
+}

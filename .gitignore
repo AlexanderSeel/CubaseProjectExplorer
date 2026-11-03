@@ -1,0 +1,24 @@
+**/bin/
+**/obj/
+**/.build-check/*
+**/__pycache__/
+.vs/
+.vscode/
+TestResults/
+*.user
+*.cpr
+*.dawproject
+*.npr
+*.tmp
+dist/*
+.build-check/*
+**/.build-check/build-app/
+# Source CPR regression files contain private Windows paths and machine identifiers.
+tests/private-fixtures/
+artifacts/
+Cubase15.exe
+# Local IDA exports/databases contain the proprietary executable's code.
+Cubase15.exe.asm
+Cubase15.i64
+Cubase15.idb
+Git-History-Backups/

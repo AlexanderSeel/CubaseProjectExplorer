@@ -176,7 +176,7 @@ public static class ProjectLibraryBrowser
             Tracks = [], Plugins = [], Routing = [], Warnings = [],
             MediaReferences = [], TimelineItems = [], Metadata = null, MidiNotes = [],
             NativeMetadataCandidates = [], NativeMixerObservations = [], EqBands = [], WarpPoints = [],
-            NativeMidiNoteCandidates = [], NativeAudioMediaCandidates = []
+            NativeMidiNoteCandidates = [], NativeAudioMediaCandidates = [], AutomationLanes = []
         };
         return entry with
         {

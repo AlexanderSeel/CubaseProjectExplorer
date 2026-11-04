@@ -32,7 +32,7 @@ public sealed class CprUidCandidateIndexTests
         Assert.Equal(2, index.UniqueUids);
         Assert.Equal(4, index.NamedTokens);
         Assert.Equal(1, index.OffsetOnlyMarkers);
-        var first = Assert.Single(index.Candidates.Where(x => x.Uid == UidA));
+        var first = Assert.Single(index.Candidates, x => x.Uid == UidA);
         Assert.Equal(2, first.ProjectCount);
         Assert.Equal(3, first.TokenOccurrences);
         Assert.True(first.ConflictingNames);

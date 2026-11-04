@@ -13,6 +13,7 @@ public static class StudioIoDiagramBuilder
 {
     public static StudioIoDiagram Build(ProjectSnapshot project)
     {
+        project = ProjectAutomation.Normalize(project);
         var routing = CprSignalFlowPresentation.Create(project);
         var nodes = new Dictionary<string, StudioIoNode>(StringComparer.Ordinal);
         var links = new List<StudioIoLink>();
@@ -168,13 +169,20 @@ public static class StudioIoDiagramBuilder
                  field.Path.Equals("Input Channel ID", StringComparison.OrdinalIgnoreCase) ||
                  field.Path.Equals("Input Port Name", StringComparison.OrdinalIgnoreCase))).ToArray();
             if (inputFields.Length == 0) continue;
-            var device = inputFields.FirstOrDefault(field => field.Path.Equals("Input Device Name", StringComparison.OrdinalIgnoreCase) ||
-                field.Path.Equals("Input Device ID", StringComparison.OrdinalIgnoreCase))?.Value;
-            var port = inputFields.FirstOrDefault(field => field.Path.Equals("Input Port Name", StringComparison.OrdinalIgnoreCase))?.Value;
+            string? Unique(string path)
+            {
+                var values = inputFields.Where(field => field.Path.Equals(path, StringComparison.OrdinalIgnoreCase))
+                    .Select(field => field.Value).Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Distinct(StringComparer.Ordinal).Take(2).ToArray();
+                return values.Length == 1 ? values[0] : null;
+            }
+            var device = Unique("Input Device Name") ?? Unique("Input Device ID");
+            var port = Unique("Input Port Name");
             var label = string.Join(" · ", new[] { device, port }.Where(value => !string.IsNullOrWhiteSpace(value)));
             var id = $"saved-track-input:{observation.ArchiveOffset:X}";
             nodes[id] = new(id, string.IsNullOrWhiteSpace(label) ? $"{owner.Name} · saved input" : label,
-                "Saved track input", "Input assignment values stored in the project; this does not verify that the device is available on this computer.",
+                string.IsNullOrWhiteSpace(label) ? "Unresolved track input" : "Saved track input",
+                "Input assignment values stored in the project; this does not verify that the device is available on this computer.",
                 observation.SourceStream + "/track input", observation.ArchiveOffset,
                 inputFields.Select(FormatField).ToArray(), EvidenceLevel.Candidate);
             links.Add(new(id, TrackNodeId(owner.Id), "Saved track input", observation.SourceStream + "/Input Device and Port fields",

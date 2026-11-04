@@ -281,4 +281,47 @@ public sealed class CprSignalFlowPresentationTests
         var ambiguous = project with { Tracks = [track, track with { Id = "other" }] };
         Assert.DoesNotContain(StudioIoDiagramBuilder.Build(ambiguous).Nodes, node => node.Kind == "Saved track input");
     }
+
+    [Fact]
+    public void TrackConnectionDetailsIncludeEveryDecodedRouteSavedPortAndAudioReference()
+    {
+        var track = new TrackInfo("arr-audio", "Lead vocal", "Audio", null, null, null, null, null,
+            EvidenceLevel.Candidate, "MAudioTrackEvent", 90, SourceEndOffset: 200);
+        var project = Project(
+            Mixer("Vocal channel", 110,
+                new CprNamedRecordValue("InputBusValue", "i64", "12", 120),
+                new CprNamedRecordValue("OutputBusValue", "i64", "42", 130),
+                new CprNamedRecordValue("SendFolder/Slot[0]/Output/Value", "i64", "91", 140),
+                new CprNamedRecordValue("directRoutingFolder/Slot[0]/Output/Value", "i64", "43", 150),
+                new CprNamedRecordValue("Input Device Name", "string", "Studio Interface", 160),
+                new CprNamedRecordValue("Input Port Name", "string", "Mic 2", 170)),
+            Mixer("Input bus", 300, new CprNamedRecordValue("OwnInputBus/Bus UID", "i64", "12", 310)),
+            Mixer("Stereo Out", 400, new CprNamedRecordValue("OwnInputBus/Bus UID", "i64", "42", 410)),
+            Mixer("Reverb", 500, new CprNamedRecordValue("OwnInputBus/Bus UID", "i64", "91", 510)),
+            Mixer("Cue Out", 600, new CprNamedRecordValue("OwnInputBus/Bus UID", "i64", "43", 610))) with
+        {
+            Tracks = [track],
+            NativeAudioMediaCandidates = [new("Audio/Vocal.wav", 180, "Lead vocal", 90, "MAudioEvent")]
+        };
+
+        var connections = TrackConnectionPresentation.ForTrack(project, track);
+
+        Assert.Contains(connections, item => item.Direction == "Input" && item.Endpoint == "Input bus");
+        Assert.Contains(connections, item => item.Direction == "Output" && item.Endpoint == "Stereo Out");
+        Assert.Contains(connections, item => item.Direction == "Send" && item.Endpoint == "Reverb");
+        Assert.Contains(connections, item => item.Direction == "Output" && item.Kind == "Direct output" && item.Endpoint == "Cue Out");
+        Assert.Contains(connections, item => item.Direction == "Input" && item.Endpoint == "Studio Interface · Mic 2");
+        Assert.True(connections.Any(item => item.Direction == "Media" && item.Endpoint == "Audio/Vocal.wav"),
+            string.Join(" | ", connections.Select(item => $"{item.Direction}:{item.Endpoint}:{item.Kind}")));
+        Assert.All(connections, item => Assert.Equal(EvidenceLevel.Candidate, item.Evidence));
+
+        var ambiguous = project with
+        {
+            NativeMixerObservations = [.. project.NativeMixerObservations!, Mixer("Second channel", 120,
+                new CprNamedRecordValue("OutputBusValue", "i64", "42", 125))]
+        };
+        var unresolved = TrackConnectionPresentation.ForTrack(ambiguous, track);
+        Assert.DoesNotContain(unresolved, item => item.Direction == "Output" || item.Direction == "Send");
+        Assert.Contains(unresolved, item => item.Direction == "Media" && item.Endpoint == "Audio/Vocal.wav");
+    }
 }

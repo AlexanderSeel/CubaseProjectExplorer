@@ -27,6 +27,7 @@
     <UnoFeatures>
       Hosting;
       Toolkit;
+      Material;
       Mvvm;
       SkiaRenderer;
       MediaPlayerElement;
@@ -35,7 +36,6 @@
   <ItemGroup>
     <UnoIcon Include="Assets\Icons\cpe_app_icon.png" ForegroundFile="Assets\Icons\icon_foreground_empty.svg" />
     <UnoImage Include="Assets\Icons\cpe_app_icon.png" />
-    <Content Include="Assets\Icons\cpe_app_icon.ico" Link="icon.ico" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Uno.CommunityToolkit.WinUI.UI.Controls.DataGrid" />
     <ProjectReference Include="../../CubaseInspector.Core/CubaseInspector.Core.csproj" />
     <ProjectReference Include="../../CubaseInspector.Infrastructure/CubaseInspector.Infrastructure.csproj" />

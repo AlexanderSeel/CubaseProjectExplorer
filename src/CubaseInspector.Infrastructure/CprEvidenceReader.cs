@@ -136,7 +136,11 @@ public sealed class CprEvidenceReader : IProjectReader
             null, null, null, null, null, EvidenceLevel.Candidate,
             h.RecordClass, h.ArchiveOffset, SourceEndOffset: h.ArchiveEndOffset,
             SourceClassVersion: h.ClassVersion, SourceBodyBytes: h.BodyBytes,
-            SourceClassEncoding: h.ClassEncoding)).ToList();
+            SourceClassEncoding: h.ClassEncoding,
+            CandidateTrackListOffset: h.CandidateTrackListOffset,
+            CandidateTrackListPosition: h.CandidateTrackListPosition,
+            CandidateTrackListObservedCount: h.CandidateTrackListObservedCount,
+            CandidateFolderTrackOffset: h.CandidateFolderTrackOffset)).ToList();
         if (tracks.Count > 0)
             warnings.Add("Candidate CPR track count includes hidden/device carrier records; do not compare it directly with Cubase visible track count.");
         var fieldCandidates = structural.IsSuccess
@@ -156,13 +160,13 @@ public sealed class CprEvidenceReader : IProjectReader
             warnings.Add($"{(nativeMidiNoteCandidates.All(note => note.SourceLayout.StartsWith("RIF2", StringComparison.Ordinal)) ? "RIF2 MIDI note observations" : "Native CPR MIDI note observations")}: {nativeMidiNoteCandidates.Count:N0} candidates from {string.Join(", ", nativeMidiNoteCandidates.Select(note => note.SourceLayout).Distinct())}. Timing units, track/clip ownership and arrangement semantics remain unverified; these are not normalized MIDI notes.");
         if (nativeAudioMediaCandidates is { Count: > 0 })
             warnings.Add($"CPR audio media: {nativeAudioMediaCandidates.Count:N0} file-path token candidate(s) found inside MAudioEvent records nested under audio-track records. Path existence and track/media ownership are unverified.");
-        return Result<ProjectSnapshot>.Ok(new ProjectSnapshot(path, Path.GetFileNameWithoutExtension(path),
+        return Result<ProjectSnapshot>.Ok(ProjectAutomation.Normalize(new ProjectSnapshot(path, Path.GetFileNameWithoutExtension(path),
             "CPR structural evidence (read-only)", version, null, EvidenceLevel.Candidate,
             tracks, plugins, [], warnings,
             NativeMetadataCandidates: fieldCandidates,
             NativeMixerObservations: mixerObservations,
             NativeMidiNoteCandidates: nativeMidiNoteCandidates,
-            NativeAudioMediaCandidates: nativeAudioMediaCandidates));
+            NativeAudioMediaCandidates: nativeAudioMediaCandidates)));
     }
 
     private static IReadOnlyList<CprMixerObservation> ReadNamedRecordMixerStrips(
@@ -187,7 +191,13 @@ public sealed class CprEvidenceReader : IProjectReader
                 .OrderBy(value => value.Path.StartsWith("OwnInputBus/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("RecorderBus/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("OutputBus/", StringComparison.OrdinalIgnoreCase) ||
+<<<<<<< main
                     IsFolderDestination(value.Path) ||
+=======
+                    value.Path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("foldbackSendFolder/", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("directRoutingFolder/", StringComparison.OrdinalIgnoreCase) ||
+>>>>>>> origin/main
                     value.Path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("InputBusValue/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase) ||

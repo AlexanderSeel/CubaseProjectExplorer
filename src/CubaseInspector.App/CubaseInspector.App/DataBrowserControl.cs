@@ -16,6 +16,10 @@ internal sealed record DataBrowserColumn<T>(string Header, string SortKey,
 /// <summary>Shared, virtualized table/card browser for indexed project and media records.</summary>
 internal sealed class DataBrowserControl<T> : Grid where T : class
 {
+    private static readonly ResourceDictionary MaterialPalette = new()
+    {
+        Source = new Uri("ms-appx:///Styles/ColorPaletteOverride.xaml")
+    };
     private readonly IReadOnlyList<DataBrowserColumn<T>> _columns;
     private readonly Func<T, string, string> _groupKey;
     private readonly Action<string> _groupChanged;
@@ -41,6 +45,8 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
     private bool _updating;
     private T? _selectedItem;
     private int _cardPageStart;
+    private readonly double _minimumRowsHeight;
+    private readonly double _maximumRowsHeight;
 
     // Bound realized cards so changing views does not construct an entire large library at once.
     private const int CardPageSize = 32;
@@ -60,11 +66,12 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
         _groupChanged = groupChanged;
         _activate = activate;
         _contextMenu = contextMenu;
+        _minimumRowsHeight = minimumRowsHeight;
+        _maximumRowsHeight = maximumRowsHeight;
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-        var toolbar = new Grid { ColumnSpacing = 10, Padding = new Thickness(10, 6),
-            Background = (Brush)Application.Current.Resources["InspectorSurfaceBrush"] };
+        var toolbar = new Grid { ColumnSpacing = 8 };
         toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -74,7 +81,7 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
         AutomationProperties.SetName(groupLabel, "Group results");
         toolbar.Children.Add(groupLabel);
         _groupPicker = new ComboBox { ItemsSource = groupModes, SelectedItem = initialGroupMode,
-            MinWidth = 140, MaxWidth = 210, VerticalAlignment = VerticalAlignment.Center,
+            MinWidth = 120, MaxWidth = 190, VerticalAlignment = VerticalAlignment.Center,
             Style = (Style)Application.Current.Resources["InspectorFilterComboBoxStyle"] };
         _groupPicker.SelectionChanged += (_, _) =>
         {
@@ -88,8 +95,8 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
         Grid.SetColumn(_groupPicker, 1);
         toolbar.Children.Add(_groupPicker);
         var viewButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        _tableButton = new Button { Content = "Details", MinWidth = 76, IsEnabled = false,
-            Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
+        _tableButton = new Button { Content = "Details", MinWidth = 76,
+            Style = (Style)Application.Current.Resources["InspectorSelectedButtonStyle"] };
         _cardsButton = new Button { Content = "Cards", MinWidth = 76,
             Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
         AutomationProperties.SetName(_tableButton, "Show sortable details grid");
@@ -109,8 +116,10 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
             VerticalAlignment = VerticalAlignment.Center,
             Visibility = Visibility.Collapsed
         };
-        _previousCardPage = new Button { Content = "Previous", MinWidth = 72, IsEnabled = false };
-        _nextCardPage = new Button { Content = "Next", MinWidth = 64, IsEnabled = false };
+        _previousCardPage = new Button { Content = "Previous", MinWidth = 72, IsEnabled = false,
+            Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
+        _nextCardPage = new Button { Content = "Next", MinWidth = 64, IsEnabled = false,
+            Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
         _cardPageLabel = new TextBlock { VerticalAlignment = VerticalAlignment.Center, FontSize = 11 };
         AutomationProperties.SetName(_previousCardPage, "Previous cards page");
         AutomationProperties.SetName(_nextCardPage, "Next cards page");
@@ -121,8 +130,7 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
         _cardPager.Children.Add(_nextCardPage);
         Grid.SetColumn(_cardPager, 3);
         toolbar.Children.Add(_cardPager);
-        Children.Add(new Border { BorderBrush = (Brush)Application.Current.Resources["InspectorDividerBrush"],
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+        Children.Add(new Border {
             Visibility = showToolbar ? Visibility.Visible : Visibility.Collapsed,
             Margin = new Thickness(0, 0, 0, 8), Child = toolbar });
 
@@ -133,8 +141,9 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
             CanUserResizeColumns = true,
             CanUserReorderColumns = true,
             IsReadOnly = true,
-            RowHeight = 34,
-            ColumnHeaderHeight = 36,
+            RowHeight = 42,
+            ColumnHeaderHeight = 44,
+            FontSize = 13,
             Background = (Brush)Application.Current.Resources["InspectorSurfaceBrush"],
             BorderBrush = (Brush)Application.Current.Resources["InspectorDividerBrush"],
             BorderThickness = new Thickness(1),
@@ -142,7 +151,7 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
             HeadersVisibility = DataGridHeadersVisibility.Column,
             GridLinesVisibility = DataGridGridLinesVisibility.Horizontal,
             ItemsSource = _rows,
-            MinHeight = minimumRowsHeight,
+            MinHeight = 0,
             MaxHeight = maximumRowsHeight
         };
         var headerStyle = new Style(typeof(CommunityToolkit.WinUI.UI.Controls.Primitives.DataGridColumnHeader));
@@ -150,6 +159,23 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
         headerStyle.Setters.Add(new Setter(Control.ForegroundProperty, Application.Current.Resources["InspectorTextSecondaryBrush"]));
         headerStyle.Setters.Add(new Setter(Control.FontSizeProperty, 12d));
         _grid.ColumnHeaderStyle = headerStyle;
+        // The toolkit header/selection visual states use their own theme keys.
+        // Map those states to the same Material roles as the surrounding cards.
+        foreach (var theme in new[] { "Light", "Dark" })
+        {
+            var palette = (ResourceDictionary)MaterialPalette.ThemeDictionaries[theme];
+            var surface = (Color)palette["SurfaceColor"];
+            var resources = new ResourceDictionary
+            {
+                ["DataGridColumnHeaderBackgroundColor"] = surface,
+                ["DataGridColumnHeaderBackgroundBrush"] = new SolidColorBrush(surface),
+                ["DataGridColumnHeaderForegroundBrush"] = new SolidColorBrush((Color)palette["OnSurfaceVariantColor"])
+            };
+            foreach (var key in new[] { "DataGridRowSelectedBackgroundColor", "DataGridRowSelectedHoveredBackgroundColor",
+                         "DataGridRowSelectedUnfocusedBackgroundColor", "DataGridRowSelectedHoveredUnfocusedBackgroundColor" })
+                resources[key] = palette["SecondaryContainerColor"];
+            _grid.Resources.ThemeDictionaries[theme] = resources;
+        }
         AutomationProperties.SetName(_grid, "Sortable results grid. Select a group heading to collapse or expand it.");
         for (var index = 0; index < columns.Count; index++)
         {
@@ -179,7 +205,7 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
             SelectionMode = ListViewSelectionMode.Single,
             IsItemClickEnabled = false,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            MinHeight = minimumRowsHeight,
+            MinHeight = 0,
             MaxHeight = maximumRowsHeight,
             ItemTemplate = cardTemplate ?? BuildCardTemplate(columns.Count)
         };
@@ -210,14 +236,14 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
     {
         var border = new Border
         {
-            Width = 260,
+            Width = 300,
             MinHeight = 112,
-            Margin = new Thickness(5),
+            Margin = new Thickness(7),
             Padding = new Thickness(14),
             Background = (Brush)Application.Current.Resources["InspectorSurfaceBrush"],
             BorderBrush = (Brush)Application.Current.Resources["InspectorDividerBrush"],
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6)
+            CornerRadius = new CornerRadius(8)
         };
         var stack = new StackPanel { Spacing = 6 };
         for (var index = 0; index < Math.Min(columnCount, 4); index++)
@@ -225,7 +251,7 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
             var text = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis,
                 TextWrapping = index == 0 ? TextWrapping.NoWrap : TextWrapping.Wrap,
                 FontWeight = index == 0 ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal,
-                FontSize = index == 0 ? 14 : 11 };
+                FontSize = index == 0 ? 16 : 12 };
             text.SetBinding(TextBlock.TextProperty, new Binding { Path = new PropertyPath($"Value{index}") });
             stack.Children.Add(text);
         }
@@ -270,9 +296,9 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
         _updating = true;
         _grid.Visibility = cards ? Visibility.Collapsed : Visibility.Visible;
         _cards.Visibility = cards ? Visibility.Visible : Visibility.Collapsed;
-        _cardPager.Visibility = cards ? Visibility.Visible : Visibility.Collapsed;
-        _tableButton.IsEnabled = cards;
-        _cardsButton.IsEnabled = !cards;
+        _cardPager.Visibility = cards && _rows.Count > CardPageSize ? Visibility.Visible : Visibility.Collapsed;
+        _tableButton.Style = (Style)Application.Current.Resources[cards ? "InspectorCommandButtonStyle" : "InspectorSelectedButtonStyle"];
+        _cardsButton.Style = (Style)Application.Current.Resources[cards ? "InspectorSelectedButtonStyle" : "InspectorCommandButtonStyle"];
         _grid.SelectedItem = cards ? null : row;
         RefreshCardPage(row);
         _updating = false;
@@ -297,6 +323,8 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
             _cardPage.Add(_rows[index]);
 
         _cards.SelectedItem = selectedRow is not null && _cardPage.Contains(selectedRow) ? selectedRow : null;
+        _cardPager.Visibility = _cards.Visibility == Visibility.Visible && _rows.Count > CardPageSize
+            ? Visibility.Visible : Visibility.Collapsed;
         var pageCount = Math.Max(1, (_rows.Count + CardPageSize - 1) / CardPageSize);
         var pageNumber = _rows.Count == 0 ? 0 : _cardPageStart / CardPageSize + 1;
         _cardPageLabel.Text = _rows.Count == 0
@@ -322,6 +350,15 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
         }
         else _cards.SelectedItem = null;
         _updating = false;
+    }
+
+    internal async Task<bool> ActivateFirstAsync(Func<T, bool> predicate)
+    {
+        var item = _source.FirstOrDefault(predicate);
+        if (item is null) return false;
+        SelectItem(item);
+        await _activate(item);
+        return true;
     }
 
     private void RefreshRows()
@@ -371,6 +408,9 @@ internal sealed class DataBrowserControl<T> : Grid where T : class
         else if (_cardPageStart >= _rows.Count)
             _cardPageStart = _rows.Count == 0 ? 0 : (_rows.Count - 1) / CardPageSize * CardPageSize;
         _grid.SelectedItem = _grid.Visibility == Visibility.Visible ? selectedRow : null;
+        var contentHeight = _grid.ColumnHeaderHeight + _grid.RowHeight * _rows.Count + 2;
+        _grid.MinHeight = Math.Min(_minimumRowsHeight, contentHeight);
+        _grid.Height = Math.Min(_maximumRowsHeight, contentHeight);
         RefreshCardPage(selectedRow);
         _selectedItem = oldSelection;
         _updating = false;

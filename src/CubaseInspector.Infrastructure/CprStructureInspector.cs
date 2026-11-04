@@ -182,7 +182,24 @@ public sealed class CprStructureInspector : ICprStructureInspector
                             archiveData, payloadOffset, size, isRif2, ct,
                             MaxInventoryRecords - inventoryDetails, MaxRecords - inventoryRecords,
                             MaxInventoryRanges - inventoryRanges, MaxRecords - inventorySymbols);
+<<<<<<< main
                         inventory = AttachBinaryFields(inventory, archiveData, ref rawFieldsRetained, ct);
+=======
+                        var midiEventRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiEvent");
+                        var midiNoteRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiNote");
+                        var typedNotePrefixes = new CprMidiEventPrefixReader(
+                            inventory.Records.ToDictionary(record => record.HeaderFileOffset),
+                            payloadOffset, isRif2, inventory.ClassDeclarations);
+                        inventory = inventory with
+                        {
+                            Records = inventory.Records.Select(record => record with
+                            {
+                                RawFields = CprBinaryFieldCandidateDecoder.ReadWithContext(record, archiveData, payloadOffset,
+                                    midiEventRevision?.RevisionAt(record.BodyFileOffset),
+                                    midiNoteRevision?.RevisionAt(record.BodyFileOffset), typedNotePrefixes)
+                            }).ToArray()
+                        };
+>>>>>>> origin/main
                         inventories.Add(inventory);
                         archiveInventory = inventory;
                         inventoryBytes += count;
@@ -271,17 +288,44 @@ public sealed class CprStructureInspector : ICprStructureInspector
         if (inventory is null || inventory.Records.Count == 0) return arrangement;
         var byOffset = inventory.Records.GroupBy(record => record.HeaderFileOffset)
             .ToDictionary(group => group.Key, group => group.First());
+        var trackListChildren = inventory.Records
+            .Where(record => record.ParentHeaderFileOffset is not null &&
+                CprTrackRecordKinds.IsTrackRecord(record.ClassName))
+            .GroupBy(record => record.ParentHeaderFileOffset!.Value)
+            .ToDictionary(group => group.Key,
+                group => group.OrderBy(record => record.HeaderFileOffset).ToArray());
         var hints = arrangement.TrackHints.Select(hint =>
         {
             if (!byOffset.TryGetValue(hint.ArchiveOffset, out var record) ||
                 !string.Equals(record.ClassName, hint.RecordClass, StringComparison.Ordinal))
                 return hint;
-            return hint with
+            var updated = hint with
             {
                 ClassVersion = record.ClassVersion,
                 BodyBytes = record.BodyBytes,
                 ClassEncoding = record.ClassEncoding
             };
+            if (record.ParentHeaderFileOffset is not long parentOffset ||
+                !byOffset.TryGetValue(parentOffset, out var parent) || parent.ClassName != "MTrackList")
+                return updated;
+
+            updated = updated with { CandidateTrackListOffset = parent.HeaderFileOffset };
+            if (parent.ParentHeaderFileOffset is long listOwnerOffset &&
+                byOffset.TryGetValue(listOwnerOffset, out var listOwner) &&
+                listOwner.ClassName == "MFolderTrack")
+                updated = updated with { CandidateFolderTrackOffset = listOwner.HeaderFileOffset };
+            if (!inventory.Partial && inventory.RecordsFound == inventory.Records.Count &&
+                trackListChildren.TryGetValue(parent.HeaderFileOffset, out var siblings))
+            {
+                var position = Array.FindIndex(siblings, sibling => sibling.HeaderFileOffset == record.HeaderFileOffset);
+                if (position >= 0)
+                    updated = updated with
+                    {
+                        CandidateTrackListPosition = position,
+                        CandidateTrackListObservedCount = siblings.Length
+                    };
+            }
+            return updated;
         }).ToArray();
         return arrangement with { TrackHints = hints };
     }
@@ -366,6 +410,9 @@ public sealed class CprStructureInspector : ICprStructureInspector
         var limits = new HashSet<string>(StringComparer.Ordinal);
         var eventEvidence = CprClassRevisionEvidence.Find(archiveInventory?.ClassDeclarations, "MMidiEvent");
         var noteEvidence = CprClassRevisionEvidence.Find(archiveInventory?.ClassDeclarations, "MMidiNote");
+        var typedPrefixes = new CprMidiEventPrefixReader(
+            (archiveInventory?.Records ?? []).ToDictionary(record => record.HeaderFileOffset),
+            archiveFileOffset, isRif2, archiveInventory?.ClassDeclarations);
         var declarationScanEnd = archiveInventory is null ? archiveFileOffset :
             archiveInventory.PayloadFileOffset + archiveInventory.BytesScanned;
         if (bytes.Length < size) limits.Add("128 MiB arrangement byte limit");
@@ -397,6 +444,13 @@ public sealed class CprStructureInspector : ICprStructureInspector
                 var classVersion64 = header.Version;
                 counts[name] = counts.GetValueOrDefault(name) + 1;
                 total++;
+                if (name == "CmString")
+                {
+                    // String bytes are opaque values, not arrangement events.
+                    // The separate raw inventory still retains their evidence.
+                    position = bodyEnd;
+                    continue;
+                }
                 if (name == "MMidiNote")
                 {
                     midiRecordRanges.Add(new CprUninterpretedRange(archiveFileOffset + position, bodyEnd - position));
@@ -407,13 +461,27 @@ public sealed class CprStructureInspector : ICprStructureInspector
                         limits.Add($"MMidiNote serializer revision {classVersion64} was retained as a raw record; this reader only interprets the Cubase 15 revision 1 note layout.");
                     if (bodyEnd > bodyStart && (eventRevision != 2 || noteRevision != 1))
                         limits.Add("MMidiNote body was retained without musical interpretation: inherited MMidiEvent or named MMidiNote revisions are missing, conflicting, unsupported or outside the scanned declaration context; modern observations require explicit revisions 2 and 1 available before the body.");
-                    if (classVersion64 == 1 && eventRevision == 2 && noteRevision == 1 &&
-                        CprMidiPartNoteScanner.TryReadRecord(bytes.AsSpan(bodyStart, bodyEnd - bodyStart), archiveFileOffset + bodyStart, isRif2,
-                            out var noteCandidate, classVersion64, eventRevision))
+                    if (bodyEnd > bodyStart && midiNotes.Count >= 10000)
+                        limits.Add("10,000 MIDI note candidate limit");
+                    else if (bodyEnd > bodyStart && classVersion64 == 1 && eventRevision == 2 && noteRevision == 1)
                     {
-                        if (midiNotes.Count < 10000) midiNotes.Add(WithContext(noteCandidate));
-                        else limits.Add("10,000 MIDI note candidate limit");
+                        var body = bytes.AsSpan(bodyStart, bodyEnd - bodyStart);
+                        if (CprMidiNoteLayout.TryLocate(body, 2, 1, archiveFileOffset + bodyStart,
+                                typedPrefixes, out var layout, out var failure))
+                        {
+                            if (CprMidiPartNoteScanner.TryReadFramedModernFields(body, archiveFileOffset + bodyStart,
+                                    isRif2, layout.TailOffset, out var noteCandidate, layout.SkippedObject))
+                            {
+                                midiNotes.Add(WithContext(noteCandidate));
+                            }
+                        }
+                        else if (failure is not null && limits.Count < 512) limits.Add(failure);
                     }
+                    // A note's nested score/curve objects are attribute values,
+                    // not standalone arrangement events. Preserve their raw
+                    // inventory, but never scan their bytes for more notes.
+                    position = bodyEnd;
+                    continue;
                 }
                 if (name == "MMidiPart")
                 {
@@ -536,7 +604,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
                     CandidateTrackOffset = part.Track is int ownerIndex ? hints[ownerIndex].ArchiveOffset : null,
                     CandidatePartOffset = archiveFileOffset + part.Header
                 });
-            if (scan.Partial) limits.Add("Packed MIDI byte/note scan budget reached; part observations are partial");
+            if (scan.Partial) limits.Add(scan.LimitReason ?? "Packed MIDI part observations are partial.");
         }
         return new CprArchiveSummary(stream, size, bytes.Length,
             total, limits.Count > 0, counts, hints, midiNotes.OrderBy(note => note.FileOffset).ToArray(), audioMediaCandidates, limits.ToArray());
@@ -704,13 +772,17 @@ public sealed class CprStructureInspector : ICprStructureInspector
             foreach (var entry in report.Arrangement.ClassCounts)
                 b.AppendLine("| " + entry.Key + " | " + entry.Value + " |");
             b.AppendLine().AppendLine("### Track and lane class instances")
-                .AppendLine("The class name matches a type used by Cubase serialization code. Names and visible-track hierarchy come from bounded containment and are not guaranteed.")
-                .AppendLine("| Kind | Record class | Observed name | ARCH-relative offset | Name source |")
-                .AppendLine("|---|---|---|---:|---|");
+                .AppendLine("The class name matches a type used by Cubase serialization code. Names and visible-track hierarchy come from bounded containment and are not guaranteed. Track-list positions are candidate ordinals among recognized track-class children only.")
+                .AppendLine("| Kind | Record class | Observed name | ARCH-relative offset | Candidate MTrackList offset | Candidate MFolderTrack list owner | Candidate known-child position | Name source |")
+                .AppendLine("|---|---|---|---:|---:|---:|---:|---|");
             foreach (var hint in report.Arrangement.TrackHints)
                 b.AppendLine("| " + (CprTrackRecordKinds.KindFor(hint.RecordClass) ?? "Unknown") + " | " + hint.RecordClass + " | " +
                     (hint.Name?.Replace("|", "\\|").Replace("\r", " ").Replace("\n", " ") ?? "Unknown") +
-                    " | " + hint.ArchiveOffset + " | " + EscapeTable(hint.NameSource ?? "Unknown source") + " |");
+                    " | " + hint.ArchiveOffset + " | " + (hint.CandidateTrackListOffset?.ToString() ?? "") + " | " +
+                    (hint.CandidateFolderTrackOffset?.ToString() ?? "") + " | " +
+                    (hint.CandidateTrackListPosition is int position && hint.CandidateTrackListObservedCount is int count
+                        ? $"{position + 1} of {count} observed" : "") + " | " +
+                    EscapeTable(hint.NameSource ?? "Unknown source") + " |");
         }
         if (report.Arrangement?.MidiNoteCandidates is { Count: > 0 } midiNotes)
         {

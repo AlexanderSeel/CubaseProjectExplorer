@@ -80,7 +80,7 @@ public sealed partial class ProjectWorkspaceViewModel : ObservableObject
         Tracks.Clear(); Plugins.Clear(); Routes.Clear(); Media.Clear();
         if (value is not null)
         {
-            foreach (var item in value.Tracks) Tracks.Add(item);
+            foreach (var item in ProjectAutomation.Normalize(value).Tracks) Tracks.Add(item);
             foreach (var item in value.Plugins) Plugins.Add(item);
             foreach (var item in value.Routing) Routes.Add(item);
             foreach (var item in value.MediaReferences ?? []) Media.Add(item);

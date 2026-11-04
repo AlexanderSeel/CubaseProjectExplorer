@@ -35,7 +35,7 @@ public sealed class PluginComparisonTests
         var changes = new ProjectDiff().Compare(
             Snapshot(Plugin("old", "Delay", 1)),
             Snapshot(Plugin("new", "Reverb", 1)));
-        var c = Assert.Single(changes.Where(c => c.Category == "Plugin"));
+        var c = Assert.Single(changes, c => c.Category == "Plugin");
         Assert.Equal("Slot content", c.Property);
         Assert.Contains("Delay", c.Before);
         Assert.Contains("Reverb", c.After);

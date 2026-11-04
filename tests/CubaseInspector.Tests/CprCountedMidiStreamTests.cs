@@ -71,6 +71,7 @@ public sealed class CprCountedMidiStreamTests
 
     private sealed record PartStream(byte[] Bytes, int EventOffset);
 
+<<<<<<< main
     private static byte[] ScalarEvent(byte status, ushort attributeType = 0) =>
         Event(status, attributeType: attributeType)[..(18 + (attributeType == 0 ? 0 : 14))];
 
@@ -78,6 +79,21 @@ public sealed class CprCountedMidiStreamTests
         ushort attributeType = 0) =>
         Join(ScalarEvent(0xF0, attributeType), Number(unchecked((uint)(declaredBytes ?? payload.Length))),
             Number(secondWord), payload);
+=======
+    private static byte[] NestedEvent(byte[] value, byte status = 0x90, ushort flags = 0x22, uint id = 0x53634172)
+    {
+        var note = Event(status, position: 120.5, duration: 240.25, pitch: 61, velocity: 100);
+        var header = note[..18];
+        BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(14), 2);
+        var type = new byte[2];
+        BinaryPrimitives.WriteUInt16BigEndian(type, flags);
+        // A second scalar follows the variable object. Its exact boundary
+        // must be found before locating the three-double note suffix.
+        var scalar = Event(attributeType: 4)[18..32];
+        return Join(header, Number(id), type, value, scalar,
+            status is 0x80 or 0x90 ? note[^25..] : []);
+    }
+>>>>>>> origin/main
 
     private static PartStream Stream(bool wide, byte[][] events, int? count = null,
         byte[]? declarations = null, byte declarationCount = 1, uint timebaseKind = 0)
@@ -185,8 +201,8 @@ public sealed class CprCountedMidiStreamTests
             Stream(wide, [good], count: 2),
             Stream(wide, [good[..^1]]),
             Stream(wide, [Event(0x91)]),
-            Stream(wide, [good, Event(0x91)]),
-            Stream(wide, [Event(attributeType: 8)]),
+            // Plain flag 8 with an 8-byte null is now valid RIF2 CmString framing.
+            Stream(wide, [Event(attributeType: 0x108)]),
             Stream(wide, [good], declarationCount: 0xFF),
             Stream(wide, [good], declarations: [], declarationCount: 0),
             Stream(wide, [good], timebaseKind: 16),
@@ -201,6 +217,637 @@ public sealed class CprCountedMidiStreamTests
                 return Task.CompletedTask;
             });
         }
+
+        var interrupted = Project(wide, Stream(wide, [good, Event(0x91), Event()]));
+        await WithProject(interrupted, (_, report) =>
+        {
+            var arrangement = report.Arrangement!;
+            Assert.Single(arrangement.MidiNoteCandidates!);
+            Assert.True(arrangement.Partial);
+            Assert.Contains(arrangement.LimitReasons!, reason => reason.Contains("unsupported packed MIDI event discriminator 0x91", StringComparison.OrdinalIgnoreCase));
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NestedAttributeStopsBeforeInferringLaterNoteOrAttributeBoundaries(bool wide)
+    {
+        var nested = Event(attributeType: 0x22);
+        Encoding.ASCII.GetBytes("ScAr").CopyTo(nested, 18);
+        Number(0x123456, wide).CopyTo(nested, 24);
+        var project = Project(wide, Stream(wide, [Event(), nested, Event(pitch: 99)]));
+        await WithProject(project, (_, report) =>
+        {
+            var arrangement = report.Arrangement!;
+            Assert.True(arrangement.Partial);
+            Assert.Empty(arrangement.MidiNoteCandidates!);
+            Assert.Contains(arrangement.LimitReasons!, reason => reason.Contains("Attribute ID 0x53634172, flags 0x0022") &&
+                reason.Contains("nested CmObject") && reason.Contains("no later attribute boundary was inferred"));
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FramedScoreAttributesStayOpaqueAndPreserveFollowingScalarAndNotes(bool wide)
+    {
+        var payload = Event(pitch: 99, attributeType: 1);
+        var packet = NestedEvent(Record("CmAttribCollection", 0, payload, wide));
+        var project = Project(wide, Stream(wide, [packet, Event(pitch: 62)]));
+        await WithProject(project, async (path, report) =>
+        {
+            var notes = report.Arrangement!.MidiNoteCandidates!;
+            Assert.False(report.Arrangement.Partial);
+            Assert.Equal(new[] { 61, 62 }, notes.Select(note => note.MidiPitch));
+            Assert.Equal(120.5, notes[0].PositionTicks);
+            Assert.Equal(240.25, notes[0].DurationTicks);
+            Assert.Equal(project.FirstEventOffset + packet.Length, notes[1].FileOffset);
+            Assert.Contains("attributes were not applied", notes[0].Evidence);
+            var snapshot = (await new CprEvidenceReader().ReadAsync(path)).Value!;
+            Assert.Equal(2, snapshot.NativeMidiNoteCandidates!.Count);
+            return;
+        });
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 0)]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    [InlineData(false, 2)]
+    [InlineData(true, 2)]
+    public async Task StringAttributeInlineNullAndEarlierReferencesPreserveFollowingFields(bool wide, int kind)
+    {
+        var payload = Event(pitch: 99, attributeType: 1);
+        var earlier = Record("CmString", 0, payload, wide);
+        var id = (ulong)(earlier.Length - payload.Length - (wide ? 8 : 4));
+        var value = kind switch { 1 => Number(0, wide), 2 => Number(id, wide), _ => earlier };
+        var packet = NestedEvent(value, flags: 8, id: 0x74657874);
+        var project = Project(wide, Stream(wide, [packet, Event(pitch: 62)]), before: kind == 2 ? earlier : []);
+        await WithProject(project, async (path, report) =>
+        {
+            Assert.False(report.Arrangement!.Partial);
+            var notes = report.Arrangement.MidiNoteCandidates!;
+            Assert.Equal(new[] { 61, 62 }, notes.Select(note => note.MidiPitch));
+            Assert.Equal(120.5, notes[0].PositionTicks);
+            Assert.Equal(240.25, notes[0].DurationTicks);
+            Assert.Equal(project.FirstEventOffset + packet.Length, notes[1].FileOffset);
+            Assert.Contains("attributes were not applied", notes[0].Evidence);
+            Assert.Equal(2, (await new CprEvidenceReader().ReadAsync(path)).Value!.NativeMidiNoteCandidates!.Count);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TypedNoteLikeBytesInsideAStringCannotBecomeAnArrangementEvent(bool wide)
+    {
+        var payload = Record("MMidiNote", 1, Event(pitch: 99)[1..], wide);
+        var packet = NestedEvent(Record("CmString", 0, payload, wide), flags: 8, id: 0x74657874);
+        var project = Project(wide, Stream(wide, [packet, Event(pitch: 62)]));
+        await WithProject(project, (_, report) =>
+        {
+            Assert.False(report.Arrangement!.Partial);
+            Assert.Equal(new[] { 61, 62 }, report.Arrangement.MidiNoteCandidates!.Select(note => note.MidiPitch));
+            Assert.Contains(report.ArchiveInventories!.SelectMany(i => i.Records),
+                record => record.ClassName == "MMidiNote" && record.BodyBytes > 0);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnknownStringFlagsClassesRevisionsLengthsAndReferencesStayOpaque(bool wide)
+    {
+        var payload = Event(pitch: 99, attributeType: 1);
+        var value = Record("CmString", 0, payload, wide);
+        var wrongLength = value.ToArray();
+        Number(100000, wide).CopyTo(wrongLength, wrongLength.Length - payload.Length - (wide ? 8 : 4));
+        var cases = new[]
+        {
+            NestedEvent(Record("CmString", 1, payload, wide), flags: 8),
+            NestedEvent(Record("OtherString", 0, payload, wide), flags: 8),
+            NestedEvent(value, flags: 0x28), NestedEvent(value, flags: 0x108),
+            NestedEvent(value, flags: 8, id: 0x01020304),
+            NestedEvent(wrongLength, flags: 8), NestedEvent(Number(123456, wide), flags: 8)
+        };
+        foreach (var packet in cases)
+        {
+            var project = Project(wide, Stream(wide, [packet, Event(pitch: 62)]));
+            await WithProject(project, (_, report) =>
+            {
+                Assert.True(report.Arrangement!.Partial);
+                Assert.Empty(report.Arrangement.MidiNoteCandidates!);
+                Assert.Contains(report.Arrangement.LimitReasons!, reason => reason.Contains("Attribute ID"));
+                return Task.CompletedTask;
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScoreAttributeNullAndEarlierCollectionReferencesHaveModeWidth(bool wide)
+    {
+        var payload = Event(pitch: 99, attributeType: 1);
+        var earlier = Record("CmAttribCollection", 0, payload, wide);
+        var id = (ulong)(earlier.Length - payload.Length - (wide ? 8 : 4));
+        var project = Project(wide, Stream(wide, [NestedEvent(Number(0, wide)), NestedEvent(Number(id, wide)), Event()]),
+            before: earlier);
+        await WithProject(project, (_, report) =>
+        {
+            Assert.False(report.Arrangement!.Partial);
+            Assert.Equal(3, report.Arrangement.MidiNoteCandidates!.Count);
+            Assert.DoesNotContain(report.Arrangement.MidiNoteCandidates!, note => note.MidiPitch == 99);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NestedCollectionsCanBeSkippedInSupportedNonNoteEvents(bool wide)
+    {
+        var packet = NestedEvent(Record("CmAttribCollection", 0, Event(pitch: 99, attributeType: 1), wide), 0xB0);
+        var declarations = Join(Declarations(wide), Record("MMidiController", 0, [], wide));
+        var project = Project(wide, Stream(wide, [packet, Event(pitch: 62)], declarations: declarations, declarationCount: 2));
+        await WithProject(project, (_, report) =>
+        {
+            Assert.False(report.Arrangement!.Partial);
+            Assert.Equal(62, Assert.Single(report.Arrangement.MidiNoteCandidates!).MidiPitch);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BezierAttributeUsesExplicitBaseRevisionAndOpaqueFramedBody(bool wide)
+    {
+        var body = Event(pitch: 99, attributeType: 1);
+        var prefix = Join(Number((wide ? ulong.MaxValue : uint.MaxValue) - 1, wide), ClassName("MParamEventCurveBase", 0));
+        var curve = Join(prefix, Record("MParamEventCurveRationalBezier", 0, body, wide));
+        var project = Project(wide, Stream(wide, [NestedEvent(curve, flags: 2, id: 0x624F7563), Event(pitch: 62)]));
+        await WithProject(project, (_, report) =>
+        {
+            Assert.False(report.Arrangement!.Partial);
+            Assert.Equal(new[] { 61, 62 }, report.Arrangement.MidiNoteCandidates!.Select(note => note.MidiPitch));
+            Assert.Contains("attributes were not applied", report.Arrangement.MidiNoteCandidates![0].Evidence);
+            return Task.CompletedTask;
+        });
+
+        var unsupported = Project(wide, Stream(wide,
+            [NestedEvent(Record("MParamEventCurveRationalBezier", 0, body, wide), flags: 2, id: 0x624F7563)]),
+            before: Record("MParamEventCurveBase", 1, [], wide));
+        await WithProject(unsupported, (_, report) =>
+        {
+            Assert.True(report.Arrangement!.Partial);
+            Assert.Empty(report.Arrangement.MidiNoteCandidates!);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ForwardObjectReferencesCannotBorrowAFutureCollection(bool wide, bool stringValue)
+    {
+        var payload = Event(pitch: 99, attributeType: 1);
+        var future = Record(stringValue ? "CmString" : "CmAttribCollection", 0, payload, wide);
+        var packet = NestedEvent(Number(0, wide), flags: stringValue ? (ushort)8 : (ushort)0x22);
+        var project = Project(wide, Stream(wide, [packet, Event()]), after: future);
+        var id = (ulong)(project.Bytes.Length - payload.Length - (wide ? 8 : 4) - project.ArchiveOffset);
+        Number(id, wide).CopyTo(project.Bytes, project.FirstEventOffset + 24);
+        await WithProject(project, (_, report) =>
+        {
+            Assert.True(report.Arrangement!.Partial);
+            Assert.Empty(report.Arrangement.MidiNoteCandidates!);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task NestedObjectByteBudgetRetainsOnlyPrecedingCompleteNotes(bool wide, bool stringValue)
+    {
+        var payload = new byte[4 * 1024 * 1024];
+        Event(pitch: 99, attributeType: 1).CopyTo(payload, 100);
+        var packet = NestedEvent(Record(stringValue ? "CmString" : "CmAttribCollection", 0, payload, wide),
+            flags: stringValue ? (ushort)8 : (ushort)0x22);
+        var project = Project(wide, Stream(wide, [Event(pitch: 48), packet, Event()]));
+        await WithProject(project, (_, report) =>
+        {
+            Assert.True(report.Arrangement!.Partial);
+            Assert.Equal(48, Assert.Single(report.Arrangement.MidiNoteCandidates!).MidiPitch);
+            Assert.Contains(report.Arrangement.LimitReasons!, reason => reason.Contains("byte scan limit"));
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MalformedTrailerCannotFallBackIntoOpaqueNestedObjects(bool wide)
+    {
+        var payload = Event(pitch: 99, attributeType: 1);
+        var stream = Stream(wide, [NestedEvent(Record("CmAttribCollection", 0, payload, wide)), Event()]);
+        var project = Project(wide, stream with { Bytes = Join(stream.Bytes, [0x44]) });
+        await WithProject(project, (_, report) =>
+        {
+            Assert.True(report.Arrangement!.Partial);
+            Assert.Empty(report.Arrangement.MidiNoteCandidates!);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task EarlierClassDeclarationsStillFrameNestedValuesBeyondInventoryDetailBudget(bool wide, bool stringValue)
+    {
+        var declarations = Declarations(wide);
+        var collectionDeclaration = Record(stringValue ? "CmString" : "CmAttribCollection", 0, [], wide);
+        var filler = Record("Opaque", 0, [0], wide);
+        var before = Join(declarations, collectionDeclaration, Join(Enumerable.Repeat(filler, 10_000).ToArray()));
+        var payload = Event(pitch: 99, attributeType: 1);
+        var value = Join(Number((wide ? 0x8000000000000000UL : 0x80000000UL) | (uint)declarations.Length, wide),
+            Number((uint)payload.Length, wide), payload);
+        var packet = NestedEvent(value, flags: stringValue ? (ushort)8 : (ushort)0x22);
+        var project = Project(wide, Stream(wide, [packet, Event(pitch: 62)], declarations: [], declarationCount: 0), before: before);
+        await WithProject(project, (_, report) =>
+        {
+            Assert.Contains(report.ArchiveInventories!, inventory => inventory.Partial);
+            Assert.False(report.Arrangement!.Partial);
+            Assert.Equal(new[] { 61, 62 }, report.Arrangement.MidiNoteCandidates!.Select(note => note.MidiPitch));
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnsupportedOrMalformedNestedObjectsCannotExposeTheirNoteLikePayloads(bool wide)
+    {
+        var payload = Event(pitch: 99, attributeType: 1);
+        var validObject = Record("CmAttribCollection", 0, payload, wide);
+        var wrongLength = validObject.ToArray();
+        Number((uint)(payload.Length + 200), wide).CopyTo(wrongLength, wrongLength.Length - payload.Length - (wide ? 8 : 4));
+        var packets = new[]
+        {
+            NestedEvent(Record("OtherCollection", 0, payload, wide)),
+            NestedEvent(Record("CmAttribCollection", 1, payload, wide)),
+            NestedEvent(wrongLength),
+            NestedEvent(Number(0x123456, wide)),
+            NestedEvent(validObject, flags: 0x102),
+            NestedEvent(validObject, flags: 8)
+        };
+        foreach (var packet in packets)
+            await WithProject(Project(wide, Stream(wide, [Event(), packet, Event()])), (_, report) =>
+            {
+                Assert.True(report.Arrangement!.Partial);
+                Assert.Empty(report.Arrangement.MidiNoteCandidates!);
+                Assert.Contains(report.Arrangement.LimitReasons!, reason => reason.Contains("no later attribute boundary was inferred"));
+                return Task.CompletedTask;
+            });
+    }
+
+    [Theory]
+    [InlineData(false, 0xA0)]
+    [InlineData(true, 0xA0)]
+    [InlineData(false, 0xC0)]
+    [InlineData(true, 0xC0)]
+    [InlineData(false, 0xF0)]
+    [InlineData(true, 0xF0)]
+    [InlineData(false, 0x70)]
+    [InlineData(true, 0x70)]
+    [InlineData(false, 0x40)]
+    [InlineData(true, 0x40)]
+    [InlineData(false, 0x30)]
+    [InlineData(true, 0x30)]
+    public async Task StopsBeforeEventsWithoutSupportedClassEvidenceWithoutResynchronizing(bool wide, int status)
+    {
+        // Additional classes need their own earlier revision declarations;
+        // Score events additionally need a supported MEvent base and null-node grammar.
+        var unsupported = Join([(byte)status], Event(), Event(0x80, 900, 30, 44, 100));
+        var project = Project(wide, Stream(wide, [Event(0x90, 60, 30, 48, 100), unsupported]));
+        await WithProject(project, (_, report) =>
+        {
+            var arrangement = report.Arrangement!;
+            var note = Assert.Single(arrangement.MidiNoteCandidates!);
+            Assert.Equal(project.FirstEventOffset, note.FileOffset);
+            Assert.Equal(48, note.MidiPitch);
+            Assert.True(arrangement.Partial);
+            var expected = status == 0x30 ? $"discriminator 0x{status:X2}" : "supported class revision";
+            Assert.Contains(arrangement.LimitReasons!, reason => reason.Contains(expected, StringComparison.OrdinalIgnoreCase));
+            return Task.CompletedTask;
+        });
+    }
+
+    private static byte[] EmptyScore(bool wide, ushort baseRevision)
+    {
+        var bytes = new byte[1 + 26 + (wide ? 8 : 4) + (baseRevision == 1 ? 4 : 0) + 10];
+        bytes[0] = 0x30;
+        BinaryPrimitives.WriteUInt16BigEndian(bytes.AsSpan(1), 0x8001);
+        // The score's opaque scalar bits must not be treated as note fields.
+        BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(3), 0x7FF8000000001234);
+        bytes[^1] = 0xAB;
+        return bytes;
+    }
+
+    private static byte[] ScoreAttributes(bool wide, params byte[][] attributes)
+    {
+        var empty = EmptyScore(wide, 1);
+        var prefix = empty[..^10];
+        BinaryPrimitives.WriteUInt32BigEndian(prefix.AsSpan(27 + (wide ? 8 : 4)), (uint)attributes.Length);
+        return Join(prefix, Join(attributes), empty[^10..]);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ScoreInheritedAttributesShareFramingWithoutSharingMidiBaseFields(bool wide, bool stringValue)
+    {
+        var scalar = Event(attributeType: 4)[18..32];
+        var text = Join(Number(0x74657874), [0, 8], Record("CmString", 0, Event(pitch: 99), wide));
+        var score = ScoreAttributes(wide, stringValue ? [text, scalar] : [scalar]);
+        var before = Join(Record("MEvent", 1, [], wide), Record("MScoreEvent", 1, [], wide));
+        var first = Event(pitch: 48);
+        var project = Project(wide, Stream(wide, [first, score, Event(pitch: 62)]), before: before);
+        await WithProject(project, (_, report) =>
+        {
+            Assert.False(report.Arrangement!.Partial);
+            Assert.Equal(new[] { 48, 62 }, report.Arrangement.MidiNoteCandidates!.Select(note => note.MidiPitch));
+            Assert.Equal(project.FirstEventOffset + first.Length + score.Length,
+                report.Arrangement.MidiNoteCandidates![1].FileOffset);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnsupportedScoreAttributeReportsItsIdAndDoesNotBorrowALaterBoundary(bool wide)
+    {
+        var value = Join(Number(0x74657874), [0, 0x28], Record("CmString", 0, Event(pitch: 99), wide));
+        var score = ScoreAttributes(wide, value);
+        var before = Join(Record("MEvent", 1, [], wide), Record("MScoreEvent", 1, [], wide));
+        var project = Project(wide, Stream(wide, [Event(pitch: 48), score, Event(pitch: 62)]), before: before);
+        await WithProject(project, (_, report) =>
+        {
+            Assert.True(report.Arrangement!.Partial);
+            Assert.Equal(48, Assert.Single(report.Arrangement.MidiNoteCandidates!).MidiPitch);
+            Assert.Contains(report.Arrangement.LimitReasons!, reason => reason.Contains("Attribute ID 0x74657874, flags 0x0028"));
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 0)]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    public async Task EmptyScoreUsesItsDistinctBaseAndLeavesFollowingNoteAtTheExactOffset(bool wide, ushort baseRevision)
+    {
+        var score = EmptyScore(wide, baseRevision);
+        var before = Join(Record("MEvent", baseRevision, [], wide), Record("MScoreEvent", 1, [], wide));
+        var first = Event(pitch: 48);
+        var project = Project(wide, Stream(wide, [first, score, Event(pitch: 62)]), before: before);
+        await WithProject(project, async (path, report) =>
+        {
+            Assert.False(report.Arrangement!.Partial);
+            Assert.Equal(new[] { 48, 62 }, report.Arrangement.MidiNoteCandidates!.Select(note => note.MidiPitch));
+            Assert.Equal(project.FirstEventOffset + first.Length + score.Length,
+                report.Arrangement.MidiNoteCandidates![1].FileOffset);
+            var snapshot = (await new CprEvidenceReader().ReadAsync(path)).Value!;
+            Assert.Equal(2, snapshot.NativeMidiNoteCandidates!.Count);
+            Assert.Empty(snapshot.MidiNotes ?? []);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScoreSkipsExactMDataNodeObjectOpaquelyAndKeepsFollowingNoteBoundary(bool wide)
+    {
+        var empty = EmptyScore(wide, 1);
+        var node = Record("MDataNode", 0, [0x90, 0x01, 0x02, 0x03], wide);
+        var score = Join(empty[..27], node, empty[^14..]);
+        var first = Event(pitch: 48);
+        var before = Join(Record("MEvent", 1, [], wide), Record("MScoreEvent", 1, [], wide));
+        var project = Project(wide, Stream(wide, [first, score, Event(pitch: 62)]), before: before);
+        await WithProject(project, (_, report) =>
+        {
+            Assert.False(report.Arrangement!.Partial);
+            Assert.Equal(new[] { 48, 62 }, report.Arrangement.MidiNoteCandidates!.Select(note => note.MidiPitch));
+            Assert.Equal(project.FirstEventOffset + first.Length + score.Length,
+                report.Arrangement.MidiNoteCandidates![1].FileOffset);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScoreNeedsEarlierUnambiguousSupportedScoreAndEventRevisions(bool wide)
+    {
+        var score = EmptyScore(wide, 1);
+        var valid = Join(Record("MEvent", 1, [], wide), Record("MScoreEvent", 1, [], wide));
+        var contexts = new[]
+        {
+            Array.Empty<byte>(), Record("MScoreEvent", 1, [], wide), Record("MEvent", 1, [], wide),
+            Join(Record("MEvent", 2, [], wide), Record("MScoreEvent", 1, [], wide)),
+            Join(Record("MEvent", 1, [], wide), Record("MScoreEvent", 0, [], wide)),
+            Join(Record("MEvent", 1, [], wide), Record("MScoreEvent", 2, [], wide)),
+            Join(valid, Record("MEvent", 0, [], wide)),
+            Join(valid, Record("MScoreEvent", 0, [], wide))
+        };
+        foreach (var context in contexts)
+        {
+            var project = Project(wide, Stream(wide, [Event(pitch: 48), score, Event(pitch: 62)]),
+                before: context, after: valid);
+            await WithProject(project, (_, report) =>
+            {
+                Assert.True(report.Arrangement!.Partial);
+                Assert.Equal(48, Assert.Single(report.Arrangement.MidiNoteCandidates!).MidiPitch);
+                Assert.Contains(report.Arrangement.LimitReasons!, reason => reason.Contains("score discriminator 0x30"));
+                return Task.CompletedTask;
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScoreObjectReferencesAttributesAndTruncationCannotResynchronizeToLaterNotes(bool wide)
+    {
+        var width = wide ? 8 : 4;
+        var nonNull = EmptyScore(wide, 1);
+        Number(1, wide).CopyTo(nonNull, 27);
+        var attributes = EmptyScore(wide, 1);
+        BinaryPrimitives.WriteUInt32BigEndian(attributes.AsSpan(27 + width), 1);
+        var before = Join(Record("MEvent", 1, [], wide), Record("MScoreEvent", 1, [], wide));
+        foreach (var score in new[] { nonNull, attributes, EmptyScore(wide, 1)[..^12] })
+        {
+            var project = Project(wide, Stream(wide, [Event(pitch: 48), score], count: 3), before: before);
+            await WithProject(project, (_, report) =>
+            {
+                Assert.True(report.Arrangement!.Partial);
+                Assert.Equal(48, Assert.Single(report.Arrangement.MidiNoteCandidates!).MidiPitch);
+                Assert.Contains(report.Arrangement.LimitReasons!, reason => reason.Contains("score discriminator 0x30"));
+                return Task.CompletedTask;
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData(false, 0xA0, "MMidiPolyPressure")]
+    [InlineData(true, 0xA0, "MMidiPolyPressure")]
+    [InlineData(false, 0xC0, "MMidiProgramChange")]
+    [InlineData(true, 0xC0, "MMidiProgramChange")]
+    [InlineData(false, 0xF0, "MMidiSysex")]
+    [InlineData(true, 0xF0, "MMidiSysex")]
+    [InlineData(false, 0x70, "MChordEvent")]
+    [InlineData(true, 0x70, "MChordEvent")]
+    [InlineData(false, 0x40, "MNoteChangeEvent")]
+    [InlineData(true, 0x40, "MNoteChangeEvent")]
+    public async Task ReadsNotesAfterAdditionalDeclaredEventBodiesAtExactBoundaries(bool wide, int status, string className)
+    {
+        foreach (var attributeType in new ushort[] { 0, 1, 4 })
+        {
+            var basePacket = Event((byte)status, attributeType: attributeType)[..^25];
+            // Payloads deliberately contain note-like bytes. They must remain
+            // opaque; only the subsequent counted note is returned.
+            var payload = Join(Event(attributeType: 1), Event(0x80, attributeType: 4));
+            var packet = status switch
+            {
+                0x70 => Join(Event((byte)status, attributeType: attributeType), [0xAB]),
+                0x40 => Join(basePacket, new byte[14]),
+                0xF0 => Join(basePacket, Number((uint)payload.Length), Number((uint)payload.Length), payload),
+                _ => basePacket
+            };
+            var declarations = Join(Declarations(wide), Record(className, 0, [], wide));
+            var first = Event(0x90, 60, 30, 48, 100);
+            var project = Project(wide, Stream(wide, [first, packet, Event(0x80, 480, 120, 49, 101)],
+                declarations: declarations, declarationCount: 2));
+            await WithProject(project, (_, report) =>
+            {
+                var arrangement = report.Arrangement!;
+                var notes = arrangement.MidiNoteCandidates!;
+                Assert.Equal(2, notes.Count);
+                Assert.Equal(project.FirstEventOffset + first.Length + packet.Length, notes[1].FileOffset);
+                Assert.Equal(49, notes[1].MidiPitch);
+                Assert.False(arrangement.Partial);
+                return Task.CompletedTask;
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData(false, 0xA0, "MMidiPolyPressure")]
+    [InlineData(true, 0xA0, "MMidiPolyPressure")]
+    [InlineData(false, 0xC0, "MMidiProgramChange")]
+    [InlineData(true, 0xC0, "MMidiProgramChange")]
+    [InlineData(false, 0xF0, "MMidiSysex")]
+    [InlineData(true, 0xF0, "MMidiSysex")]
+    [InlineData(false, 0x70, "MChordEvent")]
+    [InlineData(true, 0x70, "MChordEvent")]
+    [InlineData(false, 0x40, "MNoteChangeEvent")]
+    [InlineData(true, 0x40, "MNoteChangeEvent")]
+    public async Task AdditionalEventRevisionsMustBeEarlierSupportedAndUnambiguous(bool wide, int status, string className)
+    {
+        var stream = Stream(wide, [Event(), [(byte)status], Event()]);
+        var projects = new[]
+        {
+            Project(wide, stream, after: Record(className, 0, [], wide)),
+            Project(wide, stream, before: Record(className, 1, [], wide)),
+            Project(wide, stream, before: Join(Record(className, 0, [], wide), Record(className, 1, [], wide)))
+        };
+        foreach (var project in projects)
+            await WithProject(project, (_, report) =>
+            {
+                var arrangement = report.Arrangement!;
+                Assert.Single(arrangement.MidiNoteCandidates!);
+                Assert.True(arrangement.Partial);
+                Assert.Contains(arrangement.LimitReasons!, reason => reason.Contains("supported class revision", StringComparison.Ordinal));
+                return Task.CompletedTask;
+            });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SysExLengthsStayBoundedAndOpaque(bool wide)
+    {
+        var basePacket = Event(0xF0)[..^25];
+        var declarations = Join(Declarations(wide), Record("MMidiSysex", 0, [], wide));
+        var validEmpty = Project(wide, Stream(wide,
+            [Event(), Join(basePacket, Number(0), Number(0)), Event(0x80, 480, 120, 49, 101)],
+            declarations: declarations, declarationCount: 2));
+        await WithProject(validEmpty, (_, report) =>
+        {
+            Assert.Equal(2, report.Arrangement!.MidiNoteCandidates!.Count);
+            Assert.False(report.Arrangement.Partial);
+            return Task.CompletedTask;
+        });
+
+        var packets = new[]
+        {
+            Join(basePacket, Number(1), Number(0), Event()),
+            Join(basePacket, Number(uint.MaxValue), Number(uint.MaxValue), Event()),
+            Join(basePacket, Number(0)),
+            Join(basePacket, Number(4 * 1024 * 1024), Number(4 * 1024 * 1024), new byte[4 * 1024 * 1024])
+        };
+        foreach (var packet in packets)
+        {
+            var project = Project(wide, Stream(wide, [Event(), packet, Event()],
+                declarations: declarations, declarationCount: 2));
+            await WithProject(project, (_, report) =>
+            {
+                var arrangement = report.Arrangement!;
+                Assert.Single(arrangement.MidiNoteCandidates!);
+                Assert.True(arrangement.Partial);
+                Assert.Contains(arrangement.LimitReasons!, reason => reason.Contains("SysEx", StringComparison.Ordinal));
+                return Task.CompletedTask;
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MalformedCountedListCannotFallBackIntoPreviouslySkippedSysExPayload(bool wide)
+    {
+        var payload = Event(0x90, 900, 30, 99, 127, attributeType: 1);
+        var packet = Join(Event(0xF0)[..^25], Number((uint)payload.Length), Number((uint)payload.Length), payload);
+        var declarations = Join(Declarations(wide), Record("MMidiSysex", 0, [], wide));
+        var stream = Stream(wide, [Event(), packet], declarations: declarations, declarationCount: 2);
+        var malformed = new[]
+        {
+            stream with { Bytes = Join(stream.Bytes, [0x44]) },
+            Stream(wide, [Event(), packet], count: 3, declarations: declarations, declarationCount: 2)
+        };
+        foreach (var value in malformed)
+            await WithProject(Project(wide, value), (_, report) =>
+            {
+                var arrangement = report.Arrangement!;
+                Assert.Empty(arrangement.MidiNoteCandidates!);
+                Assert.True(arrangement.Partial);
+                Assert.Contains(arrangement.LimitReasons!, reason => reason.Contains("candidate prefix was rejected", StringComparison.Ordinal));
+                return Task.CompletedTask;
+            });
     }
 
     [Theory]
@@ -551,7 +1198,7 @@ public sealed class CprCountedMidiStreamTests
             Assert.All(arrangement.MidiNoteCandidates, note =>
                 Assert.EndsWith("MMidiPart/counted-events", note.SourceLayout));
             Assert.Equal(project.FirstEventOffset + 9999L * 43, arrangement.MidiNoteCandidates[^1].FileOffset);
-            if (partial) Assert.Contains(arrangement.LimitReasons!, reason => reason.Contains("budget", StringComparison.OrdinalIgnoreCase));
+            if (partial) Assert.Contains(arrangement.LimitReasons!, reason => reason.Contains("limit", StringComparison.OrdinalIgnoreCase));
             return Task.CompletedTask;
         });
     }

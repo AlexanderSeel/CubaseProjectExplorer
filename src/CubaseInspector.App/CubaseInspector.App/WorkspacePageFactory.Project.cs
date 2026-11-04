@@ -21,13 +21,14 @@ internal sealed partial class WorkspacePageFactory
     {
         var vm = shell.Tools;
         vm.ResetMediaAuditForDifferentProject();
-        var root = Page("Studio map", shell.Workspace.Project is null
-            ? "See how your project is connected, then check audio paths and MIDI parts."
-            : "Follow tracks through plug-ins, buses and outputs. Switch to Media paths to check the samples and MIDI in this project.");
+        var root = Page("Audio & MIDI I/O", "Review the saved inputs, outputs and ports before moving this session to another studio.");
         var studioPanel = new StackPanel { Spacing = 10 };
         var selectedProject = shell.Workspace.Project;
         if (selectedProject is not null)
-            studioPanel.Children.Add(StudioIoView(selectedProject));
+            studioPanel.Loaded += (_, _) =>
+            {
+                if (studioPanel.Children.Count == 0) studioPanel.Children.Add(StudioIoView(selectedProject));
+            };
         else studioPanel.Children.Add(Empty("Choose Analyze to open a project, then follow its tracks, effects, buses and outputs here."));
         var connectionsPanel = selectedProject is not null
             ? StudioIoAssignmentsView(selectedProject)
@@ -90,8 +91,8 @@ internal sealed partial class WorkspacePageFactory
         };
         vm.PropertyChanged += handler;
         root.Unloaded += (_, _) => vm.PropertyChanged -= handler;
-        root.Children.Add(DashboardTabs(("Signal flow", studioPanel), ("Inputs & outputs", connectionsPanel),
-            ("Media paths", mediaPanel)));
+        root.Children.Add(DashboardTabs(("Inputs & outputs", connectionsPanel), ("Signal flow", studioPanel),
+            ("Media check", mediaPanel)));
         return root;
     }
 
@@ -102,10 +103,10 @@ internal sealed partial class WorkspacePageFactory
     private UIElement SelectedProjectOverviewPage()
     {
         var vm = shell.Workspace;
-        var root = Page(vm.ProjectName, vm.ProjectPath);
+        var root = Page(vm.ProjectName, $"Saved with {vm.SavedBy} · {System.IO.Path.GetExtension(vm.Project!.FilePath).TrimStart('.').ToUpperInvariant()} session");
         if (vm.Project is { } selectedProject)
         {
-            var analyze = Button("Analyze", async () =>
+            var analyze = Button("Refresh session", async () =>
             {
                 await shell.AnalyzeProjectCommand.ExecuteAsync(null);
                 navigate("Overview");
@@ -118,52 +119,55 @@ internal sealed partial class WorkspacePageFactory
             });
             AddPageActions(root, analyze, findProjectSamples);
         }
-        var cards = new Grid { ColumnSpacing = 12, RowSpacing = 12, Margin = new Thickness(0, 12, 0, 16) };
-        for (var i = 0; i < 3; i++) cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var metrics = new[] { ("TEMPO", vm.Bpm), ("TIME SIGNATURE", vm.TimeSignature), ("TRACKS", vm.TrackCount), ("PLUG-INS", vm.PluginCount), ("CONNECTIONS", vm.RouteCount) };
-        for (var i = 0; i < metrics.Length; i++)
+        var project = ProjectAutomation.Normalize(vm.Project!);
+        root.Children.Add(MetricCards(Metric("TEMPO", vm.Bpm.Replace(" · needs review", "")), Metric("METER", vm.TimeSignature.Replace(" · needs review", "")),
+            Metric(project.Evidence == EvidenceLevel.Confirmed ? "TRACKS" : "TRACK RECORDS", project.Tracks.Count.ToString("N0")),
+            Metric("PLUG-IN REFERENCES", project.Plugins.Count.ToString("N0")),
+            Metric("AUDIO REFERENCES", ((project.MediaReferences?.Count ?? 0) + (project.NativeAudioMediaCandidates?.Count ?? 0)).ToString("N0")),
+            Metric("NOTE EVENTS", ((project.MidiNotes?.Count ?? 0) + (project.NativeMidiNoteCandidates?.Count ?? 0)).ToString("N0"))));
+        var context = new StackPanel { Spacing = 6 };
+        context.Children.Add(new TextBlock { Text = "Inside this session", FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        context.Children.Add(new TextBlock { Text = string.Join("   ·   ", project.Tracks.GroupBy(TrackDisplayRow.TypeFor)
+            .Select(group => $"{group.Count():N0} {group.Key}")), TextWrapping = TextWrapping.Wrap, Foreground = Muted, FontSize = 13 });
+        var lanes = project.AutomationLanes ?? [];
+        context.Children.Add(new TextBlock { Text = $"{lanes.Count:N0} automation lanes" +
+            (lanes.Count > 0 ? $" · {lanes.Count(lane => lane.OwnerTrackId is not null):N0} attached to tracks" : "") +
+            (project.Evidence == EvidenceLevel.Candidate ? " · Native values and track links require review" : ""),
+            TextWrapping = TextWrapping.Wrap, Foreground = Muted, FontSize = 12 });
+        root.Children.Add(new Border { Background = Surface, BorderBrush = Divider, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8), Padding = new Thickness(16), Child = context });
+        var explore = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
+        for (var i = 0; i < 3; i++) explore.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (var i = 0; i < 6; i++) explore.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var actions = new[]
         {
-            var card = Metric(metrics[i].Item1, metrics[i].Item2);
-            Grid.SetColumn(card, i % 3); Grid.SetRow(card, i / 3); cards.Children.Add(card);
-        }
-        root.Children.Add(cards);
-        root.Children.Add(Note(vm.OverviewSummary));
-        if (vm.Project is { } analyzedProject)
+            ("Tracks & channels", "Inputs, outputs, inserts and automation", "Tracks"),
+            ("Plug-ins", "Instruments and effects in this session", "Plugins"),
+            ("Routing", "Follow channels through the mix", "Routing"),
+            ("Audio & MIDI I/O", "Review the saved studio connections", "IO"),
+            ("Audio", "Explore the audio referenced by this project", "Samples"),
+            ("MIDI", "Browse parts and note events", "Midi")
+        };
+        foreach (var (title, subtitle, page) in actions)
         {
-            var nativeAudio = analyzedProject.NativeAudioMediaCandidates?.Count ?? 0;
-            var declaredAudio = analyzedProject.MediaReferences?.Count ?? 0;
-            var nativeMidi = analyzedProject.NativeMidiNoteCandidates?.Count ?? 0;
-            var declaredMidi = analyzedProject.MidiNotes?.Count ?? 0;
-            var analysis = new Grid { ColumnSpacing = 10, RowSpacing = 10, Margin = new Thickness(0, 8, 0, 4) };
-            for (var i = 0; i < 3; i++) analysis.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            for (var i = 0; i < 2; i++) analysis.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var results = new[]
+            var copy = new StackPanel { Spacing = 5, Children =
             {
-                Metric("AUDIO PATHS READ", declaredAudio.ToString("N0")),
-                Metric("MORE AUDIO LOCATIONS", nativeAudio.ToString("N0")),
-                Metric("MIDI NOTES FOUND", $"{declaredMidi:N0} exported · {nativeMidi:N0} in project file"),
-                Metric("SAVED ROUTING LINKS", analyzedProject.Routing.Count.ToString("N0")),
-                Metric("MIXER RECORDS READ", (analyzedProject.NativeMixerObservations?.Count ?? 0).ToString("N0")),
-                Metric("READER NOTES", analyzedProject.Warnings.Count.ToString("N0"))
-            };
-            for (var i = 0; i < results.Length; i++)
-            {
-                Grid.SetColumn(results[i], i % 3);
-                Grid.SetRow(results[i], i / 3);
-                analysis.Children.Add(results[i]);
-            }
-            root.Children.Add(Section("WHAT ANALYZE READ FROM THIS PROJECT", [
-                "This is the latest read of the selected file. Open Audio, MIDI, Tracks or Studio map to inspect the results in context."]));
-            root.Children.Add(analysis);
+                new TextBlock { Text = title, FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
+                new TextBlock { Text = subtitle, FontSize = 12, Foreground = Muted, TextWrapping = TextWrapping.Wrap }
+            } };
+            var action = new Button { Content = copy, Padding = new Thickness(16), MinHeight = 84,
+                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
+            action.Click += (_, _) => navigate(page);
+            explore.Children.Add(action);
         }
-        var details = new Grid { ColumnSpacing = 16, RowSpacing = 12, Margin = new Thickness(0, 14, 0, 0) };
-        details.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        details.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        details.Children.Add(DetailCard("SOURCE", ("Format", vm.Format), ("Saved by", vm.SavedBy), ("Source quality", vm.Evidence), ("Warnings", vm.WarningCount)));
-        var next = DetailCard("EXPLORE THIS PROJECT", ("Tracks & Channels", "Review tracks, mix settings and audio"), ("Plug-ins", vm.PluginEvidence), ("Routing", vm.RoutingSummary), ("Studio map", vm.IoSummary));
-        Grid.SetColumn(next, 1); details.Children.Add(next); root.Children.Add(details);
+        explore.SizeChanged += (_, args) =>
+        {
+            var columns = args.NewSize.Width >= 1000 ? 3 : args.NewSize.Width >= 560 ? 2 : 1;
+            for (var i = 0; i < 3; i++) explore.ColumnDefinitions[i].Width = i < columns ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+            for (var i = 0; i < explore.Children.Count; i++) { Grid.SetColumn((FrameworkElement)explore.Children[i], i % columns); Grid.SetRow((FrameworkElement)explore.Children[i], i / columns); }
+        };
+        root.Children.Add(explore);
         var coveragePanel = new Border { Background = Surface, Padding = new Thickness(12) };
         var coverageRows = vm.Project is null
             ? Array.Empty<(string Name, string Value)>()
@@ -174,14 +178,6 @@ internal sealed partial class WorkspacePageFactory
         coveragePanel.Child = DetailCard("FIELD AVAILABILITY", coverageRows);
         AddPageActions(root, InfoButton(() => ShowInformationWindow("Field availability", coveragePanel, 920, 720),
             "Technical details · field availability and raw evidence"));
-        if (vm.Project?.NativeMidiNoteCandidates is { Count: > 0 } noteCandidates)
-        {
-            var midiSummary = new StackPanel { Spacing = 8 };
-            midiSummary.Children.Add(DetailCard("MIDI IN THIS PROJECT", ("Note events found", noteCandidates.Count.ToString("N0")),
-                ("Next", "Browse notes and parts on the MIDI tracks page.")));
-            midiSummary.Children.Add(Button("Browse MIDI notes", () => navigate("Midi")));
-            root.Children.Add(midiSummary);
-        }
         if (vm.Project?.WarpPoints is { Count: > 0 } warpPoints)
             root.Children.Add(new Expander { Header = $"Exported audio warp points · {warpPoints.Count:N0}",
                 HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -209,12 +205,26 @@ internal sealed partial class WorkspacePageFactory
         var empty = Empty("No tracks match the current search and type."); empty.Visibility = Visibility.Collapsed;
         var selected = new Border { Background = Surface, Padding = new Thickness(12), Margin = new Thickness(0, 8, 0, 0), Visibility = Visibility.Collapsed };
         var detail = new StackPanel { Spacing = 8 };
-        selected.Child = detail;
+        selected.Child = new ScrollViewer { Content = detail, MaxHeight = 620, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var trackWorkspace = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
+        trackWorkspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        trackWorkspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0) });
+        trackWorkspace.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        trackWorkspace.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        void ArrangeTrackDetails()
+        {
+            var sideBySide = trackWorkspace.ActualWidth >= 1000 && selected.Visibility == Visibility.Visible;
+            trackWorkspace.ColumnDefinitions[1].Width = sideBySide ? new GridLength(340) : new GridLength(0);
+            Grid.SetColumn(selected, sideBySide ? 1 : 0);
+            Grid.SetRow(selected, sideBySide ? 0 : 1);
+        }
+        trackWorkspace.SizeChanged += (_, _) => ArrangeTrackDetails();
         void Refresh()
         {
             selected.Visibility = Visibility.Collapsed;
+            ArrangeTrackDetails();
             var query = search.Text.Trim(); var kind = kindFilter.SelectedItem?.ToString() ?? "All";
-            var allDisplayTracks = shell.Workspace.Tracks.OrderBy(track => track.Name, StringComparer.OrdinalIgnoreCase)
+            var allDisplayTracks = shell.Workspace.Tracks
                 .Select((track, index) => (Track: track, Row: TrackDisplayRow.From(track, index + 1)))
                 .ToArray();
             var displayTracks = allDisplayTracks.Where(item =>
@@ -244,7 +254,7 @@ internal sealed partial class WorkspacePageFactory
                 var mixerName = mixerTrack?.Name;
                 if (!string.IsNullOrWhiteSpace(mixerName)) return mixerName;
                 return id.StartsWith("Bus UID ", StringComparison.OrdinalIgnoreCase)
-                    ? "Saved bus assignment" : "Connection target unavailable";
+                    ? "Unresolved" : "Connection target unavailable";
             }
             rows.ReplaceAll(displayTracks.Select(item => item.Row with
             {
@@ -254,7 +264,9 @@ internal sealed partial class WorkspacePageFactory
                 Destination = ResolveDestination(item.Track)
             }));
             empty.Visibility = rows.Count == 0 && shell.Workspace.Tracks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            count.Text = $"{rows.Count:N0} of {shell.Workspace.Tracks.Count:N0} tracks";
+            var automation = project?.AutomationLanes ?? [];
+            count.Text = $"{rows.Count:N0} tracks · {automation.Count:N0} automation lanes attached in track details" +
+                (automation.Any(lane => lane.OwnerTrackId is null) ? " · some lane owners are unresolved" : "");
 
             string ResolveNativeRoute(TrackInfo track, string direction)
             {
@@ -306,7 +318,8 @@ internal sealed partial class WorkspacePageFactory
                 if (signalFlow is null || !mixerRecordsByTrack.TryGetValue(track.Id, out var mixers) || mixers.Length != 1)
                     return "";
                 var mixerId = mixers[0].Id;
-                var outputs = signalFlow.Routing.Where(edge => edge.Kind == "Direct output" && edge.FromChannelId == mixerId)
+                var outputs = signalFlow.Routing.Where(edge => edge.Kind == "Direct output" && edge.FromChannelId == mixerId &&
+                        (!edge.ToChannelId.StartsWith("Bus UID ", StringComparison.Ordinal) || !string.IsNullOrWhiteSpace(edge.TargetLabel)))
                     .Select(edge => ResolveEndpoint(edge.ToChannelId, edge.TargetLabel))
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 return outputs.Length == 0 ? "" : " · Direct: " + string.Join(", ", outputs);
@@ -342,9 +355,45 @@ internal sealed partial class WorkspacePageFactory
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             detail.Children.Add(new TextBlock { Text = $"{row.Type} · Input {row.Input} · Channel {row.Channel} · Output {row.Destination}",
                 FontSize = 12, TextWrapping = TextWrapping.Wrap });
+            if (project is not null && row.Source is { } selectedTrack)
+            {
+                var connections = TrackConnectionPresentation.ForTrack(project, selectedTrack);
+                if (connections.Count > 0)
+                {
+                    detail.Children.Add(DetailCard("SAVED CONNECTIONS AND AUDIO",
+                        connections.Select(connection =>
+                        {
+                            var location = connection.SourceOffset is long offset ? $" · 0x{offset:X}" : "";
+                            var source = string.IsNullOrWhiteSpace(connection.SourcePath) ? "Saved project connection" : connection.SourcePath;
+                            var attributes = string.Join(" · ", new[]
+                            {
+                                connection.Kind,
+                                connection.Evidence.ToString(),
+                                connection.Level is double level ? $"Level {level:0.###}" : null,
+                                connection.Enabled is bool enabled ? (enabled ? "Enabled" : "Disabled") : null,
+                                connection.Tap
+                            }.Where(value => !string.IsNullOrWhiteSpace(value)));
+                            return ($"{connection.Direction} · {connection.Endpoint}", $"{attributes} · {source}{location}");
+                        }).ToArray()));
+                }
+                else
+                {
+                    detail.Children.Add(Note("No explicit audio connection or media link was decoded for this track. Missing links can mean that the project uses an unsupported route format or that ownership could not be resolved."));
+                }
+            }
             if (row.MixSummary != "—")
                 detail.Children.Add(new TextBlock { Text = row.MixSummary,
                     Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], TextWrapping = TextWrapping.Wrap });
+            var lanes = project?.AutomationLanes?.Where(lane => lane.OwnerTrackId == row.Source?.Id).ToArray() ?? [];
+            if (lanes.Length > 0)
+            {
+                detail.Children.Add(new TextBlock { Text = $"Automation · {lanes.Length:N0} {(lanes.Length == 1 ? "lane" : "lanes")}", FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+                foreach (var (lane, index) in lanes.Take(100).Select((lane, index) => (lane, index)))
+                    detail.Children.Add(new TextBlock { Text = TrackDisplayRow.HasSourceValue(lane.Name)
+                        ? lane.Name : $"Automation lane {index + 1:00} · parameter unavailable", Foreground = Muted,
+                        TextWrapping = TextWrapping.Wrap });
+            }
             if (project is not null && row.Source is { Evidence: EvidenceLevel.Candidate } source)
             {
                 var mixerRecords = mixerTrackObservations
@@ -383,8 +432,16 @@ internal sealed partial class WorkspacePageFactory
                     ("Record size", source?.SourceBodyBytes is long bodyBytes ? $"{bodyBytes:N0} bytes" : "Not read"),
                     ("Header format", source?.SourceClassEncoding ?? "Not read"),
                     ("Header offset", source?.SourceOffset is long offset ? $"0x{offset:X}" : "Not supplied"),
-                    ("Record end", source?.SourceEndOffset is long endOffset ? $"0x{endOffset:X}" : "Not supplied")));
+                    ("Record end", source?.SourceEndOffset is long endOffset ? $"0x{endOffset:X}" : "Not supplied"),
+                    ("Candidate track list", source?.CandidateTrackListOffset is long listOffset ? $"0x{listOffset:X}" : "Not observed"),
+                    ("Candidate folder list owner", source?.CandidateFolderTrackOffset is long folderOffset ? $"MFolderTrack at 0x{folderOffset:X}" : "Not observed"),
+                    ("Candidate list position", source?.CandidateTrackListPosition is int position && source.CandidateTrackListObservedCount is int count
+                        ? $"{position + 1} of {count} recognized child records" : "Not resolved")));
                 evidence.Children.Add(Note("Cubase 15's assembly contains readers with revision-gated paths for earlier saved class revisions. This number is the object's serializer revision, not the Cubase release. The exact field meaning and track relationships still need comparison against projects from known Cubase versions."));
+                if (source?.CandidateTrackListOffset is not null)
+                    evidence.Children.Add(Note("The candidate MTrackList link comes from direct bounded byte containment. Its position counts recognized track-class children in file order; Cubase's visible ordering and folder hierarchy have not been independently verified."));
+                if (source?.CandidateFolderTrackOffset is not null)
+                    evidence.Children.Add(Note("The candidate folder record is the exact enclosing MFolderTrack class header above this MTrackList in the bounded record tree. Cubase runtime code associates MFolderTrack with an MTrackList, but this saved containment-to-visible-folder relationship still needs validation against native projects."));
                 if (source is not null) evidence.Children.Add(Note(EvidencePresentation.TrackExplanation(source)));
                 ShowInformationWindow("Technical details · " + row.Name, evidence, 900, 620);
             }, "Technical details · source record, version and offsets"));
@@ -413,8 +470,9 @@ internal sealed partial class WorkspacePageFactory
             [new("Track", "Name", row => row.Name, row => row.Name),
              new("Type", "Type", row => row.Type, row => row.Type),
              new("Input", "Input", row => row.Input, row => row.Input),
-             new("Channel", "Channel", row => row.Channel, row => row.Channel),
              new("Output", "Destination", row => row.Destination, row => row.Destination),
+             new("Automation", "Automation", row => (project?.AutomationLanes?.Count(lane => lane.OwnerTrackId == row.Source?.Id) ?? 0) is var laneCount && laneCount > 0
+                 ? laneCount == 1 ? "1 lane" : $"{laneCount} lanes" : "—", row => project?.AutomationLanes?.Count(lane => lane.OwnerTrackId == row.Source?.Id) ?? 0),
              new("Mix", "MixSummary", row => row.MixSummary, row => row.MixSummary)],
             rows, ["None", "Type"], "None",
             (row, mode) => mode switch { "Type" => row.Type, _ => "" },
@@ -429,7 +487,10 @@ internal sealed partial class WorkspacePageFactory
                 menu.Items.Add(media);
                 return menu;
             });
-        Refresh(); root.Children.Add(browser); root.Children.Add(empty); root.Children.Add(selected);
+        selected.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, (_, _) => ArrangeTrackDetails());
+        trackWorkspace.Children.Add(browser);
+        trackWorkspace.Children.Add(selected);
+        Refresh(); root.Children.Add(trackWorkspace); root.Children.Add(empty);
         if (shell.Workspace.Tracks.Count == 0) root.Children.Add(Empty("No track records were supplied by this project."));
         return root;
     }
@@ -629,7 +690,7 @@ internal sealed partial class WorkspacePageFactory
                 localItem.Click += (_, _) => { shell.PluginInventory.Search = row.Name; navigate("Inventory"); };
                 menu.Items.Add(more); menu.Items.Add(catalogItem); menu.Items.Add(localItem);
                 return menu;
-            }, cardTemplate, cardsInitiallyVisible: true);
+            }, cardTemplate, cardsInitiallyVisible: false);
         void Refresh()
         {
             var selectedIdentity = selectedCard?.Group.Identity;

@@ -150,6 +150,12 @@ check and count budget are conservative inspector restrictions, not native
 grammar requirements. Unsupported attributes must retain raw evidence rather
 than inventing a scalar value or silently skipping nested content.
 
+The subsequent [counted-stream extension](CUBASE15_NESTED_ATTRIBUTES.md) consumes
+framed ScAr/CmAttribCollection and bOuc/Bezier values opaquely. It computes a
+variable prefix rather than applying the scalar-only matrix to those bodies.
+The typed-record and anonymous legacy matrix above remains scalar-only; nested
+contents and attribute overrides are not interpreted.
+
 ## Other track callback gates
 
 The MIDI track reader `0x141BCCFB0` has a subtle distinction that matters for

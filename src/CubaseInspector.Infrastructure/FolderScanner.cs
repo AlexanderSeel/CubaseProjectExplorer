@@ -99,7 +99,7 @@ public sealed class FolderScanner(IProjectInspector inspector) : IFolderScanner
                     Tracks = [], Routing = [], Warnings = [], MediaReferences = [], TimelineItems = [],
                     Metadata = null, MidiNotes = [], NativeMetadataCandidates = [],
                     NativeMixerObservations = [], EqBands = [], WarpPoints = [],
-                    NativeMidiNoteCandidates = [], NativeAudioMediaCandidates = []
+                    NativeMidiNoteCandidates = [], NativeAudioMediaCandidates = [], AutomationLanes = []
                 };
             }
             // DAWproject inspection materializes a bounded XML document plus its

@@ -26,8 +26,8 @@ public sealed class ProjectLibraryGroupingTests
         };
         var grouped = ProjectLibraryGrouping.Build(entries, "Folder", root);
         Assert.Equal(5, grouped.Groups.Count); // All + A + B + root + outside
-        Assert.Equal(2, Assert.Single(grouped.Groups.Where(g => g.Key == "A")).Count);
-        Assert.Equal(1, Assert.Single(grouped.Groups.Where(g => g.Key == "")).Count);
+        Assert.Equal(2, Assert.Single(grouped.Groups, g => g.Key == "A").Count);
+        Assert.Equal(1, Assert.Single(grouped.Groups, g => g.Key == "").Count);
         Assert.Equal(1, entries.Count(e => ProjectLibraryGrouping.Includes(e, "Folder", root, "B")));
         Assert.Equal(5, entries.Count(e => ProjectLibraryGrouping.Includes(e, "Folder", root, null)));
         Assert.Contains(grouped.Groups, g => g.Key == "Outside scan root");
@@ -52,7 +52,7 @@ public sealed class ProjectLibraryGroupingTests
             Entry("third.cpr", version: "Cubase 12") };
         Assert.Equal(2, ProjectLibraryGrouping.Build(entries, "Version", ".").Groups.Count(g => g.Key is not null));
         Assert.Equal(2, entries.Count(e => ProjectLibraryGrouping.Includes(e, "Type", ".", "CPR")));
-        Assert.Single(entries.Where(e => ProjectLibraryGrouping.Includes(e, "Evidence", ".", "Confirmed")));
+        Assert.Single(entries, e => ProjectLibraryGrouping.Includes(e, "Evidence", ".", "Confirmed"));
         Assert.Empty(ProjectLibraryGrouping.Build(entries, "None", ".").Groups);
     }
 

@@ -205,6 +205,7 @@ public sealed class CprNamedRecordScannerTests
         var records = Join(name, volume, eq, Integer("ChannelType", 3), Integer("Mute", 1), Integer("Solo", 0),
             Object("OwnInputBus", Integer("Bus UID", 42)), Object("OutputBus", Integer("Value", 91)),
             Object("SendFolder", RecordArray("Slot", [Object("Output", Integer("Value", 92))])),
+            Object("foldbackSendFolder", RecordArray("Slot", [Object("Output", Integer("Value", 93))])),
             Integer("Bus UID", 43), Integer("Bus Type", 3),
             ScalarString("Input Arrangement", "stereo"), ScalarString("Input Device Name", "Interface"),
             Integer("Input Channel ID", 2), ScalarString("Input Port Name", "Mic/Line 2"));
@@ -244,12 +245,15 @@ public sealed class CprNamedRecordScannerTests
             Assert.Contains("Unverified", mixer.Evidence);
             Assert.Contains(mixer.CandidateFields!, field => field.Path == "OwnInputBus/Bus UID" && field.Value == "42");
             Assert.Contains(mixer.CandidateFields!, field => field.Path == "OutputBus/Value" && field.Value == "91");
+            Assert.Contains(mixer.CandidateFields!, field =>
+                field.Path == "foldbackSendFolder/Slot[0]/Output/Value" && field.Value == "93");
             Assert.Contains(mixer.CandidateFields!, field => field.Path == "Bus UID" && field.Value == "43");
             Assert.Contains(mixer.CandidateFields!, field => field.Path == "Input Device Name" && field.Value == "Interface");
             Assert.Contains(mixer.CandidateFields!, field => field.Path == "Input Port Name" && field.Value == "Mic/Line 2");
             var routing = CprSignalFlowPresentation.Create(project.Value);
             Assert.Equal(2, routing.Routing.Count);
             Assert.Contains(routing.Routing, edge => edge.Kind == "Send" && edge.ToChannelId.StartsWith("Bus UID 92"));
+            Assert.DoesNotContain(routing.Routing, edge => edge.SourcePath?.Contains("foldbackSendFolder", StringComparison.Ordinal) == true);
             Assert.All(routing.Routing, edge => Assert.True(edge.SourceOffset > 0));
             var coverage = ProjectFieldCoverage.Evaluate(project.Value);
             Assert.Equal(ProjectFieldState.Candidate, coverage["Mixer volume"]);

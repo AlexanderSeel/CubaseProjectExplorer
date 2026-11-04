@@ -14,65 +14,34 @@ internal sealed partial class WorkspacePageFactory
     private UIElement StudioIoAssignmentsView(ProjectSnapshot project)
     {
         var diagram = StudioIoDiagramBuilder.Build(project);
-        var nodes = diagram.Nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
-        var connections = diagram.Links.Where(link => link.Label is "Input" or "Output" or "Direct output" or "Record" or "Child bus" or "Parent bus" or
-                "Saved track input" or "Saved input assignment" or "Saved output assignment")
-            .OrderBy(link => link.Label.Contains("input", StringComparison.OrdinalIgnoreCase) || link.Label == "Input" ? 0 : 1)
-            .ToArray();
-        string Endpoint(string id) => nodes.TryGetValue(id, out var node) ? node.Name
-            : id.StartsWith("Bus UID ", StringComparison.OrdinalIgnoreCase) ? "Saved bus assignment"
-            : "Endpoint unavailable";
-        var rows = connections.Select(link => new StudioIoAssignmentRow(
-            link.Label switch
-            {
-                "Input" or "Saved track input" or "Saved input assignment" => "Input",
-                "Record" => "Record",
-                "Child bus" or "Parent bus" => "Bus layout",
-                "Direct output" => "Direct output",
-                _ => "Output"
-            },
-            Endpoint(link.From), Endpoint(link.To), link.Label, link.Evidence.ToString(), link.Source,
-            link.SourceOffset, link.Evidence)).ToArray();
+        var rows = ProjectIoAssignments.From(diagram).ToArray();
+        var unresolved = rows.Count(row => !row.EndpointsResolved);
         var root = new StackPanel { Spacing = 12 };
-        var metrics = new Grid { ColumnSpacing = 12 };
-        foreach (var _ in Enumerable.Range(0, 4))
-            metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var inputs = rows.Count(row => row.Direction == "Input");
-        var outputs = rows.Count(row => row.Direction == "Output");
-        var extraRoutes = rows.Count(row => row.Direction is "Direct output" or "Record" or "Bus layout");
-        var namedPorts = diagram.Nodes.Count(node => node.Kind is "Saved input port" or "Saved output port");
-        var metricValues = new[]
-        {
-            (Label: "INPUT ASSIGNMENTS", Count: inputs),
-            (Label: "OUTPUT ASSIGNMENTS", Count: outputs),
-            (Label: "DIRECT / RECORD / BUS LINKS", Count: extraRoutes),
-            (Label: "SAVED PORT NAMES", Count: namedPorts)
-        };
-        for (var index = 0; index < metricValues.Length; index++)
-        {
-            var metric = Metric(metricValues[index].Label, metricValues[index].Count.ToString("N0"));
-            Grid.SetColumn(metric, index);
-            metrics.Children.Add(metric);
-        }
-        root.Children.Add(metrics);
-        root.Children.Add(Note("See track inputs, output assignments, direct routes, recording buses, and bus layouts saved in this project. Device names and port assignments describe the saved setup; they do not confirm that the current audio device exposes those ports."));
+        root.Children.Add(MetricCards(Metric("INPUT MAPPINGS", rows.Count(row => row.EndpointsResolved && row.Direction == "Input").ToString("N0")),
+            Metric("OUTPUT MAPPINGS", rows.Count(row => row.EndpointsResolved && row.Direction is "Output" or "Direct output").ToString("N0")),
+            Metric("SAVED PORTS", diagram.SavedPorts.ToString("N0"))));
+        root.Children.Add(new TextBlock { Text = "Saved session setup; device availability on this computer has not been checked.",
+            Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap });
         if (rows.Length == 0)
         {
             root.Children.Add(Empty("No explicit project track input, output, direct-route, or recording-bus connections were read. Track names and routing conventions are not used to invent them."));
         }
         else
         {
-            var connectionRows = new ResettableObservableCollection<StudioIoAssignmentRow>();
-            connectionRows.ReplaceAll(rows);
-            var browser = new DataBrowserControl<StudioIoAssignmentRow>(
+            var connectionRows = new ResettableObservableCollection<SavedIoAssignment>();
+            connectionRows.ReplaceAll(rows.Where(row => row.EndpointsResolved));
+            var includeUnresolved = new CheckBox { Content = $"Include unresolved assignments ({unresolved:N0})" };
+            includeUnresolved.Checked += (_, _) => connectionRows.ReplaceAll(rows);
+            includeUnresolved.Unchecked += (_, _) => connectionRows.ReplaceAll(rows.Where(row => row.EndpointsResolved));
+            root.Children.Add(includeUnresolved);
+            var browser = new DataBrowserControl<SavedIoAssignment>(
                 [new("Direction", "Direction", row => row.Direction, row => row.Direction),
                  new("From", "From", row => row.From, row => row.From),
                  new("To", "To", row => row.To, row => row.To),
-                 new("Connection", "Connection", row => row.Connection, row => row.Connection),
-                 new("Source", "Source", row => row.Source, row => row.Source)],
+                 new("Assignment", "Connection", row => row.Connection, row => row.Connection)],
                 connectionRows,
                 ["None", "Direction", "Evidence"], "Direction",
-                (row, mode) => mode switch { "Direction" => row.Direction, "Evidence" => row.Evidence, _ => "" },
+                (row, mode) => mode switch { "Direction" => row.Direction, "Evidence" => row.Evidence.ToString(), _ => "" },
                 _ => { }, row => { ShowDetails(row); return Task.CompletedTask; }, row =>
                 {
                     var menu = new MenuFlyout();
@@ -91,11 +60,11 @@ internal sealed partial class WorkspacePageFactory
                 Content = Section("Direction not determined", unclassified.Select(node => node.Name + " · " + node.Description)) });
         return root;
 
-        void ShowDetails(StudioIoAssignmentRow row)
+        void ShowDetails(SavedIoAssignment row)
         {
             var evidence = new StackPanel { Spacing = 10 };
             evidence.Children.Add(DetailCard("SAVED CONNECTION", ("Direction", row.Direction), ("From", row.From),
-                ("To", row.To), ("Assignment", row.Connection), ("Evidence", row.Evidence),
+                ("To", row.To), ("Assignment", row.Connection), ("Evidence", row.Evidence.ToString()),
                 ("Source field", row.Source), ("File position", row.SourceOffset is long offset ? $"0x{offset:X}" : "Not supplied")));
             ShowInformationWindow(row.Direction + " assignment", evidence, 860, 580);
         }
@@ -228,6 +197,7 @@ internal sealed partial class WorkspacePageFactory
             text.Children.Add(new TextBlock { Text = node.Kind + " · " + node.Evidence + " · " + node.Description, Foreground = Muted, FontSize = 11,
                 TextWrapping = TextWrapping.Wrap, MaxLines = 2 });
             var button = new Button { Content = text, Width = 285, Height = 76, Padding = new Thickness(12, 8, 12, 8),
+                Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"], Foreground = ResourceBrush("OnSurfaceBrush"),
                 Background = Surface, BorderBrush = Divider, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(7) };
             ToolTipService.SetToolTip(button, node.Name + "\n" + node.Description);
             AutomationProperties.SetName(button, node.Kind + " " + node.Name);

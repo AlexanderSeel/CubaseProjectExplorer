@@ -18,14 +18,22 @@ internal sealed class CprMidiPartEventStreamReader
         "SHA-256 b4a9c748537ead87981aebe18a01aae3acba8bfc76d1c1150c0054de75515aa0. " +
         "Packet boundaries compared with bounded SX1-3 and later CPR samples. " +
         "Timing units, part placement and ownership remain unverified; " +
-        "docs/research/CUBASE15_MIDI_STREAM_COMPATIBILITY.md";
+        "docs/research/CUBASE15_MIDI_STREAM_COMPATIBILITY.md; additional event boundaries: " +
+        "docs/research/CUBASE15_PACKED_EVENT_CALLBACKS.md";
 
     private readonly Dictionary<long, CprClassRecordCandidate> _headers;
+    private readonly CprMidiEventPrefixReader _prefixReader;
     private readonly HashSet<ulong> _objectIds;
     private readonly CprClassRevisionEvidence? _partRevision;
     private readonly CprClassRevisionEvidence? _eventRevision;
     private readonly CprClassRevisionEvidence? _noteRevision;
+<<<<<<< main
     private readonly Dictionary<byte, CprClassRevisionEvidence?> _otherEventRevisions;
+=======
+    private readonly CprClassRevisionEvidence? _scoreRevision;
+    private readonly CprClassRevisionEvidence? _scoreBaseRevision;
+    private readonly Dictionary<byte, CprClassRevisionEvidence?> _eventClassRevisions;
+>>>>>>> origin/main
     private readonly long _archiveFileOffset;
     private readonly long _scanEnd;
     private readonly bool _wide;
@@ -36,6 +44,7 @@ internal sealed class CprMidiPartEventStreamReader
         _archiveFileOffset = inventory?.PayloadFileOffset ?? 0;
         _scanEnd = _archiveFileOffset + (inventory?.BytesScanned ?? 0);
         _headers = (inventory?.Records ?? []).ToDictionary(record => record.HeaderFileOffset);
+        _prefixReader = new(_headers, _archiveFileOffset, wide, inventory?.ClassDeclarations);
         var width = wide ? 8 : 4;
         _objectIds = _headers.Values
             // Zero-body entries may be class-only predeclarations, which do
@@ -45,8 +54,17 @@ internal sealed class CprMidiPartEventStreamReader
         _partRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiPart");
         _eventRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiEvent");
         _noteRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiNote");
+<<<<<<< main
         _otherEventRevisions = new()
         {
+=======
+        _scoreRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MScoreEvent");
+        _scoreBaseRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MEvent");
+        _eventClassRevisions = new()
+        {
+            [0x40] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MNoteChangeEvent"),
+            [0x70] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MChordEvent"),
+>>>>>>> origin/main
             [0xA0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiPolyPressure"),
             [0xB0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiController"),
             [0xC0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiProgramChange"),
@@ -112,10 +130,13 @@ internal sealed class CprMidiPartEventStreamReader
             if ((index & 255) == 0) ct.ThrowIfCancellationRequested();
             if (position >= data.Length && scanned < body.Length)
             {
-                result = new(notes.AsReadOnly(), scanned, true);
-                return true;
+                var reason = notes.Count >= maximumNotes
+                    ? $"Packed MIDI note candidate limit ({maximumNotes:N0}) reached; remaining events were not read."
+                    : "Packed MIDI byte scan limit reached; remaining events were not read.";
+                return Partial(notes, scanned, reason, out result);
             }
-            if (position >= data.Length) return false;
+            if (position >= data.Length)
+                return Partial([], scanned, "Packed MIDI event list ended before its declared event count; its candidate prefix was rejected.", out result);
             var status = data[position++];
             if (status == 0)
             {
@@ -125,13 +146,26 @@ internal sealed class CprMidiPartEventStreamReader
                 if (_headers.TryGetValue(bodyFileOffset + position, out var header))
                 {
                     var end = header.BodyFileOffset + header.BodyBytes - bodyFileOffset;
-                    if (end < position || end > data.Length) return false;
+                    if (end < position || end > data.Length)
+                        return Partial([], scanned, "Escaped MIDI object is outside the scanned part; its candidate prefix was rejected.", out result);
                     position = (int)end;
                 }
-                else if (!TryReference(data, bodyFileOffset, ref position)) return false;
+                else if (!TryReference(data, bodyFileOffset, ref position))
+                    return Partial([], scanned, "Escaped MIDI reference is unresolved; its candidate prefix was rejected.", out result);
+                continue;
+            }
+            if (status == 0x30)
+            {
+                if (!TrySkipScore(data, bodyFileOffset, ref position, out var scoreFailure))
+                    return Partial(notes, scanned,
+                        $"Unsupported score discriminator 0x30 at file offset {bodyFileOffset + position - 1}; " +
+                        "requires earlier MScoreEvent v1/MEvent v0 or v1 declarations, a supported MDataNode boundary, " +
+                        "supported inherited attributes and a complete suffix. " + scoreFailure +
+                        " Remaining events were not interpreted.", out result);
                 continue;
             }
             var isNote = status is 0x80 or 0x90;
+<<<<<<< main
             if (!isNote && (!_otherEventRevisions.TryGetValue(status, out var revision) ||
                     revision?.RevisionAt(bodyFileOffset + position) != 0)) return false;
             if (isNote && notes.Count >= maximumNotes)
@@ -140,23 +174,53 @@ internal sealed class CprMidiPartEventStreamReader
                 return true;
             }
             if (position > data.Length - 17)
+=======
+            if (!isNote)
+>>>>>>> origin/main
             {
-                if (scanned == body.Length) return false;
-                result = new(notes.AsReadOnly(), scanned, true);
-                return true;
+                if (!_eventClassRevisions.TryGetValue(status, out var revision))
+                    return Partial(notes, scanned,
+                        $"Unsupported packed MIDI event discriminator 0x{status:X2} at file offset {bodyFileOffset + position - 1}; remaining events were not interpreted.", out result);
+                if (revision?.RevisionAt(bodyFileOffset + position) != 0)
+                    return Partial(notes, scanned,
+                        $"Packed MIDI event 0x{status:X2} has no unambiguous supported class revision at file offset {bodyFileOffset + position}; remaining events were not interpreted.", out result);
             }
-            var attributeCount = BinaryPrimitives.ReadUInt32BigEndian(data.Slice(position + 13, 4));
-            if (attributeCount > 16) return false;
-            var eventBytes = (isNote ? 42 : 17) + (int)attributeCount * 14;
+            if (!_prefixReader.TryRead(data[position..], bodyFileOffset + position,
+                    out var prefixBytes, out var skippedObject, out var prefixFailure))
+                return Partial(scanned < body.Length || !isNote ? notes : [], scanned,
+                    prefixFailure + (scanned < body.Length ? " Packed MIDI byte scan limit reached."
+                        : " Its candidate prefix was rejected."), out result);
+            // The callbacks share the MMidiEvent base. Chords add the note
+            // tail plus one byte; note changes add u16, u32 and f64. Values
+            // are skipped as wire data, without assigning musical semantics.
+            var tailBytes = isNote ? 25 : status switch { 0x70 => 26, 0x40 => 14, _ => 0 };
+            var eventBytes = prefixBytes + tailBytes;
             if (position > data.Length - eventBytes)
             {
-                if (scanned == body.Length) return false;
-                result = new(notes.AsReadOnly(), scanned, true);
-                return true;
+                if (scanned == body.Length)
+                    return Partial([], scanned, "Packed MIDI event body is incomplete; its candidate prefix was rejected.", out result);
+                return Partial(notes, scanned, "Packed MIDI byte scan limit reached inside an event body.", out result);
             }
             if (!isNote)
             {
-                if (!CprMidiNoteLayout.TryReadPrefix(data.Slice(position, eventBytes), 2, out _, out _)) return false;
+                if (status == 0xF0)
+                {
+                    var payloadStart = position + eventBytes;
+                    if (payloadStart > data.Length - 8)
+                        return Partial(notes, scanned,
+                            $"Packed SysEx payload length fields at file offset {bodyFileOffset + payloadStart} are outside the scanned bytes.", out result);
+                    var payloadBytes = BinaryPrimitives.ReadUInt32BigEndian(data.Slice(payloadStart, 4));
+                    var duplicateBytes = BinaryPrimitives.ReadUInt32BigEndian(data.Slice(payloadStart + 4, 4));
+                    // The reader uses the first count; its matching writer
+                    // emits it twice. Other pairs remain unsupported here.
+                    if (payloadBytes != duplicateBytes)
+                        return Partial(notes, scanned,
+                            $"Packed SysEx payload length fields differ at file offset {bodyFileOffset + payloadStart}; remaining events were not interpreted.", out result);
+                    if (payloadBytes > data.Length - payloadStart - 8)
+                        return Partial(notes, scanned,
+                            $"Packed SysEx payload at file offset {bodyFileOffset + payloadStart + 8} exceeds the scanned bytes; remaining events were not interpreted.", out result);
+                    eventBytes += 8 + (int)payloadBytes;
+                }
                 position += eventBytes;
                 if (status == 0xF0)
                 {
@@ -181,12 +245,22 @@ internal sealed class CprMidiPartEventStreamReader
                 }
                 continue;
             }
-            if (!CprMidiPartNoteScanner.TryReadRecord(data.Slice(position, eventBytes),
-                    bodyFileOffset + position, _wide, out var note, 1, 2)) return false;
+            if (!CprMidiPartNoteScanner.TryReadFramedModernFields(data.Slice(position, eventBytes),
+                    bodyFileOffset + position, _wide, prefixBytes, out var note))
+            {
+                var raw = data.Slice(position, eventBytes);
+                var detail = $" Raw bytes at +8/+9/+10: {raw[8]}/{raw[9]}/{raw[10]}; " +
+                        $"f64 at +0: {BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64BigEndian(raw[..8])):R}; " +
+                        $"f64 at +{prefixBytes}: {BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64BigEndian(raw.Slice(prefixBytes, 8))):R}.";
+                return Partial([], scanned,
+                    $"Packed MIDI note body at file offset {bodyFileOffset + position} is unsupported; its candidate prefix was rejected.{detail}", out result);
+            }
             notes.Add(note with
             {
                 FileOffset = bodyFileOffset + position - 1,
-                Evidence = Source,
+                Evidence = Source + (skippedObject
+                    ? "; Nested event attribute object skipped as opaque; attributes were not applied to raw note fields. " +
+                      "docs/research/CUBASE15_NESTED_ATTRIBUTES.md" : ""),
                 SourceLayout = (_wide ? "RIF2" : "RIFF") + " MMidiPart/counted-events",
                 CandidatePartName = partName
             });
@@ -194,7 +268,8 @@ internal sealed class CprMidiPartEventStreamReader
         }
         // The v1/v2 callback returns after this list. Unconsumed bytes are not
         // permission to scan for another plausible zero-attribute event.
-        if (position != body.Length) return false;
+        if (position != body.Length)
+            return Partial([], scanned, "Bytes remain after the declared packed MIDI event list; its candidate prefix was rejected.", out result);
         result = new(notes.AsReadOnly(), scanned, false);
         return true;
 
@@ -210,6 +285,33 @@ internal sealed class CprMidiPartEventStreamReader
         if ((token & referenceBit) != 0 || token != 0 &&
             (!_objectIds.Contains(token) || token >= (ulong)(bodyFileOffset + position - _archiveFileOffset))) return false;
         position += width;
+        return true;
+    }
+
+    private bool TrySkipScore(ReadOnlySpan<byte> data, long fileOffset, ref int position, out string? failure)
+    {
+        failure = null;
+        var revision = _scoreBaseRevision?.RevisionAt(fileOffset + position);
+        if (_scoreRevision?.RevisionAt(fileOffset + position) != 1 || revision is not (0 or 1)) return false;
+        // 0x1427EBB00: flags u16, three f64, MDataNode, optional
+        // MEvent attributes, then f64/u8/u8. No MMidiEvent base prefix.
+        // MDataNode is bounded by the archive object header and stays opaque.
+        if (position > data.Length - 26) return false;
+        var nodeEnd = position + 26;
+        if (!_prefixReader.TrySkipObject(data, fileOffset, "MDataNode", ref nodeEnd)) return false;
+        var prefix = nodeEnd - position;
+        if (revision == 1 && !_prefixReader.TryReadAttributes(data[position..], fileOffset + position, prefix,
+                out prefix, out _, out failure))
+            return false;
+        if (prefix > data.Length - position - 10) return false;
+        position += prefix + 10;
+        return true;
+    }
+
+    private static bool Partial(List<CprRif2MidiNoteCandidate> notes, int bytesScanned,
+        string reason, out CprMidiPartNoteScan result)
+    {
+        result = new(notes.AsReadOnly(), bytesScanned, true, reason);
         return true;
     }
 }

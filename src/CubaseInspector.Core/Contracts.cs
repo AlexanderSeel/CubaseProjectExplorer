@@ -29,7 +29,15 @@ public sealed record TrackInfo(
     string? Color = null, string? Comment = null, bool? Loaded = null,
     double? Pan = null, string? ChannelRole = null,
     long? SourceEndOffset = null, ushort? SourceClassVersion = null,
-    long? SourceBodyBytes = null, string? SourceClassEncoding = null);
+    long? SourceBodyBytes = null, string? SourceClassEncoding = null,
+    long? CandidateTrackListOffset = null, int? CandidateTrackListPosition = null,
+    int? CandidateTrackListObservedCount = null,
+    long? CandidateFolderTrackOffset = null);
+
+/// <summary>An automation lane belongs to a track; unresolved ownership is explicit, never a fabricated track.</summary>
+public sealed record AutomationLaneInfo(string Id, string Name, string? OwnerTrackId,
+    EvidenceLevel Evidence, string RelationshipSource, long? SourceOffset = null,
+    string? SourceRecordClass = null, long? SourceEndOffset = null);
 
 public sealed record RoutingEdge(string FromChannelId, string ToChannelId, string Kind,
     double? Level = null, bool? Enabled = null, string? Tap = null,
@@ -130,7 +138,8 @@ public sealed record ProjectSnapshot(
     bool HasTempoAutomation = false,
     IReadOnlyList<CprRif2MidiNoteCandidate>? NativeMidiNoteCandidates = null,
     string? SourceSha256 = null,
-    IReadOnlyList<CprAudioMediaReferenceCandidate>? NativeAudioMediaCandidates = null);
+    IReadOnlyList<CprAudioMediaReferenceCandidate>? NativeAudioMediaCandidates = null,
+    IReadOnlyList<AutomationLaneInfo>? AutomationLanes = null);
 
 /// <summary>Declared VST3 audio processing class; supplied by an installed bundle's moduleinfo.json.</summary>
 public sealed record InstalledPluginClass(string Cid, string Name, string? Manufacturer,
@@ -209,7 +218,10 @@ public interface IReportService
 // CPR details are structural observations, not confirmed Cubase track/plugin data.
 public sealed record CprTrackHint(string RecordClass, string? Name, long ArchiveOffset,
     string? NameSource = null, long? ArchiveEndOffset = null,
-    ushort? ClassVersion = null, long? BodyBytes = null, string? ClassEncoding = null);
+    ushort? ClassVersion = null, long? BodyBytes = null, string? ClassEncoding = null,
+    long? CandidateTrackListOffset = null, int? CandidateTrackListPosition = null,
+    int? CandidateTrackListObservedCount = null,
+    long? CandidateFolderTrackOffset = null);
 public sealed record CprChunkSummary(string Id, long Offset, long PayloadBytes, string? StreamName, string? ArchiveClass);
 
 /// <summary>

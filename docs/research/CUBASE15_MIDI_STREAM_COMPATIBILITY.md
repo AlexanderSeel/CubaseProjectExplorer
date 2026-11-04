@@ -232,7 +232,10 @@ references. Unsupported feature-dependent prefixes remain opaque.
 
 Exact `0x80`/`0x90` packets produce note candidates. Supported `0xB0`/`0xD0`/`0xE0`
 packets are skipped by their verified scalar extent when their revision-0 class
-declarations are available. A zero discriminator can skip a bounded class object
+declarations are available. The [2026-11-02 callback extension](CUBASE15_PACKED_EVENT_CALLBACKS.md)
+adds bounded skipping for `0xA0`/`0xC0` base-only events, `0x70` chord and `0x40`
+note-change suffixes, and duplicated-length `0xF0` SysEx payloads under their own
+revision-0 gates. Score events (`0x30`) remain unsupported. A zero discriminator can skip a bounded class object
 or a supported existing-object/null token; typed note bodies are still inspected
 once through arrangement traversal. Unsupported attributes/discriminators or
 malformed complete lists do not permit searching forward for zero-attribute
@@ -253,6 +256,13 @@ The shared class reader remains an inspection subset. In particular, its lazy
 missing-table fallback recursively walks the declaration chain. They are not
 claimed to emulate identical object state. Full object-table reconstruction and
 native fallback equivalence remain separate validation work.
+
+The additional callbacks preserve earlier notes and return an explicit partial
+result when an event has unsupported class metadata, attributes or SysEx bounds;
+no part-level heuristic scan resumes inside that payload. New synthetic tests
+and a paired 80-file local sample are recorded in the callback-extension report.
+The following 2026-11-01 results remain the historical checkpoint for the earlier
+subset.
 
 Final checks on 2026-11-01:
 

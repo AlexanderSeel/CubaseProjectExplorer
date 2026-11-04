@@ -27,7 +27,8 @@ public partial class App : Application
     [SuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "Uno.Extensions APIs are used in a way that is safe for trimming in this template context.")]
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        var preferences = new AppPreferencesService();
+        // An explicit preference file allows isolated demo/visual-review sessions.
+        var preferences = new AppPreferencesService(Environment.GetEnvironmentVariable("CPE_PREFERENCES_PATH"));
         preferences.Load();
         var databasePath = LibraryDatabasePathResolver.Resolve(preferences.DatabasePath,
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));

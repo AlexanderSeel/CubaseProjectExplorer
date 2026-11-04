@@ -54,11 +54,19 @@ internal sealed partial class WorkspacePageFactory
             });
         root.Children.Add(browser);
         var empty = Empty("No matching records. Try another name, path, project, or type.");
+        void UpdateEmptyText()
+        {
+            if (empty.Child is TextBlock text) text.Text = string.IsNullOrWhiteSpace(viewModel.Query)
+                ? "Search for a project, plug-in, track or audio file to get started."
+                : "No matching records. Try another name, path, project, or type.";
+        }
+        UpdateEmptyText();
         empty.Visibility = viewModel.IsBusy || viewModel.IsSearching || viewModel.Results.Count > 0
             ? Visibility.Collapsed : Visibility.Visible;
         root.Children.Add(empty);
         PropertyChangedEventHandler changed = (_, args) =>
         {
+            if (args.PropertyName == nameof(viewModel.Query)) UpdateEmptyText();
             if (args.PropertyName is nameof(viewModel.Status) or nameof(viewModel.TotalMatches) or nameof(viewModel.IsBusy))
                 status.Text = viewModel.Status;
             if (args.PropertyName is nameof(viewModel.IsBusy) or nameof(viewModel.IsSearching) or nameof(viewModel.TotalMatches))
@@ -94,15 +102,15 @@ internal sealed partial class WorkspacePageFactory
             case "Plug-in":
                 if (result.Project is not null)
                 {
-                    await shell.Library.OpenProjectAsync(result.Project.FilePath);
-                    if (shell.HasProject) { shell.NavigateTo("Plugins"); navigate("Plugins"); }
+                    if (await shell.Library.OpenProjectAsync(result.Project.FilePath))
+                    { shell.NavigateTo("Plugins"); navigate("Plugins"); }
                 }
                 break;
             default:
                 if (result.Project is not null)
                 {
-                    await shell.Library.OpenProjectAsync(result.Project.FilePath);
-                    if (shell.HasProject) { shell.NavigateTo("Overview"); navigate("Overview"); }
+                    if (await shell.Library.OpenProjectAsync(result.Project.FilePath))
+                    { shell.NavigateTo("Overview"); navigate("Overview"); }
                 }
                 break;
         }

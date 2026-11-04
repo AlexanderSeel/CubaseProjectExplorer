@@ -71,7 +71,7 @@ Remove-Item Env:CPE_CPR_FIXTURE_DIR
 
 The optional test checks file hashes, read-only inspection, 14 chunks and
 all sixteen expected note number, position, duration and velocity values.
-Without `CPE_CPR_FIXTURE_DIR`, the private test returns immediately;
+Without `CPE_CPR_FIXTURE_DIR`, the private tests explicitly report skipped;
 independent synthetic tests still run on all platforms and in CI.
 
 The existing `scripts/Test-PrivateCprFixtures.ps1` can also inspect

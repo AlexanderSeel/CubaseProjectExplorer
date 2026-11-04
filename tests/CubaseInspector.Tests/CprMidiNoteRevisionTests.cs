@@ -58,17 +58,19 @@ public sealed class CprMidiNoteRevisionTests
         return bytes;
     }
 
+    private static byte[] EventDeclaration(bool wide, ushort? revision) => revision is ushort version
+        ? Join(Number((wide ? ulong.MaxValue : uint.MaxValue) - 1, wide), Name("MMidiEvent", version),
+            Record("UnrelatedCarrier", 0, [], wide)) : [];
+
     private static byte[] Project(bool wide, ushort? eventRevision, ushort noteRevision, byte[] body,
-        bool conflictingRevision = false, bool futureBase = false, bool conflictingNote = false)
+        bool conflictingRevision = false, bool futureBase = false, bool conflictingNote = false,
+        byte[]? before = null, byte[]? after = null)
     {
-        var declaration = eventRevision is ushort version
-            ? Join(Number((wide ? ulong.MaxValue : uint.MaxValue) - 1, wide), Name("MMidiEvent", version),
-                Record("UnrelatedCarrier", 0, [], wide))
-            : Array.Empty<byte>();
+        var declaration = EventDeclaration(wide, eventRevision);
         if (conflictingRevision)
             declaration = Join(declaration, Record("MMidiEvent", 1, [], wide));
         var note = Record("MMidiNote", noteRevision, body, wide);
-        var archive = futureBase ? Join(note, declaration) : Join(declaration, note);
+        var archive = futureBase ? Join(note, declaration) : Join(declaration, before ?? [], note, after ?? []);
         if (conflictingNote) archive = Join(archive, Record("MMidiNote", 0, [], wide));
         var stream = Encoding.ASCII.GetBytes("Arrangement1");
         var cls = Encoding.ASCII.GetBytes("PArrangement");
@@ -76,6 +78,157 @@ public sealed class CprMidiNoteRevisionTests
                 Number((uint)cls.Length), cls), wide), Chunk("ARCH", archive, wide));
         return Join(Encoding.ASCII.GetBytes(wide ? "RIF2" : "RIFF"), Number((uint)chunks.Length, wide),
             Encoding.ASCII.GetBytes("NUND"), chunks);
+    }
+
+    private static byte[] ObjectBody(byte[] value, uint id = 0x53634172, ushort flags = 0x22)
+    {
+        var note = Body(2, 1, 0);
+        var prefix = note[..17];
+        BinaryPrimitives.WriteUInt32BigEndian(prefix.AsSpan(13), 2);
+        var type = new byte[2];
+        BinaryPrimitives.WriteUInt16BigEndian(type, flags);
+        return Join(prefix, Number(id), type, value, Body(2, 1, 1)[17..31], note[^25..]);
+    }
+
+    [Fact]
+    public async Task TypedNoteBudgetPreservesEarlierCandidatesAndStillFindsLaterTrackRecords()
+    {
+        var note = Record("MMidiNote", 1, Body(2, 1, 0), false);
+        var following = Join(Join(Enumerable.Repeat(note, 10000).ToArray()),
+            Record("MAudioTrackEvent", 0, [], false));
+        var bytes = Project(false, 2, 1, Body(2, 1, 0), after: following);
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cpr");
+        try
+        {
+            await File.WriteAllBytesAsync(path, bytes);
+            var result = await new CprStructureInspector().InspectAsync(path);
+            Assert.True(result.IsSuccess, result.Error?.Message);
+            Assert.Equal(10000, result.Value!.Arrangement!.MidiNoteCandidates!.Count);
+            Assert.True(result.Value.Arrangement.Partial);
+            Assert.Contains("10,000 MIDI note candidate limit", result.Value.Arrangement.LimitReasons!);
+            Assert.Contains(result.Value.Arrangement.TrackHints!, hint => hint.RecordClass == "MAudioTrackEvent");
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 0)]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    [InlineData(false, 2)]
+    [InlineData(true, 2)]
+    [InlineData(false, 3)]
+    [InlineData(true, 3)]
+    [InlineData(false, 4)]
+    [InlineData(true, 4)]
+    public async Task TypedNotesUseExactOpaqueObjectBoundariesAndPreserveRawTailBits(bool wide, int kind)
+    {
+        var payload = new byte[] { 0x90, 0xFF, 0x00, 0x42 };
+        var collection = Record(kind == 4 ? "CmString" : "CmAttribCollection", 0, payload, wide);
+        var before = kind == 2 ? collection : Array.Empty<byte>();
+        var objectId = EventDeclaration(wide, 2).Length + collection.Length - payload.Length - (wide ? 8 : 4);
+        var value = kind switch
+        {
+            1 => Number(0, wide),
+            2 => Number((ulong)objectId, wide),
+            3 => Join(Number((wide ? ulong.MaxValue : uint.MaxValue) - 1, wide),
+                Name("MParamEventCurveBase", 0), Record("MParamEventCurveRationalBezier", 0, payload, wide)),
+            _ => collection
+        };
+        var body = ObjectBody(value, kind == 3 ? 0x624F7563U : 0x53634172U,
+            kind == 3 ? (ushort)2 : kind == 4 ? (ushort)8 : (ushort)0x22);
+        var bytes = Project(wide, 2, 1, body, before: before);
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cpr");
+        try
+        {
+            await File.WriteAllBytesAsync(path, bytes);
+            var result = await new CprStructureInspector().InspectAsync(path);
+            Assert.True(result.IsSuccess, result.Error?.Message);
+            var note = Assert.Single(result.Value!.Arrangement!.MidiNoteCandidates!);
+            Assert.Equal(-2.5, note.PositionTicks);
+            Assert.Equal(120, note.DurationTicks);
+            Assert.Equal(64, note.MidiPitch);
+            Assert.Equal((ushort)0x8001, note.RawFlags);
+            Assert.Contains("attributes were not applied", note.Evidence);
+            var record = Assert.Single(Assert.Single(result.Value.ArchiveInventories!).Records,
+                item => item.ClassName == "MMidiNote");
+            Assert.Equal(10, record.RawFields!.Count);
+            Assert.Contains(record.RawFields, field => field.RawHex == "7FF8000000001234");
+            Assert.Contains(record.RawFields, field => field.RawHex == "8000000000000000");
+            Assert.All(record.RawFields, field => Assert.Equal(Convert.ToHexString(
+                bytes.AsSpan((int)field.FileOffset, field.ByteCount)), field.RawHex));
+            var snapshot = await new CprEvidenceReader().ReadAsync(path);
+            Assert.Single(snapshot.Value!.NativeMidiNoteCandidates!);
+            Assert.Empty(snapshot.Value.MidiNotes ?? []);
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(path));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NoteLikeRecordsInsideTypedNoteAttributesNeverBecomeArrangementNotes(bool wide)
+    {
+        var fakeNote = Record("MMidiNote", 1, Body(2, 1, 0), wide);
+        foreach (var supported in new[] { true, false })
+        {
+            var value = Record(supported ? "CmAttribCollection" : "UnsupportedCollection", 0, fakeNote, wide);
+            var bytes = Project(wide, 2, 1, ObjectBody(value));
+            var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cpr");
+            try
+            {
+                await File.WriteAllBytesAsync(path, bytes);
+                var result = await new CprStructureInspector().InspectAsync(path);
+                Assert.True(result.IsSuccess);
+                Assert.Equal(supported ? 1 : 0, result.Value!.Arrangement!.MidiNoteCandidates!.Count);
+                Assert.Equal(2, Assert.Single(result.Value.ArchiveInventories!).Records.Count(r => r.ClassName == "MMidiNote"));
+                if (!supported) Assert.Contains(result.Value.Arrangement.LimitReasons!, reason => reason.Contains("Attribute ID"));
+            }
+            finally { File.Delete(path); }
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TypedObjectUnknownClassesFlagsRevisionsAndForwardReferencesStayOpaque(bool wide)
+    {
+        var payload = new byte[] { 0, 1, 2, 3 };
+        var collection = Record("CmAttribCollection", 0, payload, wide);
+        var wrongLength = collection.ToArray();
+        var width = wide ? 8 : 4;
+        Number(10000, wide).CopyTo(wrongLength, wrongLength.Length - payload.Length - width);
+        var placeholder = ObjectBody(Number(0, wide));
+        var futureId = EventDeclaration(wide, 2).Length + Record("MMidiNote", 1, placeholder, wide).Length +
+            collection.Length - payload.Length - width;
+        var cases = new[]
+        {
+            ObjectBody(Record("OtherCollection", 0, payload, wide)),
+            ObjectBody(Record("CmAttribCollection", 1, payload, wide)),
+            ObjectBody(wrongLength), ObjectBody(Number(123456, wide)),
+            ObjectBody(Number((ulong)futureId, wide)),
+            ObjectBody(collection, flags: 8), ObjectBody(collection, flags: 0x102),
+            ObjectBody(Record("MParamEventCurveRationalBezier", 0, payload, wide), 0x624F7563, 2),
+            ObjectBody(collection)[..^1], Join(ObjectBody(collection), [0])
+        };
+        foreach (var body in cases)
+        {
+            var bytes = Project(wide, 2, 1, body, after: collection);
+            var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cpr");
+            try
+            {
+                await File.WriteAllBytesAsync(path, bytes);
+                var result = await new CprStructureInspector().InspectAsync(path);
+                Assert.True(result.IsSuccess, result.Error?.Message);
+                Assert.Empty(result.Value!.Arrangement!.MidiNoteCandidates!);
+                Assert.True(result.Value.Arrangement.Partial);
+                Assert.All(Assert.Single(result.Value.ArchiveInventories!).Records.Where(r => r.ClassName == "MMidiNote"),
+                    record => Assert.Empty(record.RawFields!));
+            }
+            finally { File.Delete(path); }
+        }
     }
 
     [Theory]

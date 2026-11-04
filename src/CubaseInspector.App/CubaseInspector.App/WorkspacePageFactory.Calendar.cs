@@ -11,7 +11,7 @@ internal sealed partial class WorkspacePageFactory
     private UIElement CalendarPage()
     {
         var entries = shell.Library.AllEntries;
-        var root = Page("Project Calendar", "Project file modification dates only · they do not represent song creation or recording dates.");
+        var root = Page("Project calendar", "Browse sessions by their file modification date. Recording and creation dates are not verified.");
         var dateCounts = ProjectCalendarBrowser.CountsByLocalFileModifiedDate(entries);
         if (entries.Count == 0)
         {
@@ -24,8 +24,8 @@ internal sealed partial class WorkspacePageFactory
             var button = new Button { Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
             button.Click += async (_, _) =>
             {
-                await shell.Library.OpenProjectAsync(entry.Project.FilePath);
-                if (shell.HasProject) { shell.NavigateTo("Overview"); navigate("Overview"); }
+                if (await shell.Library.OpenProjectAsync(entry.Project.FilePath))
+                { shell.NavigateTo("Overview"); navigate("Overview"); }
             };
             var row = new Grid { ColumnSpacing = 12 };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
@@ -79,17 +79,19 @@ internal sealed partial class WorkspacePageFactory
                 var activeDays = dateCounts.Count(pair => pair.Key.Year == selectedYear && pair.Key.Month == monthNumber);
                 var content = new StackPanel { Spacing = 3, Children =
                 {
-                    new TextBlock { Text = culture.DateTimeFormat.GetMonthName(monthNumber), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
+                    new TextBlock { Text = culture.DateTimeFormat.GetMonthName(monthNumber), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                        Foreground = monthNumber == selectedMonth ? Accent : Muted },
                     new TextBlock { Text = $"{count:N0} files · {activeDays:N0} active dates",
                         Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] }
                 } };
                 var button = new Button
                 {
                     Content = content,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
                     HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                    Background = monthNumber == selectedMonth ? Accent : Surface,
+                    Background = Surface,
                     BorderBrush = monthNumber == selectedMonth ? Accent : Divider,
-                    BorderThickness = new Thickness(1),
+                    BorderThickness = new Thickness(monthNumber == selectedMonth ? 2 : 1),
                     Padding = new Thickness(12),
                     MinHeight = 68,
                     Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"]

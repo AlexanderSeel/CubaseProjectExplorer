@@ -8,31 +8,73 @@ namespace CubaseInspector.App;
 internal sealed partial class WorkspacePageFactory
 {
     private static readonly Thickness PageInset = new(0, 2, 0, 16);
-    private static readonly Thickness SectionInset = new(18);
+    private static readonly Thickness SectionInset = new(12);
     private static SolidColorBrush ResourceBrush(string key) => (SolidColorBrush)Application.Current.Resources[key];
-    private static readonly SolidColorBrush Surface = ResourceBrush("InspectorSurfaceBrush");
-    private static readonly SolidColorBrush Accent = ResourceBrush("InspectorAccentBrush");
-    private static readonly SolidColorBrush Muted = ResourceBrush("InspectorTextSecondaryBrush");
-    private static readonly SolidColorBrush Divider = ResourceBrush("InspectorDividerBrush");
-    private static readonly SolidColorBrush Notice = ResourceBrush("InspectorNoticeBrush");
+    private static SolidColorBrush Surface => ResourceBrush("InspectorSurfaceBrush");
+    private static SolidColorBrush Accent => ResourceBrush("InspectorAccentBrush");
+    private static SolidColorBrush Muted => ResourceBrush("InspectorTextSecondaryBrush");
+    private static SolidColorBrush Divider => ResourceBrush("InspectorDividerBrush");
+    private static SolidColorBrush Notice => ResourceBrush("InspectorNoticeBrush");
     private readonly Dictionary<StackPanel, StackPanel> _pageToolbars = [];
+
+    private UIElement StudioToolsPage()
+    {
+        var root = Page("Studio tools", "Search, compare and manage your studio library. Session views stay one click away in the sidebar.");
+        var tiles = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
+        for (var i = 0; i < 3; i++) tiles.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (var i = 0; i < 9; i++) tiles.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        foreach (var (title, description, page) in new[]
+        {
+            ("Search everything", "Find projects, audio, MIDI and plug-in references", "Search"),
+            ("Project calendar", "Explore sessions by file date", "Calendar"),
+            ("Insights", "See your library and project usage", "Statistics"),
+            ("Compare projects", "Review changes between two sessions", "Compare"),
+            ("Plug-in inventory", "Review local plug-in metadata", "Inventory"),
+            ("Plug-in catalog", "Browse saved product information", "Catalog"),
+            ("Dependency preflight", "Check exported plug-in references", "Preflight"),
+            ("Reports", "Prepare session summaries and exports", "Tools"),
+            ("Library database", "Backup, inspect and manage indexed data", "Database")
+        })
+        {
+            var row = new StackPanel { Spacing = 4, Children =
+            {
+                new TextBlock { Text = title, FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
+                new TextBlock { Text = description, FontSize = 12, Foreground = Muted, TextWrapping = TextWrapping.Wrap }
+            } };
+            var button = new Button { Content = row, Padding = new Thickness(14),
+                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
+            AutomationProperties.SetName(button, title);
+            ToolTipService.SetToolTip(button, description);
+            button.Click += (_, _) => navigate(page);
+            tiles.Children.Add(button);
+        }
+        tiles.SizeChanged += (_, args) =>
+        {
+            var columns = args.NewSize.Width >= 1100 ? 3 : args.NewSize.Width >= 650 ? 2 : 1;
+            for (var i = 0; i < 3; i++) tiles.ColumnDefinitions[i].Width = i < columns ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+            for (var i = 0; i < tiles.Children.Count; i++) { Grid.SetColumn((FrameworkElement)tiles.Children[i], i % columns); Grid.SetRow((FrameworkElement)tiles.Children[i], i / columns); }
+        };
+        root.Children.Add(tiles);
+        return root;
+    }
 
     private StackPanel Page(string title, string subtitle)
     {
-        var root = new StackPanel { Spacing = 16, Margin = PageInset,
+        var root = new StackPanel { Spacing = 12, Margin = PageInset,
             HorizontalAlignment = HorizontalAlignment.Stretch };
-        var heading = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        var heading = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
         heading.Children.Add(new TextBlock { Text = title, Style = (Style)Application.Current.Resources["InspectorPageTitleStyle"],
             TextTrimming = TextTrimming.CharacterEllipsis });
         heading.Children.Add(new TextBlock { Text = subtitle, Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"],
-            TextWrapping = TextWrapping.Wrap, MaxWidth = 760 });
+            TextWrapping = TextWrapping.Wrap, MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Left });
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8,
             HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
         var toolbarViewport = new ScrollViewer { Content = toolbar, MaxWidth = 760,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalAlignment = VerticalAlignment.Center };
-        var headerGrid = new Grid { ColumnSpacing = 24, MinHeight = 76 };
+        var headerGrid = new Grid { ColumnSpacing = 16, MinHeight = 48 };
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         headerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -40,19 +82,23 @@ internal sealed partial class WorkspacePageFactory
         headerGrid.Children.Add(heading);
         Grid.SetColumn(toolbarViewport, 1);
         headerGrid.Children.Add(toolbarViewport);
-        headerGrid.SizeChanged += (_, args) =>
+        void ArrangeHeader(double width)
         {
-            var compact = args.NewSize.Width < 760;
+            var compact = width < 900 || toolbar.DesiredSize.Width > width - 360;
             headerGrid.ColumnDefinitions[1].Width = compact
-                ? new GridLength(1, GridUnitType.Star)
+                ? new GridLength(0)
                 : GridLength.Auto;
             Grid.SetColumn(toolbarViewport, compact ? 0 : 1);
             Grid.SetRow(toolbarViewport, compact ? 1 : 0);
+            Grid.SetColumnSpan(toolbarViewport, compact ? 2 : 1);
             toolbarViewport.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
-            toolbar.Orientation = args.NewSize.Width < 520 ? Orientation.Vertical : Orientation.Horizontal;
-        };
-        root.Children.Add(new Border { BorderBrush = Divider, BorderThickness = new Thickness(0, 0, 0, 1),
-            Padding = new Thickness(0, 0, 0, 14), Child = headerGrid });
+            toolbar.Orientation = Orientation.Horizontal;
+            toolbarViewport.MaxWidth = Math.Max(0, compact ? width : width - 360);
+            toolbarViewport.Margin = new Thickness(0, compact && toolbar.Children.Count > 0 ? 8 : 0, 0, 0);
+        }
+        headerGrid.SizeChanged += (_, args) => ArrangeHeader(args.NewSize.Width);
+        toolbar.SizeChanged += (_, _) => ArrangeHeader(headerGrid.ActualWidth);
+        root.Children.Add(new Border { Padding = new Thickness(0, 0, 0, 4), Child = headerGrid });
         _pageToolbars[root] = toolbar;
         return root;
     }
@@ -68,7 +114,8 @@ internal sealed partial class WorkspacePageFactory
         var contentHost = new Grid();
         Grid.SetRow(commands, 0);
         Grid.SetRow(contentHost, 1);
-        tabs.Children.Add(commands);
+        tabs.Children.Add(new ScrollViewer { Content = commands, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
         tabs.Children.Add(contentHost);
         var buttons = new List<Button>();
         var selected = 0;
@@ -83,7 +130,7 @@ internal sealed partial class WorkspacePageFactory
                 buttons[i].IsEnabled = true;
                 buttons[i].Foreground = i == index ? Accent : Muted;
                 buttons[i].BorderBrush = i == index ? Accent : Divider;
-                buttons[i].BorderThickness = new Thickness(0, 0, 0, i == index ? 2 : 1);
+                buttons[i].BorderThickness = new Thickness(0, 0, 0, i == index ? 2 : 0);
                 AutomationProperties.SetName(buttons[i], $"{sections[i].Title} tab{(i == index ? ", selected" : "")}");
             }
         }
@@ -91,12 +138,11 @@ internal sealed partial class WorkspacePageFactory
         {
             var index = buttons.Count;
             var button = new Button { Content = title, Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"],
-                IsEnabled = true };
+                IsEnabled = true, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), CornerRadius = new CornerRadius(4) };
             button.Click += (_, _) => Show(index);
             buttons.Add(button);
             commands.Children.Add(button);
         }
-        tabs.SizeChanged += (_, args) => commands.Orientation = args.NewSize.Width < 560 ? Orientation.Vertical : Orientation.Horizontal;
         Show(Math.Clamp(initialIndex, 0, Math.Max(0, sections.Length - 1)));
         return tabs;
     }
@@ -128,23 +174,63 @@ internal sealed partial class WorkspacePageFactory
     private void ShowInformationWindow(string title, UIElement content, int width = 840, int height = 640) =>
         _ = InfoWindowPresenter.ShowAsync(xamlRoot, title, content, width, height);
 
+    private static void ResponsiveDetailColumns(Grid grid, FrameworkElement detail)
+    {
+        var detailWidth = grid.ColumnDefinitions[1].Width;
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowSpacing = 16;
+        grid.SizeChanged += (_, args) =>
+        {
+            var compact = args.NewSize.Width < 960;
+            grid.ColumnDefinitions[1].Width = compact ? new GridLength(0) : detailWidth;
+            Grid.SetColumn(detail, compact ? 0 : 1);
+            Grid.SetRow(detail, compact ? 1 : 0);
+        };
+    }
+
+    private static Grid MetricCards(params Border[] cards)
+    {
+        var grid = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
+        foreach (var card in cards) grid.Children.Add(card);
+        void Arrange(double width)
+        {
+            var columns = Math.Min(cards.Length, width >= 1100 ? 6 : width >= 760 ? 3 : width >= 480 ? 2 : 1);
+            if (grid.ColumnDefinitions.Count == columns) return;
+            grid.ColumnDefinitions.Clear();
+            grid.RowDefinitions.Clear();
+            for (var i = 0; i < columns; i++)
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (var i = 0; i < (cards.Length + columns - 1) / columns; i++)
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (var i = 0; i < cards.Length; i++)
+            {
+                Grid.SetColumn(cards[i], i % columns);
+                Grid.SetRow(cards[i], i / columns);
+            }
+        }
+        grid.SizeChanged += (_, args) => Arrange(args.NewSize.Width);
+        Arrange(900);
+        return grid;
+    }
+
     private Border Metric(string label, string value) => new()
     {
         Background = Surface, BorderBrush = Divider, BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(10), Padding = SectionInset,
-        Child = new StackPanel { Spacing = 4, Children = { new TextBlock { Text = label, Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
-            new TextBlock { Text = value, FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap } } }
+        CornerRadius = new CornerRadius(8), Padding = SectionInset,
+        Child = new StackPanel { Spacing = 6, Children = { new TextBlock { Text = label, Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], CharacterSpacing = 40 },
+            new TextBlock { Text = value, FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap } } }
     };
 
-    private Border Note(string text) => new() { Background = Notice, BorderBrush = Accent,
-        CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), Padding = new Thickness(14, 12), Margin = new Thickness(0, 2, 0, 2),
-        Child = new TextBlock { Text = text, Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], TextWrapping = TextWrapping.Wrap } };
+    private Border Note(string text) => new() { Background = Surface, BorderBrush = Divider,
+        CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1), Padding = new Thickness(12, 10),
+        Child = new TextBlock { Text = text, Foreground = Muted, Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], TextWrapping = TextWrapping.Wrap } };
 
     private Border Empty(string text) => new() { Background = Surface, BorderBrush = Divider, BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(10), Padding = new Thickness(20), Margin = new Thickness(0, 4, 0, 0),
-        Child = new TextBlock { Text = text, Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], Foreground = Muted } };
+        CornerRadius = new CornerRadius(8), Padding = new Thickness(16),
+        Child = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], Foreground = Muted } };
 
-    private StackPanel DetailCard(string heading, params (string Name, string Value)[] rows)
+    private Border DetailCard(string heading, params (string Name, string Value)[] rows)
     {
         var panel = new StackPanel { Background = Surface, Padding = SectionInset, Spacing = 10 };
         panel.Children.Add(new TextBlock { Text = heading, Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"], Foreground = Accent });
@@ -154,7 +240,8 @@ internal sealed partial class WorkspacePageFactory
             row.Children.Add(new TextBlock { Text = name, Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] });
             var val = new TextBlock { Text = value, Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], TextWrapping = TextWrapping.Wrap }; Grid.SetColumn(val, 1); row.Children.Add(val); panel.Children.Add(row);
         }
-        return panel;
+        return new Border { Child = panel, CornerRadius = new CornerRadius(10), Background = Surface,
+            BorderBrush = Divider, BorderThickness = new Thickness(1) };
     }
 
     private UIElement Section(string heading, IEnumerable<string> rows)
@@ -175,7 +262,7 @@ internal sealed partial class WorkspacePageFactory
         for (var i = 0; i < columns.Length; i++)
         {
             var label = new TextBlock { Text = columns[i].Label, FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromArgb(255, 171, 181, 194)), TextTrimming = TextTrimming.CharacterEllipsis };
+                Foreground = Muted, TextTrimming = TextTrimming.CharacterEllipsis };
             Grid.SetColumn(label, i); grid.Children.Add(label);
         }
         return new Border { Background = Surface, Child = grid };
@@ -215,6 +302,7 @@ internal sealed partial class WorkspacePageFactory
     {
         PlaceholderText = placeholder,
         Width = width,
+        VerticalAlignment = VerticalAlignment.Center,
         Style = (Style)Application.Current.Resources["InspectorFilterTextBoxStyle"]
     };
 }

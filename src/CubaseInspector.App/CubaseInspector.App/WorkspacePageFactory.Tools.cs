@@ -41,7 +41,8 @@ internal sealed partial class WorkspacePageFactory
         root.Children.Add(new TextBlock { Text = "Dependency results", Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"], Margin = new Thickness(0, 10, 0, 4) });
         if (vm.Rows.Count == 0) root.Children.Add(Empty("No confirmed dependency rows are available for this project's current evidence."));
         else root.Children.Add(Section("Confirmed project references", vm.Rows));
-        root.Children.Add(Section("Evidence and limitations", vm.Warnings));
+        root.Children.Add(new Expander { Header = "Reader evidence and limitations", HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = Section("Source details", vm.Warnings) });
         PropertyChangedEventHandler handler = (_, args) =>
         {
             if (args.PropertyName == nameof(ProjectPreflightViewModel.Status)) exportStatus.Text = vm.Status;
@@ -86,7 +87,6 @@ internal sealed partial class WorkspacePageFactory
         downloadImages.Checked += (_, _) => vm.DownloadProductImages = true;
         downloadImages.Unchecked += (_, _) => vm.DownloadProductImages = false;
         AddPageActions(root, catalogImport, loadDatabase);
-        root.Children.Add(downloadImages);
 
         var source = new TextBlock { Text = vm.Source, Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"], Margin = new Thickness(0, 8, 0, 2) };
         var status = new TextBlock { Text = vm.Status, Style = (Style)Application.Current.Resources["InspectorBodyTextStyle"], TextWrapping = TextWrapping.Wrap };
@@ -95,7 +95,11 @@ internal sealed partial class WorkspacePageFactory
         var apiAddress = FilterTextBox("PluginDB API base URL", 300);
         apiAddress.Text = vm.ApiBaseAddress;
         apiAddress.TextChanged += (_, _) => vm.ApiBaseAddress = apiAddress.Text;
-        root.Children.Add(apiAddress);
+        apiAddress.Header = "Plug-in catalog API URL";
+        apiAddress.Height = double.NaN;
+        var sourceOptions = new StackPanel { Spacing = 8, Children = { apiAddress, downloadImages } };
+        root.Children.Add(new Expander { Header = "Catalog source settings", HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = sourceOptions });
         var filters = new Grid { ColumnSpacing = 10, Margin = new Thickness(0, 12, 0, 8) };
         filters.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
         filters.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -172,11 +176,12 @@ internal sealed partial class WorkspacePageFactory
         vm.Results.CollectionChanged += catalogRowsChanged;
         root.Unloaded += (_, _) => vm.Results.CollectionChanged -= catalogRowsChanged;
         UpdateCatalogEmpty();
-        var body = new Grid { ColumnSpacing = 12, MinHeight = 300 };
+        var body = new Grid { ColumnSpacing = 12 };
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(5, GridUnitType.Star) });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4, GridUnitType.Star) });
         var catalogResults = new StackPanel { Spacing = 2, Children = { resultsEmpty, results } };
         Grid.SetColumn(catalogResults, 0); Grid.SetColumn(details, 1); body.Children.Add(catalogResults); body.Children.Add(details);
+        ResponsiveDetailColumns(body, details);
         root.Children.Add(body);
 
         PropertyChangedEventHandler handler = (_, args) =>
@@ -297,20 +302,13 @@ internal sealed partial class WorkspacePageFactory
             ("Reader evidence", EvidencePresentation.Label(project.Evidence)), ("Source", project.FilePath));
         root.Children.Add(summary);
 
-        var metrics = new Grid { ColumnSpacing = 10, RowSpacing = 10, Margin = new Thickness(0, 4, 0, 10) };
-        for (var column = 0; column < 3; column++) metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        for (var row = 0; row < 2; row++) metrics.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var values = new[]
         {
             ("TRACK RECORDS", project.Tracks.Count), ("PLUG-IN REFERENCES", project.Plugins.Count),
             ("ROUTES", project.Routing.Count), ("EXPORTED MIDI NOTES", project.MidiNotes?.Count ?? 0),
             ("AUDIO REFERENCES", project.MediaReferences?.Count ?? 0), ("READER WARNINGS", project.Warnings.Count)
         };
-        for (var index = 0; index < values.Length; index++)
-        {
-            var metric = Metric(values[index].Item1, values[index].Item2.ToString("N0"));
-            Grid.SetColumn(metric, index % 3); Grid.SetRow(metric, index / 3); metrics.Children.Add(metric);
-        }
+        var metrics = MetricCards(values.Select(value => Metric(value.Item1, value.Item2.ToString("N0"))).ToArray());
         var coverageFields = ProjectFieldCoverage.Evaluate(project);
         var overview = new StackPanel { Spacing = 10 };
         overview.Children.Add(metrics);
@@ -431,7 +429,6 @@ internal sealed partial class WorkspacePageFactory
             2 => ElementTheme.Default,
             _ => ElementTheme.Dark
         });
-        AddPageActions(root, theme);
 
         var scanTypes = shell.ProjectScanTypes;
         var scanSettings = new StackPanel { Spacing = 8, Background = Surface, Padding = SectionInset,
@@ -498,10 +495,18 @@ internal sealed partial class WorkspacePageFactory
         scanDawproject.Unchecked += (_, _) => SaveScanTypes();
         root.Children.Add(scanSettings);
         var appVersion = typeof(App).Assembly.GetName().Version?.ToString(4) ?? "Unknown";
-        root.Children.Add(DetailCard("APPEARANCE", ("Theme", "Select the application appearance."),
-            ("Density", "Compact workspace layout")));
+        var appearance = new StackPanel { Spacing = 8, Background = Surface, Padding = SectionInset };
+        appearance.Children.Add(new TextBlock { Text = "Appearance", Style = (Style)Application.Current.Resources["InspectorSectionTitleStyle"] });
+        var themeRow = new Grid { ColumnSpacing = 12 };
+        themeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+        themeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        themeRow.Children.Add(new TextBlock { Text = "Theme", VerticalAlignment = VerticalAlignment.Center,
+            Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] });
+        Grid.SetColumn(theme, 1);
+        themeRow.Children.Add(theme);
+        appearance.Children.Add(themeRow);
+        root.Children.Add(appearance);
         root.Children.Add(DetailCard("ABOUT", ("Application", "Cubase Project Explorer"), ("Version", appVersion)));
-        root.Children.Add(theme);
         root.Children.Add(Note("Some project information may need review. See Help & reader FAQ for detail. Project files are opened read-only."));
         return root;
     }
@@ -510,25 +515,15 @@ internal sealed partial class WorkspacePageFactory
     {
         var admin = shell.LibraryAdmin;
         var root = Page("Database administration", "Manage this library’s indexed metadata, backups, transfers and maintenance.");
-        var metricsGrid = new Grid { ColumnSpacing = 10, RowSpacing = 10, Margin = new Thickness(0, 10, 0, 8) };
-        metricsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        metricsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        metricsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var metricCards = new[]
         {
             Metric("INDEXED PROJECTS", admin.Projects), Metric("LOCAL PLUG-INS", admin.Plugins),
             Metric("CATALOG PRODUCTS", admin.CatalogProducts), Metric("SCAN FOLDERS", admin.Folders),
             Metric("MEDIA / MIDI INDEXES", admin.AssetIndexes), Metric("DATABASE FILE", admin.DatabaseSize)
         };
-        for (var i = 0; i < metricCards.Length; i++)
-        {
-            Grid.SetColumn(metricCards[i], i % 3); Grid.SetRow(metricCards[i], i / 3);
-            metricsGrid.Children.Add(metricCards[i]);
-        }
-        metricsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        metricsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var metricsGrid = MetricCards(metricCards);
         root.Children.Add(metricsGrid);
-        StackPanel DatabaseLocation() => DetailCard("DATABASE LOCATION", ("Active this session", admin.DatabasePath),
+        Border DatabaseLocation() => DetailCard("DATABASE LOCATION", ("Active this session", admin.DatabasePath),
             ("Selected for next launch", admin.NextLaunchDatabasePath), ("Write-ahead log", admin.JournalSize));
         var location = DatabaseLocation();
         root.Children.Add(location);

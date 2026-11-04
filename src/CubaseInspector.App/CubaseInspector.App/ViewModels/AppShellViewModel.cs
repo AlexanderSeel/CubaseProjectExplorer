@@ -14,7 +14,7 @@ public sealed partial class AppShellViewModel : ObservableObject
     private readonly AppPreferencesService _preferences;
     private readonly LibraryDatabasePathResolution _databasePathResolution;
 
-    [ObservableProperty] private string _currentPage = "Overview";
+    [ObservableProperty] private string _currentPage = "Home";
     [ObservableProperty] private string _status = "Read-only project inspection";
     [ObservableProperty] private bool _isBusy;
 

@@ -13,7 +13,7 @@ internal sealed partial class WorkspacePageFactory
 {
     private UIElement LibraryPage()
     {
-        var root = Page("Project Library", "Find and review your Cubase and DAWproject sessions.");
+        var root = Page("Projects", "Find your next session. Explore the tracks, instruments and media inside.");
         var summary = new TextBlock { FontSize = 12, Foreground = Muted, VerticalAlignment = VerticalAlignment.Center };
         void UpdateSummary() => summary.Text = shell.Library.VisibleSummary;
         UpdateSummary();
@@ -42,7 +42,9 @@ internal sealed partial class WorkspacePageFactory
         }
         var export = new Button { Content = "Export visible…", Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
         export.Click += (_, _) => exportMenu.ShowAt(export);
-        AddPageActions(root, rescan, export);
+        var addFolder = Button("Add folder", async () => { await shell.ScanFolderCommand.ExecuteAsync(null); navigate("Projects"); });
+        addFolder.Style = (Style)Application.Current.Resources["InspectorPrimaryButtonStyle"];
+        AddPageActions(root, addFolder, rescan, export);
 
         var topBar = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 2, 0, 0) };
         topBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -72,14 +74,16 @@ internal sealed partial class WorkspacePageFactory
         var warnings = new CheckBox { Content = "Warnings only", VerticalAlignment = VerticalAlignment.Center, IsChecked = shell.Library.WarningsOnly };
         warnings.Checked += (_, _) => shell.Library.WarningsOnly = true;
         warnings.Unchecked += (_, _) => shell.Library.WarningsOnly = false;
-        var clear = Button("Clear filters", () =>
+        void ClearFilters()
         {
+            search.Text = "";
             fileType.SelectedItem = "All";
             evidence.SelectedItem = "All";
             version.Text = "";
             folder.Text = "";
             warnings.IsChecked = false;
-        });
+        }
+        var clear = Button("Clear filters", ClearFilters);
         void UpdateFilterButton()
         {
             var active = 0;
@@ -143,13 +147,18 @@ internal sealed partial class WorkspacePageFactory
             new("Modified", "Modified", row => row.Modified, row => row.Entry.LastModifiedUtc),
             new("File size", "FileSize", row => row.FileSize, row => row.Entry.SizeBytes)
         };
-        var browser = new DataBrowserControl<LibraryProjectRow>(columns, shell.Library.Projects,
+        DataBrowserControl<LibraryProjectRow>? browser = null;
+        browser = new DataBrowserControl<LibraryProjectRow>(columns, shell.Library.Projects,
             ProjectLibraryGrouping.Modes, shell.Library.GroupMode,
             (row, mode) => ProjectLibraryGrouping.Key(row.Entry, mode, shell.Library.LastScannedFolder),
             mode => shell.Library.GroupMode = mode,
             async row =>
             {
-                await shell.Library.SelectProjectAsync(row);
+                if (!await shell.Library.SelectProjectAsync(row))
+                {
+                    browser?.SelectItem(null);
+                    return;
+                }
                 shell.NavigateTo("Overview");
                 navigate("Overview");
             },
@@ -159,23 +168,29 @@ internal sealed partial class WorkspacePageFactory
                 var inspect = new MenuFlyoutItem { Text = "Inspect project" };
                 inspect.Click += async (_, _) =>
                 {
-                    await shell.Library.SelectProjectAsync(row);
+                    if (!await shell.Library.SelectProjectAsync(row)) return;
                     shell.NavigateTo("Overview");
                     navigate("Overview");
                 };
                 menu.Items.Add(inspect);
                 return menu;
-            });
+            }, cardsInitiallyVisible: true);
         root.Children.Add(browser);
 
         var emptyMessage = new TextBlock { FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             HorizontalAlignment = HorizontalAlignment.Center };
+        var emptyAction = Button("Scan folder…", async () =>
+        {
+            if (shell.Library.AllEntries.Count > 0) ClearFilters();
+            else { await shell.ScanFolderCommand.ExecuteAsync(null); navigate("Projects"); }
+        });
         var emptyPanel = new StackPanel { Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center, Children = { emptyMessage,
                 new TextBlock { Text = "Scan a folder or clear the active filters.", FontSize = 12, Foreground = Muted,
                     HorizontalAlignment = HorizontalAlignment.Center },
-                Button("Scan folder…", async () => { await shell.ScanFolderCommand.ExecuteAsync(null); navigate("Projects"); }) } };
+                emptyAction } };
         var emptyCard = new Border { Background = Surface, Padding = new Thickness(20), Height = 160,
+            CornerRadius = new CornerRadius(20), BorderBrush = Divider, BorderThickness = new Thickness(1),
             Margin = new Thickness(0, 8, 0, 0), Visibility = Visibility.Collapsed, Child = emptyPanel };
         void UpdateEmptyState()
         {
@@ -183,6 +198,7 @@ internal sealed partial class WorkspacePageFactory
             emptyCard.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
             browser.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
             emptyMessage.Text = shell.Library.AllEntries.Count == 0 ? "Your project library is empty." : "No projects match these filters.";
+            emptyAction.Content = shell.Library.AllEntries.Count == 0 ? "Scan folder…" : "Clear filters";
             UpdateSummary();
             export.IsEnabled = !empty && !shell.Library.IsBusy;
             rescan.IsEnabled = !shell.Library.IsBusy;

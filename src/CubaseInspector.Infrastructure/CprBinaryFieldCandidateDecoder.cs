@@ -35,12 +35,20 @@ public static class CprBinaryFieldCandidateDecoder
     public static IReadOnlyList<CprBinaryFieldCandidate> Read(CprClassRecordCandidate record,
         ReadOnlySpan<byte> archiveData, long archiveFileOffset,
         ushort? midiEventRevision = null, ushort? midiNoteRevision = null) =>
+<<<<<<< main
         ReadBounded(record, archiveData, archiveFileOffset, midiEventRevision, midiNoteRevision).Fields;
 
     public static CprBinaryFieldReadResult ReadBounded(CprClassRecordCandidate record,
         ReadOnlySpan<byte> archiveData, long archiveFileOffset,
         ushort? midiEventRevision = null, ushort? midiNoteRevision = null,
         int maximumFields = MaximumFieldsPerRecord)
+=======
+        ReadWithContext(record, archiveData, archiveFileOffset, midiEventRevision, midiNoteRevision, null);
+
+    internal static IReadOnlyList<CprBinaryFieldCandidate> ReadWithContext(CprClassRecordCandidate record,
+        ReadOnlySpan<byte> archiveData, long archiveFileOffset,
+        ushort? midiEventRevision, ushort? midiNoteRevision, CprMidiEventPrefixReader? prefixReader)
+>>>>>>> origin/main
     {
         ArgumentNullException.ThrowIfNull(record);
         if (maximumFields is < 0 or > MaximumFieldsPerRecord)
@@ -62,10 +70,15 @@ public static class CprBinaryFieldCandidateDecoder
         if (relative > archiveData.Length - record.BodyBytes) return new([], false);
         var body = archiveData.Slice((int)relative, (int)record.BodyBytes);
 
+<<<<<<< main
         if (isMidiNote) return Limit(midiNoteRevision == record.ClassVersion
             ? ReadMidiNote(record, body, midiEventRevision) : [], maximumFields);
 
         if (isTempoTrack) return ReadTempoTrack(record, body, maximumFields);
+=======
+        if (isMidiNote) return midiNoteRevision == record.ClassVersion
+            ? ReadMidiNote(record, body, midiEventRevision, prefixReader) : [];
+>>>>>>> origin/main
 
         if (isTimeSignature)
         {
@@ -156,15 +169,16 @@ public static class CprBinaryFieldCandidateDecoder
     }
 
     private static IReadOnlyList<CprBinaryFieldCandidate> ReadMidiNote(CprClassRecordCandidate record,
-        ReadOnlySpan<byte> body, ushort? midiEventRevision)
+        ReadOnlySpan<byte> body, ushort? midiEventRevision, CprMidiEventPrefixReader? prefixReader)
     {
         if (midiEventRevision is not ushort eventRevision ||
             record.ClassVersion is not ushort noteRevision ||
-            !CprMidiNoteLayout.TryLocate(body, eventRevision, noteRevision, out var layout)) return [];
+            !CprMidiNoteLayout.TryLocate(body, eventRevision, noteRevision, record.BodyFileOffset,
+                prefixReader, out var layout, out _)) return [];
         var source = "Cubase15.exe MMidiEvent reader 0x141bb0390 / MMidiNote reader 0x141bb4690; " +
             "SHA-256 b4a9c748537ead87981aebe18a01aae3acba8bfc76d1c1150c0054de75515aa0; " +
             $"MMidiEvent serialization version {eventRevision}, MMidiNote serialization version {noteRevision}; " +
-            "big-endian candidate; field semantics unverified; scalar attributes remain opaque; " +
+            "big-endian candidate; field semantics unverified; attributes remain opaque and are not applied to raw fields; " +
             "docs/research/CUBASE15_BACKWARD_COMPATIBILITY.md";
         var fields = new List<CprBinaryFieldCandidate>();
         fields.Add(DoubleField(0, body[..8]));

@@ -44,6 +44,7 @@ public sealed partial class ProjectLibraryViewModel(
     private readonly Dictionary<string, int> _checksumIndexes = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _scanCancellation;
     private CancellationTokenSource? _filterCancellation;
+    private TaskCompletionSource? _savedProjectsLoadCompletion;
     private bool _loadedSavedProjects;
     private ProjectScanTypes? _loadedProjectTypes;
 
@@ -108,6 +109,8 @@ public sealed partial class ProjectLibraryViewModel(
         if (_loadedSavedProjects && _loadedProjectTypes == selectedTypes) return;
         _loadedSavedProjects = true;
         _loadedProjectTypes = selectedTypes;
+        var loadCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _savedProjectsLoadCompletion = loadCompletion;
         var loadedSuccessfully = false;
         IsLoading = true;
         IsBusy = true;
@@ -143,12 +146,21 @@ public sealed partial class ProjectLibraryViewModel(
             IsBusy = false;
             Progress = 0;
             ProgressText = string.Empty;
+            _savedProjectsLoadCompletion = null;
+            loadCompletion.TrySetResult();
         }
     }
 
-    public async Task OpenProjectAsync(string path, CancellationToken cancellationToken = default)
+    public async Task<bool> OpenProjectAsync(string path, CancellationToken cancellationToken = default)
     {
-        if (IsBusy) return;
+        if (IsLoading && _savedProjectsLoadCompletion is { } loading)
+            await loading.Task.WaitAsync(cancellationToken);
+        if (IsBusy)
+        {
+            Status = "Wait for the current library operation to finish before opening a project.";
+            return false;
+        }
+
         IsBusy = true;
         ProgressText = "Reading project file…";
         Progress = 0;
@@ -160,7 +172,7 @@ public sealed partial class ProjectLibraryViewModel(
             {
                 Status = result.Error is null ? "The project could not be read." :
                     $"{result.Error.Code}: {result.Error.Message}";
-                return;
+                return false;
             }
 
             var project = result.Value;
@@ -193,6 +205,7 @@ public sealed partial class ProjectLibraryViewModel(
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             { Status = $"Opened {project.Name}, but the library refresh failed: {ex.Message}"; }
+            return true;
         }
         finally { IsBusy = false; ProgressText = string.Empty; Progress = 0; }
     }
@@ -365,10 +378,10 @@ public sealed partial class ProjectLibraryViewModel(
         finally { IsBusy = false; ProgressText = string.Empty; }
     }
 
-    public async Task SelectProjectAsync(LibraryProjectRow? row, CancellationToken cancellationToken = default)
+    public async Task<bool> SelectProjectAsync(LibraryProjectRow? row, CancellationToken cancellationToken = default)
     {
-        if (row is null) return;
-        await OpenProjectAsync(row.Project.FilePath, cancellationToken);
+        if (row is null) return false;
+        return await OpenProjectAsync(row.Project.FilePath, cancellationToken);
     }
 
     public void SelectProject(ProjectSnapshot? project)

@@ -154,6 +154,72 @@ public sealed class CprArchiveInventoryIntegrationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task RecognizesCandidateTrackListAndObservedChildOrder(bool wide)
+    {
+        var audio = Record("MAudioTrackEvent", [], wide, 1);
+        var midi = Record("MMidiTrackEvent", [], wide, 4);
+        var trackList = Record("MTrackList", Join(audio, midi), wide, 0);
+        var path = await WriteTemporary(Project(wide,
+            Root("Arrangement1", "PArrangement", wide), Chunk("ARCH", trackList, wide)));
+        try
+        {
+            var result = await new CprStructureInspector().InspectAsync(path);
+            Assert.True(result.IsSuccess, result.Error?.Message);
+            var hints = result.Value!.Arrangement!.TrackHints;
+            var listOffset = Assert.Single(result.Value.ArchiveInventories!.Single().Records,
+                record => record.ClassName == "MTrackList").HeaderFileOffset;
+            Assert.Equal(2, hints.Count);
+            Assert.All(hints, hint => Assert.Equal(listOffset, hint.CandidateTrackListOffset));
+            Assert.All(hints, hint => Assert.Null(hint.CandidateFolderTrackOffset));
+            Assert.Equal(new int?[] { 0, 1 }, hints.Select(hint => hint.CandidateTrackListPosition));
+            Assert.All(hints, hint => Assert.Equal(2, hint.CandidateTrackListObservedCount));
+            Assert.Contains("recognized track-class children only",
+                CprStructureInspector.ToMarkdown(result.Value));
+            Assert.Contains("Candidate MFolderTrack list owner",
+                CprStructureInspector.ToMarkdown(result.Value));
+
+            var project = await new CprEvidenceReader().ReadAsync(path);
+            Assert.True(project.IsSuccess, project.Error?.Message);
+            Assert.Equal(new int?[] { 0, 1 }, project.Value!.Tracks.Select(track => track.CandidateTrackListPosition));
+            Assert.All(project.Value.Tracks, track => Assert.Equal(2, track.CandidateTrackListObservedCount));
+            Assert.All(project.Value.Tracks, track => Assert.Equal(listOffset, track.CandidateTrackListOffset));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RecognizesCandidateFolderListOwnerOnlyThroughExactContainment(bool wide)
+    {
+        var childTrack = Record("MAudioTrackEvent", [], wide, 1);
+        var nestedTrackList = Record("MTrackList", childTrack, wide, 0);
+        var folder = Record("MFolderTrack", nestedTrackList, wide, 0);
+        var path = await WriteTemporary(Project(wide,
+            Root("Arrangement1", "PArrangement", wide), Chunk("ARCH", folder, wide)));
+        try
+        {
+            var result = await new CprStructureInspector().InspectAsync(path);
+            Assert.True(result.IsSuccess, result.Error?.Message);
+            var hint = Assert.Single(result.Value!.Arrangement!.TrackHints,
+                item => item.RecordClass == "MAudioTrackEvent");
+            var records = result.Value.ArchiveInventories!.Single().Records;
+            Assert.Equal(Assert.Single(records, record => record.ClassName == "MTrackList").HeaderFileOffset,
+                hint.CandidateTrackListOffset);
+            Assert.Equal(Assert.Single(records, record => record.ClassName == "MFolderTrack").HeaderFileOffset,
+                hint.CandidateFolderTrackOffset);
+
+            var snapshot = await new CprEvidenceReader().ReadAsync(path);
+            Assert.True(snapshot.IsSuccess, snapshot.Error?.Message);
+            Assert.Equal(hint.CandidateFolderTrackOffset, Assert.Single(snapshot.Value!.Tracks,
+                item => item.SourceRecordClass == "MAudioTrackEvent").CandidateFolderTrackOffset);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task BinaryDerivedTempoFieldsRetainRawBitsWithoutBecomingProjectBpm(bool wide)
     {
         var body = new byte[24];
@@ -251,11 +317,11 @@ public sealed class CprArchiveInventoryIntegrationTests
         finally { File.Delete(path); }
     }
 
-    [Fact]
+    [PrivateCprFixtureFact]
     public async Task OptionalPrivateFixturesRetainCandidateRecordBoundsAndUnchangedSourceHashes()
     {
-        var directory = Environment.GetEnvironmentVariable("CPE_CPR_FIXTURE_DIR");
-        if (string.IsNullOrWhiteSpace(directory)) return;
+        var directory = Environment.GetEnvironmentVariable("CPE_CPR_FIXTURE_DIR")
+            ?? throw new InvalidOperationException("Private fixture configuration changed after test discovery.");
         var fixtures = new[]
         {
             ("CPETestEmpty.cpr", "cf0d6f5f1828d7da6857506b5973c5dcd7c6c1712ec60683862077be22a1bcdf"),

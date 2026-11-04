@@ -90,6 +90,7 @@ public sealed class LibraryProjectAssetIndexDocument
     public string Id { get; set; } = "";
     public string ProjectPath { get; set; } = "";
     public DateTime IndexedUtc { get; set; }
+    [System.Text.Json.Serialization.JsonConverter(typeof(ProjectAssetIndexJsonConverter))]
     public ProjectAssetIndex? Index { get; set; }
 }
 
@@ -1148,7 +1149,7 @@ public sealed partial class LibraryDocumentStore : IDisposable
             Tracks = [], Plugins = [], Routing = [], Warnings = [], MediaReferences = [],
             TimelineItems = [], Metadata = null, MidiNotes = [], NativeMetadataCandidates = [],
             NativeMixerObservations = [], EqBands = [], WarpPoints = [],
-            NativeMidiNoteCandidates = [], NativeAudioMediaCandidates = []
+            NativeMidiNoteCandidates = [], NativeAudioMediaCandidates = [], AutomationLanes = []
         };
         return new ProjectLibraryEntry(browserProject, document.SizeBytes, document.LastModifiedUtc, checksum,
             trackCount, document.PluginReferenceCount ?? 0, document.ConfirmedPluginReferenceCount ?? 0,

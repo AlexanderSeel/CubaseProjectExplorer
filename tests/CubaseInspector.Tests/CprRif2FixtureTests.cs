@@ -171,11 +171,11 @@ public sealed class CprRif2FixtureTests
         finally { File.Delete(path); }
     }
 
-    [Fact]
+    [PrivateCprFixtureFact]
     public async Task OptionalUserProvidedCubase15ProjectsHaveExactSixteenthNoteSequence()
     {
-        var dir = Environment.GetEnvironmentVariable("CPE_CPR_FIXTURE_DIR");
-        if (string.IsNullOrWhiteSpace(dir)) return; // Private files are never committed or fetched by CI.
+        var dir = Environment.GetEnvironmentVariable("CPE_CPR_FIXTURE_DIR")
+            ?? throw new InvalidOperationException("Private fixture configuration changed after test discovery.");
         var fixtures = new[]
         {
             ("CPETestEmpty.cpr", "cf0d6f5f1828d7da6857506b5973c5dcd7c6c1712ec60683862077be22a1bcdf"),

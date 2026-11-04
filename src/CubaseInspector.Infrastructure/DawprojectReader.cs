@@ -42,7 +42,7 @@ public sealed class DawprojectReader : IProjectReader
 
         var warnings = project.Warnings.ToList();
         var metadata = await ReadMetadataAsync(archive, cancellationToken, warnings);
-        return Result<ProjectSnapshot>.Ok(project with { Metadata = metadata, Warnings = warnings });
+        return Result<ProjectSnapshot>.Ok(ProjectAutomation.Normalize(project with { Metadata = metadata, Warnings = warnings }));
     }
 
     private static async Task<ProjectMetadata?> ReadMetadataAsync(ZipArchive archive,

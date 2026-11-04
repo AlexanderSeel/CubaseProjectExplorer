@@ -17,9 +17,11 @@ public sealed partial class MainPage : Page
     private AppShellViewModel? _shell;
     private ProjectLibraryViewModel? _progressLibrary;
     private PluginInventoryViewModel? _progressInventory;
-    private readonly NavigationHistory _history = new("Overview");
+    private readonly NavigationHistory _history = new("Home");
     private bool _rendering;
     private FrameworkElement? _pageContent;
+    internal string? ReviewPage => _shell?.CurrentPage;
+    internal string? ReviewProjectName => _shell?.Workspace.Project?.Name;
 
     public MainPage()
     {
@@ -55,6 +57,26 @@ public sealed partial class MainPage : Page
         try
         {
             await library.LoadSavedProjectsAsync(shell.ProjectScanTypes);
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CPE_PREFERENCES_PATH")))
+            {
+                if (Environment.GetEnvironmentVariable("CPE_PREVIEW_PROJECT") is { Length: > 0 } project)
+                    await library.OpenProjectAsync(project);
+                if (Environment.GetEnvironmentVariable("CPE_PREVIEW_QUERY") is { } query)
+                    library.Search = query;
+                if (Environment.GetEnvironmentVariable("CPE_PREVIEW_PAGE") is { Length: > 0 } page)
+                    Render(page);
+                if (Environment.GetEnvironmentVariable("CPE_CAPTURE_FILE") is { Length: > 0 } capture)
+                {
+                    await Task.Delay(1800);
+                    try
+                    {
+                        if (Environment.GetEnvironmentVariable("CPE_PREVIEW_ACTION") is { Length: > 0 } action)
+                            await Services.VisualReviewCapture.ApplyActionAsync(this, action);
+                        await Services.VisualReviewCapture.SaveAsync(this, capture);
+                    }
+                    catch (Exception exception) { await File.WriteAllTextAsync(capture + ".error.txt", exception.ToString()); }
+                }
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -93,7 +115,8 @@ public sealed partial class MainPage : Page
     {
         if (_progressInventory is not null && args.PropertyName is nameof(PluginInventoryViewModel.Status) or nameof(PluginInventoryViewModel.IsBusy))
         {
-            StatusText.Text = _progressInventory.Status;
+            StatusText.Text = _progressInventory.IsBusy ? "Updating plug-in inventory…"
+                : _shell?.HasProject == true ? _shell.Workspace.ProjectName : "Ready";
             UpdateBusyIndicator();
         }
     }
@@ -121,8 +144,9 @@ public sealed partial class MainPage : Page
         try
         {
             _shell.NavigateTo(page);
-            Navigation.SelectedItem = Navigation.MenuItems.OfType<NavigationViewItem>()
-                .FirstOrDefault(item => string.Equals(item.Tag as string, page, StringComparison.Ordinal));
+            Navigation.SelectedItem = Navigation.MenuItems.Concat(Navigation.FooterMenuItems).OfType<NavigationViewItem>()
+                .FirstOrDefault(item => string.Equals(item.Tag as string, page, StringComparison.Ordinal))
+                ?? Navigation.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(item => item.Tag as string == "StudioTools");
             PageHost.Children.Clear();
             _pageContent = new WorkspacePageFactory(_shell, targetPage => Render(targetPage),
                     (DataTemplate)Resources["ProjectChangeTemplate"],
@@ -132,6 +156,9 @@ public sealed partial class MainPage : Page
             if (_pageContent is not null)
             {
                 PageHost.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    Name = "PageContentViewport",
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
                     Content = _pageContent });
                 ResizePageContent();
             }
@@ -141,12 +168,13 @@ public sealed partial class MainPage : Page
         UpdateBusyIndicator();
         StatusText.Text = page == "Projects" ? _shell.Library.Status
             : _shell.HasProject ? $"{_shell.Workspace.ProjectName} · {_shell.Workspace.TrackCount} tracks · {_shell.Workspace.SavedBy}" : "No project selected";
+        SessionContextText.Text = _shell.HasProject ? _shell.Workspace.ProjectName : "Your project library";
     }
 
     private void ResizePageContent()
     {
         if (_pageContent is null || PageHost.ActualHeight <= 0) return;
-        _pageContent.MinHeight = Math.Max(480, PageHost.ActualHeight - 4);
+        _pageContent.MinHeight = Math.Max(0, PageHost.ActualHeight - PageHost.Padding.Top - PageHost.Padding.Bottom);
     }
 
     private void Back_Click(object sender, RoutedEventArgs e)
@@ -185,10 +213,11 @@ public sealed partial class MainPage : Page
 
     private static string PageLabel(string page) => page switch
     {
-        "Projects" => "Project Library", "Search" => "Search everything", "Calendar" => "Project Calendar", "IO" => "Studio map",
+        "Home" => "Studio home", "Projects" => "Projects", "Search" => "Search everything", "Calendar" => "Project Calendar", "IO" => "Audio & MIDI I/O",
         "Inventory" => "Local plug-in inventory", "Catalog" => "Plug-in catalog", "Preflight" => "Dependency preflight",
-        "Overview" => "Studio overview", "Tools" => "Reports & tools", "Database" => "Library database", "Compare" => "Compare projects",
+        "Overview" => "Session overview", "Tools" => "Reports & tools", "Database" => "Library database", "Compare" => "Compare projects",
         "Samples" => "Audio", "Midi" => "MIDI", "Statistics" => "Insights", "Help" => "Help & reader FAQ",
+        "StudioTools" => "Studio tools",
         _ => page
     };
 
@@ -265,6 +294,8 @@ internal sealed partial class WorkspacePageFactory(AppShellViewModel shell, Acti
     {
         return page switch
         {
+            "Home" => DashboardPage(),
+            "StudioTools" => StudioToolsPage(),
             "Projects" => LibraryPage(),
             "Search" => LibrarySearchPage(),
             "Calendar" => CalendarPage(),

@@ -5,7 +5,7 @@ using CubaseInspector.Core;
 namespace CubaseInspector.Infrastructure;
 
 public sealed record CprMidiPartNoteScan(IReadOnlyList<CprRif2MidiNoteCandidate> Notes,
-    int BytesScanned, bool Partial);
+    int BytesScanned, bool Partial, string? LimitReason = null);
 
 /// <summary>
 /// Bounded observations of packed notes inside an already bounded RIFF/RIF2 MMidiPart.
@@ -118,18 +118,29 @@ public static class CprMidiPartNoteScanner
         // requires the archive's explicit, unambiguous MMidiEvent declaration.
         if (classVersion is ushort revision && revision != 1) return false;
         if (eventClassVersion is ushort baseRevision && baseRevision != 2) return false;
+        if (!CprMidiNoteLayout.TryLocate(body, 2, 1, out var wireLayout)) return false;
+        return TryReadFramedModernFields(body, bodyFileOffset, isRif2, wireLayout.TailOffset, out candidate);
+    }
+
+    // Callers must first establish exact MMidiEvent-v2 attribute boundaries and
+    // MMidiNote-v1 revision evidence. Nested values are not applied here.
+    internal static bool TryReadFramedModernFields(ReadOnlySpan<byte> body, long bodyFileOffset,
+        bool isRif2, int tailOffset, out CprRif2MidiNoteCandidate candidate, bool skippedObject = false)
+    {
+        candidate = default!;
         if (bodyFileOffset < 0 || bodyFileOffset > long.MaxValue - body.Length ||
-            !CprMidiNoteLayout.TryLocate(body, 2, 1, out var wireLayout) ||
+            tailOffset < 17 || tailOffset > body.Length - 25 || body.Length - tailOffset != 25 ||
             body[8] > 15 || body[9] > 127 || body[10] > 127) return false;
         var position = ReadDouble(body[..8]);
-        var duration = ReadDouble(body.Slice(wireLayout.TailOffset, 8));
+        var duration = ReadDouble(body.Slice(tailOffset, 8));
         if (!double.IsFinite(position) || !double.IsFinite(duration) || Math.Abs(position) >= 1e9 ||
             duration is < 0 or >= 1e8) return false;
         var layout = (isRif2 ? "RIF2" : "RIFF") +
             (isRif2 && body.Length == 112 ? " MMidiNote/112-byte" : " MMidiNote/typed-attributes");
         candidate = new CprRif2MidiNoteCandidate(bodyFileOffset, position, duration, body[9], body[10],
             "MMidiNote candidate with bounded typed attributes; class/body framing, timing units and ownership require per-version comparison. " +
-            "Layout sources: BandPass Records Cubase parser@6d5d82ac; local Cubase 14/15 bytes; Cubase15.exe MMidiEvent reader 0x141BB0390, MMidiNote reader 0x141BB4690 (b4a9c748 SHA-256 build).",
+            "Layout sources: BandPass Records Cubase parser@6d5d82ac; local Cubase 14/15 bytes; Cubase15.exe MMidiEvent reader 0x141BB0390, MMidiNote reader 0x141BB4690 (b4a9c748 SHA-256 build)." +
+            (skippedObject ? " Nested event attribute object skipped as opaque; attributes were not applied to raw note fields." : ""),
             layout, Channel: body[8], RawFlags: BinaryPrimitives.ReadUInt16BigEndian(body.Slice(11, 2)));
         return true;
     }

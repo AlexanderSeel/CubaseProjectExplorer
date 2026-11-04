@@ -36,7 +36,9 @@ internal sealed partial class WorkspacePageFactory
         void UpdateProjectScopeOptions()
         {
             projectScope.ItemsSource = new[] { new SampleProjectScopeOption("", "All projects") }
-                .Concat(mediaLibrary.SampleProjects).ToArray();
+                .Concat(mediaLibrary.SampleProjects)
+                .Concat(activeProject is null ? [] : new[] { new SampleProjectScopeOption(activeProject.FilePath, activeProject.Name) })
+                .DistinctBy(option => option.Path, StringComparer.OrdinalIgnoreCase).ToArray();
             projectScope.SelectedValue = mediaLibrary.SampleProjectPath;
         }
         UpdateProjectScopeOptions();
@@ -83,8 +85,15 @@ internal sealed partial class WorkspacePageFactory
             }
         };
         mediaLibrary.PropertyChanged += statusChanged;
+        var activitySummary = new Grid { ColumnSpacing = 8 };
+        activitySummary.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        activitySummary.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        summary.TextWrapping = TextWrapping.Wrap;
+        activitySummary.Children.Add(loadRing);
+        Grid.SetColumn(summary, 1);
+        activitySummary.Children.Add(summary);
         root.Children.Add(new Border { Background = Surface, Padding = new Thickness(14, 10),
-            Child = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { loadRing, summary } } });
+            CornerRadius = new CornerRadius(16), Child = activitySummary });
 
         var layout = new Grid { ColumnSpacing = 12, Margin = new Thickness(0, 4, 0, 0) };
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.15, GridUnitType.Star) });
@@ -254,7 +263,7 @@ internal sealed partial class WorkspacePageFactory
             });
         Grid.SetColumn(detail, 1);
         layout.Children.Add(sampleBrowser); layout.Children.Add(detail);
-        root.Children.Add(layout);
+        ResponsiveDetailColumns(layout, detail);
         var nativeSampleColumns = new DataBrowserColumn<NativeSampleCandidateRow>[]
         {
             new("Audio file", "DeclaredPath", row => System.IO.Path.GetFileName(row.DeclaredPath), row => row.DeclaredPath, 2.2),
@@ -378,6 +387,7 @@ internal sealed partial class WorkspacePageFactory
         nativePathsPanel.Children.Add(nativePathsLeft);
         Grid.SetColumn(nativeDetails, 1);
         nativePathsPanel.Children.Add(nativeDetails);
+        ResponsiveDetailColumns(nativePathsPanel, nativeDetails);
         NotifyCollectionChangedEventHandler nativeSamplesChanged = (_, _) =>
             nativeEmpty.Visibility = mediaLibrary.NativeSampleCandidates.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         mediaLibrary.NativeSampleCandidates.CollectionChanged += nativeSamplesChanged;
@@ -416,7 +426,9 @@ internal sealed partial class WorkspacePageFactory
         duplicateLayout.Children.Add(duplicateDetails);
         duplicateSection.Children.Add(duplicateLayout);
         duplicateSection.Children.Add(Note("Only exact byte-identical files are grouped. This read-only audit does not move, replace, or delete files."));
-        var initialTab = mediaLibrary.FocusNativeAudioTab ? 1 : 0;
+        var initialTab = mediaLibrary.FocusNativeAudioTab ||
+            activeProject?.NativeAudioMediaCandidates is { Count: > 0 } &&
+            activeProject.MediaReferences is not { Count: > 0 } ? 1 : 0;
         mediaLibrary.FocusNativeAudioTab = false;
         root.Children.Add(DashboardTabs(initialTab,
             ("Project media", layout),
@@ -610,7 +622,8 @@ internal sealed partial class WorkspacePageFactory
             if (args.PropertyName is nameof(mediaLibrary.MidiSummary) or nameof(mediaLibrary.IsBusy)) UpdateExportedState();
         };
         mediaLibrary.PropertyChanged += sourceChanged;
-        var initialTab = mediaLibrary.MidiTracks.Count == 0 && mediaLibrary.NativeMidiGroups.Count > 0 ? 1 : 0;
+        var initialTab = activeProject?.NativeMidiNoteCandidates is { Count: > 0 } &&
+            activeProject.MidiNotes is not { Count: > 0 } ? 1 : 0;
         root.Children.Add(DashboardTabs(initialTab, ("Exported MIDI", browserPanel),
             ("Project notes", nativePanel), ("Activity", activityPanel)));
         root.Loaded += (_, _) =>

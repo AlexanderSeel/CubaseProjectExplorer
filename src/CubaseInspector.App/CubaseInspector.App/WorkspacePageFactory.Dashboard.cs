@@ -12,24 +12,47 @@ internal sealed partial class WorkspacePageFactory
     private UIElement DashboardPage()
     {
         var library = shell.Library;
-        var root = Page("Studio overview", "A quick view of your local Cubase project library and the next useful actions.");
+        var root = Page("Studio home", "Your sessions, instruments and ideas — all within reach.");
         if (shell.DatabasePathWarning is { Length: > 0 } databaseWarning)
             root.Children.Add(Note(databaseWarning));
-        var scan = Button("Scan a project folder…", async () =>
+        var scan = Button("Add a project folder", async () =>
         {
             await shell.ScanFolderCommand.ExecuteAsync(null);
             navigate("Projects");
         });
-        var open = Button("Analyze", async () =>
+        var open = Button("Open a project", async () =>
         {
-            await shell.AnalyzeProjectCommand.ExecuteAsync(null);
+            await shell.OpenProjectCommand.ExecuteAsync(null);
             if (shell.HasProject) navigate("Overview");
         });
         var browse = Button("Browse project library", () => navigate("Projects"));
-        AddPageActions(root, scan, open, browse);
+        AddPageActions(root, browse);
+        open.Style = (Style)Application.Current.Resources["InspectorPrimaryButtonStyle"];
+        var heroCopy = new StackPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        heroCopy.Children.Add(new TextBlock { Text = "Open a session. Find what you need.", FontSize = 22,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        heroCopy.Children.Add(new TextBlock { Text = "Find a project, explore its tracks and plug-ins, and see where the music connects.",
+            FontSize = 14, TextWrapping = TextWrapping.Wrap, MaxWidth = 480, HorizontalAlignment = HorizontalAlignment.Left });
+        var heroActions = new StackPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Center, MinWidth = 220,
+            Children = { open, scan, new TextBlock { Text = "Your source files stay unchanged.", FontSize = 11,
+                Foreground = Muted, HorizontalAlignment = HorizontalAlignment.Center } } };
+        var hero = new Grid { ColumnSpacing = 24, RowSpacing = 12 };
+        hero.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        hero.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        hero.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        hero.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        hero.Children.Add(heroCopy); Grid.SetColumn(heroActions, 1); hero.Children.Add(heroActions);
+        hero.SizeChanged += (_, args) =>
+        {
+            var narrow = args.NewSize.Width < 720;
+            Grid.SetColumn(heroActions, narrow ? 0 : 1); Grid.SetRow(heroActions, narrow ? 1 : 0);
+            heroActions.HorizontalAlignment = narrow ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
+        };
+        root.Children.Add(new Border { Background = Surface, BorderBrush = Divider, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(16), Child = hero });
 
-        var metrics = new Grid { ColumnSpacing = 12, RowSpacing = 12, Margin = new Thickness(0, 12, 0, 8) };
-        for (var column = 0; column < 2; column++)
+        var metrics = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
+        for (var column = 0; column < 4; column++)
             metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         for (var row = 0; row < 2; row++)
             metrics.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -41,6 +64,17 @@ internal sealed partial class WorkspacePageFactory
         AddMetric(1, 0, visibleMetric);
         AddMetric(0, 1, issueMetric);
         AddMetric(1, 1, typeMetric);
+        metrics.SizeChanged += (_, args) =>
+        {
+            var columns = args.NewSize.Width >= 960 ? 4 : args.NewSize.Width >= 500 ? 2 : 1;
+            for (var i = 0; i < 4; i++)
+            {
+                metrics.ColumnDefinitions[i].Width = i < columns ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+                Grid.SetColumn((FrameworkElement)metrics.Children[i], i % columns);
+                Grid.SetRow((FrameworkElement)metrics.Children[i], i / columns);
+            }
+            while (metrics.RowDefinitions.Count < 4) metrics.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        };
         root.Children.Add(metrics);
 
         var health = new StackPanel { Spacing = 5, Background = Surface, Padding = SectionInset,
@@ -56,19 +90,20 @@ internal sealed partial class WorkspacePageFactory
         health.Children.Add(status);
         health.Children.Add(folder);
         health.Children.Add(healthNote);
-        root.Children.Add(health);
+        var healthCard = new Border { Background = Surface, CornerRadius = new CornerRadius(20), Child = health };
 
         var recentPanel = new StackPanel { Spacing = 8, Background = Surface, Padding = SectionInset,
             Margin = new Thickness(0, 0, 0, 10) };
-        recentPanel.Children.Add(new TextBlock { Text = "RECENTLY MODIFIED PROJECT FILES",
+        recentPanel.Children.Add(new TextBlock { Text = "Recently changed projects",
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] });
-        recentPanel.Children.Add(new TextBlock { Text = "Ordered by source file modification time; dates are local file metadata, not Cubase edit history.",
+        recentPanel.Children.Add(new TextBlock { Text = "Pick a session to explore. Dates come from the source files in your library.",
             TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"] });
         var recentRows = new StackPanel { Spacing = 4 };
         recentPanel.Children.Add(recentRows);
-        root.Children.Add(recentPanel);
-        var evidenceNote = Note("The reader shows project information it can find and leaves unavailable track links or plug-in details open. Visit Help & reader FAQ to see what each result means and which parts are still being researched.");
+        root.Children.Add(new Border { Background = Surface, CornerRadius = new CornerRadius(20), Child = recentPanel });
+        root.Children.Add(healthCard);
+        var evidenceNote = Note("Details marked for review always retain their source. Open Help & reader FAQ to understand what the reader can show.");
         root.Children.Add(evidenceNote);
 
         void AddMetric(int column, int row, Border card)
@@ -109,7 +144,7 @@ internal sealed partial class WorkspacePageFactory
                 ? "No issues recorded for the latest completed scan."
                 : $"{library.ScanIssueCount:N0} files failed or were only partially read. Open Project Library → Scan issues for details.";
             recentRows.Children.Clear();
-            var recent = all.OrderByDescending(entry => entry.LastModifiedUtc).Take(8).ToArray();
+            var recent = all.OrderByDescending(entry => entry.LastModifiedUtc).Take(6).ToArray();
             if (recent.Length == 0)
             {
                 recentRows.Children.Add(Empty("Your library is empty. Scan a project folder or open a project to get started."));
@@ -127,11 +162,12 @@ internal sealed partial class WorkspacePageFactory
                         Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"],
                         TextTrimming = TextTrimming.CharacterEllipsis
                     };
-                    var path = new TextBlock { Text = row.FilePath,
+                    var path = new TextBlock { Text = $"{row.Tracks} · {row.FileSize}",
                         Style = (Style)Application.Current.Resources["InspectorMetadataTextStyle"],
                         TextTrimming = TextTrimming.CharacterEllipsis };
                     var content = new StackPanel { Spacing = 3, Children = { title, metadata, path } };
                     var openProject = new Button { Content = content,
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
                         HorizontalContentAlignment = HorizontalAlignment.Stretch,
                         Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"] };
                     AutomationProperties.SetName(openProject, "Open " + row.Name + ", " + row.FileType + ", " + row.Version);
@@ -139,8 +175,7 @@ internal sealed partial class WorkspacePageFactory
                     openProject.Click += async (_, _) =>
                     {
                         if (library.IsBusy) return;
-                        await library.SelectProjectAsync(row);
-                        if (shell.HasProject) navigate("Overview");
+                        if (await library.SelectProjectAsync(row)) navigate("Overview");
                     };
                     recentRows.Children.Add(openProject);
                 }

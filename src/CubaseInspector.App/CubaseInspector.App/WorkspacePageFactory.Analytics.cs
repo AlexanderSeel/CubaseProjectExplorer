@@ -203,7 +203,7 @@ internal sealed partial class WorkspacePageFactory
         if (rows.Length == 0)
         {
             panel.Children.Add(new TextBlock { Text = "No supported values are available.", FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromArgb(255, 175, 184, 196)) });
+                Foreground = Muted });
             return panel;
         }
         var maximum = Math.Max(1, rows.Max(row => row.Count));
@@ -221,7 +221,7 @@ internal sealed partial class WorkspacePageFactory
             Grid.SetColumn(value, 2); line.Children.Add(value); panel.Children.Add(line);
         }
         panel.Children.Add(new TextBlock { Text = rows[0].Evidence, FontSize = 10,
-            Foreground = new SolidColorBrush(Color.FromArgb(255, 175, 184, 196)) });
+            Foreground = Muted });
         return panel;
     }
 }

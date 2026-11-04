@@ -23,6 +23,8 @@ internal sealed partial class WorkspacePageFactory
             project.Routing.FirstOrDefault()?.FromChannelId ?? channels[0].Id;
         var root = new StackPanel { Spacing = 10, Margin = new Thickness(0, 12, 0, 0) };
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var includeUnresolved = new CheckBox { Content = "Include unresolved" };
+        toolbar.Children.Add(includeUnresolved);
         var showChannels = new ToggleButton { Content = "Channels", IsChecked = true };
         var picker = new ComboBox { ItemsSource = channels, DisplayMemberPath = nameof(RoutingFocusChannel.Name), Width = 220 };
         AutomationProperties.SetName(picker, "Selected signal-flow channel");
@@ -153,9 +155,11 @@ internal sealed partial class WorkspacePageFactory
                     var targetId = channel.Id;
                     path.Children.Add(Button(channel.Name, () => Select(targetId)));
                 }
-                incomingCount = focus.Incoming.Count; outgoingCount = focus.Outgoing.Count;
-                var incoming = focus.Incoming.Skip(incomingPage * pageSize).Take(pageSize).ToArray();
-                var outgoing = focus.Outgoing.Skip(outgoingPage * pageSize).Take(pageSize).ToArray();
+                var visibleIncoming = focus.Incoming.Where(connection => includeUnresolved.IsChecked == true || Category(connection.Channel) != "Unresolved").ToArray();
+                var visibleOutgoing = focus.Outgoing.Where(connection => includeUnresolved.IsChecked == true || Category(connection.Channel) != "Unresolved").ToArray();
+                incomingCount = visibleIncoming.Length; outgoingCount = visibleOutgoing.Length;
+                var incoming = visibleIncoming.Skip(incomingPage * pageSize).Take(pageSize).ToArray();
+                var outgoing = visibleOutgoing.Skip(outgoingPage * pageSize).Take(pageSize).ToArray();
                 paging.Visibility = incomingCount > pageSize || outgoingCount > pageSize ? Visibility.Visible : Visibility.Collapsed;
                 previousInputs.IsEnabled = incomingPage > 0; nextInputs.IsEnabled = (incomingPage + 1) * pageSize < incomingCount;
                 previousOutputs.IsEnabled = outgoingPage > 0; nextOutputs.IsEnabled = (outgoingPage + 1) * pageSize < outgoingCount;
@@ -163,13 +167,13 @@ internal sealed partial class WorkspacePageFactory
                 canvas.Height = Math.Max(500, 145 + rowCount * 44);
                 var centerY = canvas.Height / 2;
                 var centerHeight = Math.Max(230, 150 + Math.Min(focus.Selected.Devices.Count, 8) * 24);
-                Panel("FEEDS IN", focus.Incoming.Count, 12, 300, incoming.Length);
-                Panel("GOES TO", focus.Outgoing.Count, 704, 284, outgoing.Length);
+                Panel("FEEDS IN", incomingCount, 12, 300, incoming.Length);
+                Panel("GOES TO", outgoingCount, 704, 284, outgoing.Length);
                 if (incoming.Length == 0) Put(new TextBlock { Text = native ? "No incoming bus references decoded." : "No incoming connections exported.", Foreground = Muted, FontSize = 12,
                     Width = 268, TextWrapping = TextWrapping.Wrap }, 28, centerY - 8);
                 if (outgoing.Length == 0) Put(new TextBlock { Text = Category(focus.Selected) == "Output"
                     ? "Exported output channel.\nNo further destination supplied."
-                    : native ? "No output or send destination decoded.\nStored mixer values are shown in the centre." : "No outgoing connection exported.", Foreground = Muted, FontSize = 12, Width = 250,
+                    : native ? "No resolved output destination.\nInclude unresolved to inspect saved references." : "No outgoing connection exported.", Foreground = Muted, FontSize = 12, Width = 250,
                     TextWrapping = TextWrapping.Wrap }, 720, centerY - 16);
                 for (var i = 0; i < incoming.Length; i++)
                 {
@@ -186,7 +190,7 @@ internal sealed partial class WorkspacePageFactory
                 var body = new StackPanel { Spacing = 8 };
                 body.Children.Add(new TextBlock { Text = focus.Selected.Name, FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                     TextWrapping = TextWrapping.Wrap });
-                body.Children.Add(new TextBlock { Text = Category(focus.Selected) + " · " + focus.Selected.Id, Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap });
+                body.Children.Add(new TextBlock { Text = Category(focus.Selected), Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap });
                 var track = focus.Selected.Track;
                 var observation = native ? project.NativeMixerObservations?.FirstOrDefault(item => item.ArchiveOffset == track?.SourceOffset) : null;
                 var volume = observation is not null ? observation.VolumeDb is double db ? db.ToString("0.###") + " dB" : null : track?.Volume?.ToString("0.###");
@@ -235,7 +239,9 @@ internal sealed partial class WorkspacePageFactory
                 Put(selectedCard, 398, centerY - centerHeight / 2);
                 foreach (var connection in focus.Incoming) edgeRows.Add($"{connection.Channel.Name} → {focus.Selected.Name} · {EdgeLabel(connection.Edge)}");
                 foreach (var connection in focus.Outgoing) edgeRows.Add($"{focus.Selected.Name} → {connection.Channel.Name} · {EdgeLabel(connection.Edge)}");
-                status.Text = $"{focus.Incoming.Count} incoming · {focus.Outgoing.Count} outgoing · " + (native ? "CPR bus-field interpretation" : "exported connections") +
+                status.Text = $"{incomingCount} inputs · {outgoingCount} destinations · " + (native ? "saved connection observations" : "exported connections") +
+                    (focus.Incoming.Count + focus.Outgoing.Count > incomingCount + outgoingCount
+                        ? $" · {focus.Incoming.Count + focus.Outgoing.Count - incomingCount - outgoingCount} unresolved references hidden" : "") +
                     (incomingCount > pageSize ? $" · inputs {incomingPage * pageSize + 1}–{incomingPage * pageSize + incoming.Length}" : "") +
                     (outgoingCount > pageSize ? $" · destinations {outgoingPage * pageSize + 1}–{outgoingPage * pageSize + outgoing.Length}" : "") +
                     (focus.Warnings.Count > 0 ? "\n" + string.Join("\n", focus.Warnings) : "");
@@ -260,6 +266,7 @@ internal sealed partial class WorkspacePageFactory
             content.Children.Add(new TextBlock { Text = channel.Name, Width = width - 70, FontSize = 12,
                 TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
             var button = new Button { Content = content, Width = width, Height = 36, Padding = new Thickness(10, 0),
+                Style = (Style)Application.Current.Resources["InspectorCommandButtonStyle"], Foreground = ResourceBrush("OnSurfaceBrush"),
                 Background = Surface, BorderBrush = ChannelBrush(channel), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(18) };
             ToolTipService.SetToolTip(button, channel.Name + " · " + Category(channel) + "\n" + EdgeLabel(connection.Edge));
             AutomationProperties.SetName(button, channel.Name + " · " + EdgeLabel(connection.Edge));
@@ -279,6 +286,8 @@ internal sealed partial class WorkspacePageFactory
                 IsHitTestVisible = false }, x2 - 6, y2 - 4);
         }
         search.TextChanged += (_, _) => RefreshChannels(); category.SelectionChanged += (_, _) => RefreshChannels();
+        includeUnresolved.Checked += (_, _) => { incomingPage = 0; outgoingPage = 0; Select(selectedId); };
+        includeUnresolved.Unchecked += (_, _) => { incomingPage = 0; outgoingPage = 0; Select(selectedId); };
         previousInputs.Click += (_, _) => { if (incomingPage > 0) { incomingPage--; Select(selectedId); } };
         nextInputs.Click += (_, _) => { if ((incomingPage + 1) * pageSize < incomingCount) { incomingPage++; Select(selectedId); } };
         previousOutputs.Click += (_, _) => { if (outgoingPage > 0) { outgoingPage--; Select(selectedId); } };

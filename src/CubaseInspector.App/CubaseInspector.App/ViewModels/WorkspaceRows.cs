@@ -65,7 +65,7 @@ public sealed record TrackDisplayRow(string Name, string Type, string Input, str
 
     private static bool IsMissing(string? value) => string.IsNullOrWhiteSpace(value) ||
         value.Trim().Trim('<', '>', '(', ')', '[', ']').ToLowerInvariant() is
-            "unknown" or "undefined" or "unnamed" or "null" or "none" or "not listed" or "not supplied" or "n/a";
+            "unknown" or "undefined" or "unnamed" or "unnamed cpr record" or "null" or "none" or "not listed" or "not supplied" or "n/a";
 }
 
 public sealed record PluginReferenceDisplayRow(string Name, string Manufacturer, string Format,

@@ -7,16 +7,34 @@ namespace CubaseInspector.Infrastructure;
 /// Wire offsets from the separate MMidiEvent and MMidiNote callbacks. These
 /// offsets do not establish musical units, track ownership or release support.
 /// </summary>
-internal readonly record struct CprMidiNoteLayout(int TailOffset, int AttributeCount)
+internal readonly record struct CprMidiNoteLayout(int TailOffset, int AttributeCount, bool SkippedObject = false)
 {
     public static bool TryLocate(ReadOnlySpan<byte> body, ushort eventRevision,
-        ushort noteRevision, out CprMidiNoteLayout layout)
+        ushort noteRevision, out CprMidiNoteLayout layout) =>
+        TryLocate(body, eventRevision, noteRevision, 0, null, out layout, out _);
+
+    public static bool TryLocate(ReadOnlySpan<byte> body, ushort eventRevision,
+        ushort noteRevision, long bodyFileOffset, CprMidiEventPrefixReader? prefixReader,
+        out CprMidiNoteLayout layout, out string? failure)
     {
         layout = default;
-        if (noteRevision > 1 || !TryReadPrefix(body, eventRevision, out var prefixBytes, out var count)) return false;
+        failure = null;
+        var skippedObject = false;
+        int prefixBytes, count;
+        if (noteRevision > 1) return false;
+        if (eventRevision == 2 && prefixReader is not null)
+        {
+            if (!prefixReader.TryRead(body, bodyFileOffset, out prefixBytes, out skippedObject, out failure)) return false;
+            count = (int)BinaryPrimitives.ReadUInt32BigEndian(body.Slice(13, 4));
+        }
+        else if (!TryReadPrefix(body, eventRevision, out prefixBytes, out count)) return false;
         var tailBytes = noteRevision == 0 ? 24 : 25;
-        if (body.Length != prefixBytes + tailBytes) return false;
-        layout = new(prefixBytes, count);
+        if (body.Length != prefixBytes + tailBytes)
+        {
+            failure = "Typed MMidiNote suffix does not exactly match its declared revision and attribute boundaries.";
+            return false;
+        }
+        layout = new(prefixBytes, count, skippedObject);
         return true;
     }
 

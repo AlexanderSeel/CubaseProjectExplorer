@@ -71,7 +71,6 @@ public sealed class CprCountedMidiStreamTests
 
     private sealed record PartStream(byte[] Bytes, int EventOffset);
 
-<<<<<<< main
     private static byte[] ScalarEvent(byte status, ushort attributeType = 0) =>
         Event(status, attributeType: attributeType)[..(18 + (attributeType == 0 ? 0 : 14))];
 
@@ -79,7 +78,7 @@ public sealed class CprCountedMidiStreamTests
         ushort attributeType = 0) =>
         Join(ScalarEvent(0xF0, attributeType), Number(unchecked((uint)(declaredBytes ?? payload.Length))),
             Number(secondWord), payload);
-=======
+
     private static byte[] NestedEvent(byte[] value, byte status = 0x90, ushort flags = 0x22, uint id = 0x53634172)
     {
         var note = Event(status, position: 120.5, duration: 240.25, pitch: 61, velocity: 100);
@@ -93,7 +92,6 @@ public sealed class CprCountedMidiStreamTests
         return Join(header, Number(id), type, value, scalar,
             status is 0x80 or 0x90 ? note[^25..] : []);
     }
->>>>>>> origin/main
 
     private static PartStream Stream(bool wide, byte[][] events, int? count = null,
         byte[]? declarations = null, byte declarationCount = 1, uint timebaseKind = 0)
@@ -805,14 +803,14 @@ public sealed class CprCountedMidiStreamTests
 
         var packets = new[]
         {
-            Join(basePacket, Number(1), Number(0), Event()),
+            Join(basePacket, Number(44), Number(0), Event()),
             Join(basePacket, Number(uint.MaxValue), Number(uint.MaxValue), Event()),
             Join(basePacket, Number(0)),
             Join(basePacket, Number(4 * 1024 * 1024), Number(4 * 1024 * 1024), new byte[4 * 1024 * 1024])
         };
         foreach (var packet in packets)
         {
-            var project = Project(wide, Stream(wide, [Event(), packet, Event()],
+            var project = Project(wide, Stream(wide, [Event(), packet],
                 declarations: declarations, declarationCount: 2));
             await WithProject(project, (_, report) =>
             {
@@ -1029,12 +1027,9 @@ public sealed class CprCountedMidiStreamTests
             SysexEvent([], -1),
             SysexEvent([], int.MaxValue),
             SysexEvent([], 44), // Would consume the next note and exceed the body.
-            ScalarEvent(0xF0), // Both length words missing.
-            Join(ScalarEvent(0xF0), Number(0))[..^1],
-            SysexEvent([])[..^1], // Second word truncated, even for zero payload.
-            ScalarEvent(0xA0, attributeType: 8),
-            ScalarEvent(0xC0, attributeType: 8),
-            Join(ScalarEvent(0xF0, attributeType: 8), Number(0), Number(0)),
+            ScalarEvent(0xA0, attributeType: 0x28),
+            ScalarEvent(0xC0, attributeType: 0x28),
+            Join(ScalarEvent(0xF0, attributeType: 0x28), Number(0), Number(0)),
             ScalarEvent(0xA1),
             ScalarEvent(0xC1),
             ScalarEvent(0xF1),
@@ -1048,7 +1043,40 @@ public sealed class CprCountedMidiStreamTests
                 declarations: table, declarationCount: 4));
             await WithProject(project, (_, report) =>
             {
-                Assert.Empty(report.Arrangement!.MidiNoteCandidates!);
+                var arrangement = report.Arrangement!;
+                var note = Assert.Single(arrangement.MidiNoteCandidates!);
+                Assert.Equal(project.FirstEventOffset, note.FileOffset);
+                Assert.EndsWith("MMidiPart/counted-events", note.SourceLayout);
+                Assert.True(arrangement.Partial);
+                Assert.NotEmpty(arrangement.LimitReasons!);
+                return Task.CompletedTask;
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TruncatedSysexLengthWordsRetainOnlyTheEarlierCompleteNote(bool wide)
+    {
+        // Keep the truncation at the containing part boundary: following event
+        // bytes cannot independently establish where a missing word would end.
+        var packets = new[]
+        {
+            ScalarEvent(0xF0),
+            Join(ScalarEvent(0xF0), Number(0))[..^1],
+            SysexEvent([])[..^1]
+        };
+        foreach (var packet in packets)
+        {
+            var project = Project(wide, Stream(wide, [Event(), packet],
+                declarations: Join(Declarations(wide), Record("MMidiSysex", 0, [], wide)), declarationCount: 2));
+            await WithProject(project, (_, report) =>
+            {
+                var note = Assert.Single(report.Arrangement!.MidiNoteCandidates!);
+                Assert.Equal(project.FirstEventOffset, note.FileOffset);
+                Assert.True(report.Arrangement.Partial);
+                Assert.Contains(report.Arrangement.LimitReasons!, reason => reason.Contains("SysEx", StringComparison.Ordinal));
                 return Task.CompletedTask;
             });
         }

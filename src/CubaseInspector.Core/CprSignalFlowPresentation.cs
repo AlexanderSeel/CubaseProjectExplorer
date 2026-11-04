@@ -76,17 +76,8 @@ public static class CprSignalFlowPresentation
                 var childBus = IsChildBus(field.Path);
                 var recorder = IsRecorderBus(field.Path);
                 if ((!input && !output && !send && !direct && !childBus && !recorder) || !TryUid(field, out var uid)) continue;
-<<<<<<< main
                 var key = new BusKey(item.Record.SourceStream, item.Record.SourceArchiveOffset, uid);
                 var target = ResolveBus(key, busDefinitions, owners) ?? UnresolvedBusId(key);
-=======
-                // Cubase 15 reference collector 0x143513190 explicitly skips
-                // zero for these two flat properties. Other UID shapes retain
-                // their own unresolved semantics; no universal zero rule.
-                if (uid == 0 && (input || field.Path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase))) continue;
-                var key = (item.Record.SourceStream, uid);
-                var target = ResolveBus(key, busDefinitions, owners) ?? $"Bus UID {uid} [{item.Record.SourceStream}]";
->>>>>>> origin/main
                 if (childBus && target.StartsWith("Bus UID ", StringComparison.Ordinal))
                     target = BusNodeId(key);
                 var namePath = NamePathFor(field.Path);

@@ -20,16 +20,15 @@ public sealed class ProjectIoAssignmentsTests
     }
 
     [Fact]
-    public void ZeroFlatInputAndOutputReferencesFollowTheAsmGateWithoutChangingOtherUidShapes()
+    public void ZeroInputAndOutputSelectionsRemainStoredWithoutCreatingBusZeroRoutes()
     {
         var fields = new CprNamedRecordValue[] { new("InputBusValue", "i64", "0", 110),
             new("OutputBusValue", "i64", "0", 120), new("OutputBus/Value", "i64", "0", 130) };
         var project = new ProjectSnapshot("x.cpr", "x", "CPR", "15", null, EvidenceLevel.Candidate, [], [], [], [],
             NativeMixerObservations: [new("Channel", null, null, null, null, 100, "Project", CandidateFields: fields)]);
-        var route = Assert.Single(CprSignalFlowPresentation.Create(project).Routing);
-        Assert.EndsWith("OutputBus/Value", route.SourcePath);
+        Assert.Empty(CprSignalFlowPresentation.Create(project).Routing);
         Assert.Equal(3, project.NativeMixerObservations![0].CandidateFields!.Count);
-        Assert.Equal(EvidenceLevel.Candidate, route.Evidence);
+        Assert.Equal(EvidenceLevel.Candidate, project.Evidence);
     }
 
     [Fact]

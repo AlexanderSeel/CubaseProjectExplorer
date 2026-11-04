@@ -28,27 +28,26 @@ public static class CprBinaryFieldCandidateDecoder
     private const string TimeSignatureSource =
         "Cubase15.exe reader 0x1431d3b70 / writer 0x1431d3c40; " +
         "SHA-256 b4a9c748537ead87981aebe18a01aae3acba8bfc76d1c1150c0054de75515aa0; " +
-        "MTimeSignatureEvent serialization version 2 fixed 20-byte prefix; " +
+        "MTimeSignatureEvent shared fixed 20-byte prefix; " +
         "big-endian candidate; field semantics unverified; named attributes remain opaque; " +
-        "docs/research/CUBASE15_SERIALIZER_ANALYSIS.md";
+        "docs/research/CUBASE15_SERIALIZER_ANALYSIS.md; docs/research/CUBASE15_C_SIGNATURE_REVISIONS.md";
 
     public static IReadOnlyList<CprBinaryFieldCandidate> Read(CprClassRecordCandidate record,
         ReadOnlySpan<byte> archiveData, long archiveFileOffset,
         ushort? midiEventRevision = null, ushort? midiNoteRevision = null) =>
-<<<<<<< main
         ReadBounded(record, archiveData, archiveFileOffset, midiEventRevision, midiNoteRevision).Fields;
 
     public static CprBinaryFieldReadResult ReadBounded(CprClassRecordCandidate record,
         ReadOnlySpan<byte> archiveData, long archiveFileOffset,
         ushort? midiEventRevision = null, ushort? midiNoteRevision = null,
-        int maximumFields = MaximumFieldsPerRecord)
-=======
-        ReadWithContext(record, archiveData, archiveFileOffset, midiEventRevision, midiNoteRevision, null);
+        int maximumFields = MaximumFieldsPerRecord) =>
+        ReadBoundedWithContext(record, archiveData, archiveFileOffset, midiEventRevision,
+            midiNoteRevision, maximumFields, null);
 
-    internal static IReadOnlyList<CprBinaryFieldCandidate> ReadWithContext(CprClassRecordCandidate record,
+    internal static CprBinaryFieldReadResult ReadBoundedWithContext(CprClassRecordCandidate record,
         ReadOnlySpan<byte> archiveData, long archiveFileOffset,
-        ushort? midiEventRevision, ushort? midiNoteRevision, CprMidiEventPrefixReader? prefixReader)
->>>>>>> origin/main
+        ushort? midiEventRevision, ushort? midiNoteRevision, int maximumFields,
+        CprMidiEventPrefixReader? prefixReader)
     {
         ArgumentNullException.ThrowIfNull(record);
         if (maximumFields is < 0 or > MaximumFieldsPerRecord)
@@ -58,7 +57,7 @@ public static class CprBinaryFieldCandidateDecoder
         var isTempoTrack = string.Equals(record.ClassName, "MTempoTrackEvent", StringComparison.Ordinal) &&
             record.ClassVersion is <= 3 && record.BodyBytes >= 4;
         var isTimeSignature = string.Equals(record.ClassName, "MTimeSignatureEvent", StringComparison.Ordinal) &&
-            record.ClassVersion == 2 && record.BodyBytes >= 20;
+            record.ClassVersion is <= 2 && record.BodyBytes >= 20;
         var isMidiNote = string.Equals(record.ClassName, "MMidiNote", StringComparison.Ordinal) &&
             record.ClassVersion is 0 or 1;
         if ((!isTempoEvent && !isTempoTrack && !isTimeSignature && !isMidiNote) ||
@@ -70,31 +69,30 @@ public static class CprBinaryFieldCandidateDecoder
         if (relative > archiveData.Length - record.BodyBytes) return new([], false);
         var body = archiveData.Slice((int)relative, (int)record.BodyBytes);
 
-<<<<<<< main
         if (isMidiNote) return Limit(midiNoteRevision == record.ClassVersion
-            ? ReadMidiNote(record, body, midiEventRevision) : [], maximumFields);
+            ? ReadMidiNote(record, body, midiEventRevision, prefixReader) : [], maximumFields);
 
         if (isTempoTrack) return ReadTempoTrack(record, body, maximumFields);
-=======
-        if (isMidiNote) return midiNoteRevision == record.ClassVersion
-            ? ReadMidiNote(record, body, midiEventRevision, prefixReader) : [];
->>>>>>> origin/main
 
         if (isTimeSignature)
         {
-            // IDA shows one u64 followed by six u16 values, then named
-            // attributes for version > 1. Keep only the fixed prefix opaque.
-            var fields = new CprBinaryFieldCandidate[7];
+            // The same u64 + six u16 reads precede the named revision gate.
+            // Format only retained fields, including when the project budget
+            // is exhausted. Neither the suffix nor musical units are decoded.
+            var retained = Math.Min(7, maximumFields);
+            if (retained == 0) return new([], true);
+            var fields = new CprBinaryFieldCandidate[retained];
+            var source = TimeSignatureSource + $"; serializer revision {record.ClassVersion}.";
             fields[0] = Field("body+0", "u64-be", BinaryPrimitives.ReadUInt64BigEndian(body[..8])
-                .ToString(CultureInfo.InvariantCulture), record.BodyFileOffset, body[..8], TimeSignatureSource);
-            for (var index = 0; index < 6; index++)
+                .ToString(CultureInfo.InvariantCulture), record.BodyFileOffset, body[..8], source);
+            for (var index = 0; index < retained - 1; index++)
             {
                 var offset = 8 + index * 2;
                 fields[index + 1] = Field($"body+{offset}", "u16-be",
                     BinaryPrimitives.ReadUInt16BigEndian(body.Slice(offset, 2)).ToString(CultureInfo.InvariantCulture),
-                    record.BodyFileOffset + offset, body.Slice(offset, 2), TimeSignatureSource);
+                    record.BodyFileOffset + offset, body.Slice(offset, 2), source);
             }
-            return Limit(Array.AsReadOnly(fields), maximumFields);
+            return new(Array.AsReadOnly(fields), retained < 7);
         }
 
         // Keep the original bits, including NaN payloads, infinities and signed

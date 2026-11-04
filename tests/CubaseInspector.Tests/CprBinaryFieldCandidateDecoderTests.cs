@@ -165,7 +165,7 @@ public sealed class CprBinaryFieldCandidateDecoderTests
     }
 
     [Theory]
-    [InlineData(1, 20)]
+    [InlineData(4, 20)]
     [InlineData(3, 20)]
     [InlineData(2, 19)]
     public void RejectsUnverifiedTimeSignatureVersionsAndTruncatedPrefix(int version, int bodyBytes)

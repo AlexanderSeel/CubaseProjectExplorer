@@ -182,24 +182,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
                             archiveData, payloadOffset, size, isRif2, ct,
                             MaxInventoryRecords - inventoryDetails, MaxRecords - inventoryRecords,
                             MaxInventoryRanges - inventoryRanges, MaxRecords - inventorySymbols);
-<<<<<<< main
-                        inventory = AttachBinaryFields(inventory, archiveData, ref rawFieldsRetained, ct);
-=======
-                        var midiEventRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiEvent");
-                        var midiNoteRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiNote");
-                        var typedNotePrefixes = new CprMidiEventPrefixReader(
-                            inventory.Records.ToDictionary(record => record.HeaderFileOffset),
-                            payloadOffset, isRif2, inventory.ClassDeclarations);
-                        inventory = inventory with
-                        {
-                            Records = inventory.Records.Select(record => record with
-                            {
-                                RawFields = CprBinaryFieldCandidateDecoder.ReadWithContext(record, archiveData, payloadOffset,
-                                    midiEventRevision?.RevisionAt(record.BodyFileOffset),
-                                    midiNoteRevision?.RevisionAt(record.BodyFileOffset), typedNotePrefixes)
-                            }).ToArray()
-                        };
->>>>>>> origin/main
+                        inventory = AttachBinaryFields(inventory, archiveData, isRif2, ref rawFieldsRetained, ct);
                         inventories.Add(inventory);
                         archiveInventory = inventory;
                         inventoryBytes += count;
@@ -250,19 +233,24 @@ public sealed class CprStructureInspector : ICprStructureInspector
     }
 
     private static CprArchiveRecordInventory AttachBinaryFields(CprArchiveRecordInventory inventory,
-        byte[] archiveData, ref int retainedFields, CancellationToken ct)
+        byte[] archiveData, bool wide, ref int retainedFields, CancellationToken ct)
     {
         var eventRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiEvent");
         var noteRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiNote");
+        var typedNotePrefixes = inventory.Records.Any(record => record.ClassName == "MMidiNote")
+            ? new CprMidiEventPrefixReader(inventory.Records.ToDictionary(record => record.HeaderFileOffset),
+                inventory.PayloadFileOffset, wide, inventory.ClassDeclarations)
+            : null;
         var records = new CprClassRecordCandidate[inventory.Records.Count];
         var partial = false;
         for (var index = 0; index < records.Length; index++)
         {
             if ((index & 127) == 0) ct.ThrowIfCancellationRequested();
             var record = inventory.Records[index];
-            var read = CprBinaryFieldCandidateDecoder.ReadBounded(record, archiveData, inventory.PayloadFileOffset,
+            var read = CprBinaryFieldCandidateDecoder.ReadBoundedWithContext(record, archiveData, inventory.PayloadFileOffset,
                 eventRevision?.RevisionAt(record.BodyFileOffset), noteRevision?.RevisionAt(record.BodyFileOffset),
-                Math.Min(CprBinaryFieldCandidateDecoder.MaximumFieldsPerRecord, MaxRawFields - retainedFields));
+                Math.Min(CprBinaryFieldCandidateDecoder.MaximumFieldsPerRecord, MaxRawFields - retainedFields),
+                typedNotePrefixes);
             retainedFields += read.Fields.Count;
             partial |= read.Partial;
             // The inventory scanner initializes an empty immutable field list.

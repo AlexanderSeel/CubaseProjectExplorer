@@ -191,13 +191,7 @@ public sealed class CprEvidenceReader : IProjectReader
                 .OrderBy(value => value.Path.StartsWith("OwnInputBus/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("RecorderBus/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("OutputBus/", StringComparison.OrdinalIgnoreCase) ||
-<<<<<<< main
                     IsFolderDestination(value.Path) ||
-=======
-                    value.Path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) ||
-                    value.Path.StartsWith("foldbackSendFolder/", StringComparison.OrdinalIgnoreCase) ||
-                    value.Path.StartsWith("directRoutingFolder/", StringComparison.OrdinalIgnoreCase) ||
->>>>>>> origin/main
                     value.Path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("InputBusValue/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase) ||

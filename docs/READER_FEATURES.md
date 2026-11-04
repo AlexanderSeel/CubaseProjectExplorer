@@ -1,6 +1,6 @@
 # Reader features and open work
 
-Updated: 2026-11-03. This is the reader-specific inventory. Product/UI features
+Updated: 2026-11-04. This is the reader-specific inventory. Product/UI features
 are listed separately in [FEATURE_MATRIX.md](FEATURE_MATRIX.md); execution order
 is in [PLAN.md](../PLAN.md).
 
@@ -38,8 +38,9 @@ as a complete semantic reader. Structural success never means a full Cubase load
 | Scalar attributes | Exact type flags 1/4 and bounded 14-byte item layout with printable IDs | Non-ASCII IDs remain conservatively unsupported; values are not generally applied |
 | ScAr object attributes | ID `0x53634172`, flags `0x0022`, framed `CmAttribCollection` rev0; supported null/back references | Collection contents, score/text/articulation meaning and attribute overrides remain opaque |
 | bOuc object attributes | ID `0x624F7563`, flags `0x0002`, framed `MParamEventCurveRationalBezier` rev0 with named base rev0; supported base prefix | Curve points, interpolation and target meaning remain opaque |
-| Other object/string/container attributes | First unsupported item reported with ID, flags and exact source offset | General object codecs, CmString/container branches, other IDs/flags/classes/revisions |
-| Typed MMidiNote records | Modern scalar and supported opaque ScAr/bOuc attributes share counted-stream framing; exact suffix and named-revision gates; nested note-like values stay out of arrangement candidates | Other objects/strings/containers, attribute overrides and independent genuine typed-object comparisons |
+| String attributes | Printable four-byte ID, exact flags `0x0008`, framed `CmString` rev0 or supported null/earlier reference; body stays opaque | String contents, other flags/revisions and applied meaning |
+| Other object/container attributes | First unsupported item reported with ID, flags and exact source offset | General object codecs, container branches, other IDs/flags/classes/revisions |
+| Typed MMidiNote records | Modern scalar and supported opaque ScAr/bOuc/CmString attributes share counted-stream framing; exact suffix and named-revision gates; nested note-like values stay out of arrangement candidates | Other objects/strings/containers, attribute overrides and independent genuine typed-object comparisons |
 | Legacy base/note layouts | MMidiEvent rev0–2 / MMidiNote rev0–1 callback shapes and anonymous raw fields | Genuine older-revision fixtures and musical interpretation; no guessed v0 fallback |
 | Bounded packed-pattern fallback | Existing separate candidate scanner for supported scalar patterns; opaque ranges excluded | Heuristic evidence is weaker than counted framing and cannot establish a complete stream |
 | Part / possible-track context | Structural names, enclosing offsets and source-layout grouping | Verified track identity, hierarchy, part ownership and ordering |
@@ -59,16 +60,17 @@ a normalized controller, chord, expression or score event.
 | `0xC0` | MMidiProgramChange rev0 | Shared base/attribute boundary, opaque values | Program/bank interpretation |
 | `0xD0` | MMidiAfterTouch rev0 | Shared base/attribute boundary, opaque values | Normalized aftertouch |
 | `0xE0` | MMidiPitchBend rev0 | Shared base/attribute boundary, opaque values | Range, units and normalized bend |
-| `0xF0` | MMidiSysex rev0 | Two matching bounded length fields and opaque payload | Other length pairs and exported SysEx meaning |
+| `0xF0` | MMidiSysex rev0 | Nonnegative bounded signed byte count, opaque second word and payload; unequal words accepted | Single-word forms and exported SysEx meaning |
 | `0x70` | MChordEvent rev0 | Note-like suffix plus one byte; opaque | Chord identity, voicing and musical state |
 | `0x40` | MNoteChangeEvent rev0 | Shared base plus u16/u32/f64 suffix; opaque | Target identity and change semantics |
-| `0x30` | MScoreEvent rev1 | Distinct flags/scalars/null or exact MDataNode object/reference boundary with earlier named MEvent v0/v1; node body stays opaque; v1 attributes must be empty; suffix stays opaque | Other node classes/revisions, nonempty attributes, notation/articulation semantics and other score revisions |
+| `0x30` | MScoreEvent rev1 | Distinct flags/scalars/null or exact MDataNode object/reference boundary with earlier named MEvent v0/v1; node body stays opaque; v1 uses the shared supported scalar/object/string attribute boundaries; suffix stays opaque | Other node classes/revisions, unsupported attributes, notation/articulation semantics and other score revisions |
 | `0x00` | Escaped object/reference | Supported class/body or reference extent; separate typed-note pass avoids duplicate extraction | General object loading and unsupported nested typed notes |
 | Other values / revisions | Unknown | Explicit partial stop | Verify factory/callback/revision before adding support |
 
 No counted-stream failure permits resynchronization through an opaque payload.
-Malformed complete lists reject their candidate prefix; byte/note budgets can
-retain preceding complete observations with a partial reason.
+Unsupported events/attributes and SysEx extent failures retain preceding complete
+candidates as explicit partial evidence. Structural count/trailer failures reject
+the prefix; byte/note budgets also retain preceding complete observations.
 
 ## Native project entities and musical state
 
@@ -77,7 +79,7 @@ retain preceding complete observations with a partial reason.
 | Track classes and list context | Candidate Audio, MIDI, Instrument, Sampler, Folder, Device, Marker, Tempo, Signature, Automation, Chord, Drum, Video, Play-range and Loudness labels; exact-contained `MTrackList` parent offset and ordinal among recognized direct track-class children when the archive inventory is complete; exact `MFolderTrack` list-owner offset when present | Actual track identity, visible order, verified folder hierarchy, colors, channel ownership and complete inherited bodies; list membership/order/owner remain candidate byte-containment evidence |
 | Names and identifiers | Stored-name/UID/property candidates and class/source offsets | Stable normalized IDs and verified owner relationships |
 | Tempo | Selected candidates and raw callback-backed fields | Full tempo map, ramps, time domains, attribute overrides and BPM verification |
-| Meter | Selected signature candidates and raw fields | Signature changes, bar positions and complete musical mapping |
+| Meter | Selected signature candidates; anonymous 20-byte `MTimeSignatureEvent` prefix for explicit revisions 0–2, with raw bits, offsets and bounded retention | Genuine revision-0/1 validation, attribute meaning, signature changes, bar positions and complete musical mapping |
 | Markers / ranges | Recognized classes and raw fields | Verified marker/cycle/range names, IDs, positions and relationships |
 | Session metadata | Selected saved settings such as sample-rate/size or tempo/signature hints when observed | Authoritative complete settings, song metadata and all legacy variants |
 | Audio references | Nested path candidates and possible enclosing track context | Verified media-pool IDs, ownership, clip placement, file identity and availability |
@@ -89,7 +91,7 @@ retain preceding complete observations with a partial reason.
 | Logical routing | Explicit saved bus/port/send reference candidates with source evidence; bounded `foldbackSendFolder` fields retained as raw candidates | Verified endpoint identity, foldback slot grammar, graph completeness, groups/FX and sidechain semantics |
 | Sends | Selected saved destinations/fields | Levels, tap points, pre/post behavior, enabled state and ownership |
 | EQ | Selected typed band fields | Placement, defaults, complete band semantics and Cubase-visible validation |
-| Physical I/O | Saved named assignments separated from unresolved references; ambiguous device names retained; ASM-backed zero gates for two flat bus properties | Cross-archive identities, unclassified port strings, hardware presence/state and verified identity |
+| Physical I/O | Saved named assignments separated from unresolved references; ambiguous device names retained; nonzero explicit bus-reference candidates; zero selections retained only as stored fields | Cross-archive identities, unclassified port strings, hardware presence/state and verified identity |
 | Automation | Separate lane records with candidate parent IDs, source bounds and provenance; declared export parents supported; no standalone automation tracks | Parameter targets, points, interpolation, modes and independent owner validation beyond byte containment |
 | Expression / articulations / notation | Some containing objects can be skipped with evidence | Note-expression curves, score, articulation mapping and applied musical state |
 | Global project completeness | Supported observations plus explicit unknown/partial evidence | A full Cubase-equivalent project loader remains open |
@@ -131,7 +133,7 @@ Confirmation applies to fields declared in the export, not to all Cubase state.
 
 1. Complete remaining object/string/container attributes and reference forms
    beyond the shared typed/count-stream subset, with independent framing evidence.
-2. Extend MScoreEvent beyond the exact MDataNode/null-node and empty-attribute
+2. Extend MScoreEvent beyond the exact MDataNode/null-node and supported inherited-attribute
    boundary subset and complete other mixed-event bodies without scanning unknown data.
 3. Validate raw note values after attribute overrides, musical timebase, placement
    and ownership against controlled Cubase projects/exports.
@@ -139,8 +141,12 @@ Confirmation applies to fields declared in the export, not to all Cubase state.
 5. Expand versioned semantic fixtures, malformed-input coverage and large-file
    resource measurements; only then broaden compatibility/completeness claims.
 
-The latest [score boundary research](research/SCORE_EVENT_BOUNDARIES_2026-11-02.md)
-adds a bounded empty score subset and further test retirement. The
+The [signature revision follow-up](research/CUBASE15_C_SIGNATURE_REVISIONS.md)
+records the shared-prefix evidence, retention optimization and validation limits.
+The [integration checkpoint](research/READER_INTEGRATION_2026-11-04.md) records
+the combined reader validation and resolves earlier SysEx length-policy differences.
+The [score boundary research](research/SCORE_EVENT_BOUNDARIES_2026-11-02.md)
+documents the original bounded score subset and further test retirement. The
 [typed-note extension and test audit](research/TYPED_NOTE_ATTRIBUTES_TEST_AUDIT_2026-11-02.md)
 records the latest implementation and validation. Automation/I/O findings are in
 [automation and I/O research](research/AUTOMATION_IO_2026-11-02.md); MIDI framing

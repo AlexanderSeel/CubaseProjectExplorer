@@ -27,13 +27,9 @@ internal sealed class CprMidiPartEventStreamReader
     private readonly CprClassRevisionEvidence? _partRevision;
     private readonly CprClassRevisionEvidence? _eventRevision;
     private readonly CprClassRevisionEvidence? _noteRevision;
-<<<<<<< main
-    private readonly Dictionary<byte, CprClassRevisionEvidence?> _otherEventRevisions;
-=======
     private readonly CprClassRevisionEvidence? _scoreRevision;
     private readonly CprClassRevisionEvidence? _scoreBaseRevision;
     private readonly Dictionary<byte, CprClassRevisionEvidence?> _eventClassRevisions;
->>>>>>> origin/main
     private readonly long _archiveFileOffset;
     private readonly long _scanEnd;
     private readonly bool _wide;
@@ -54,17 +50,12 @@ internal sealed class CprMidiPartEventStreamReader
         _partRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiPart");
         _eventRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiEvent");
         _noteRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiNote");
-<<<<<<< main
-        _otherEventRevisions = new()
-        {
-=======
         _scoreRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MScoreEvent");
         _scoreBaseRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MEvent");
         _eventClassRevisions = new()
         {
             [0x40] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MNoteChangeEvent"),
             [0x70] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MChordEvent"),
->>>>>>> origin/main
             [0xA0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiPolyPressure"),
             [0xB0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiController"),
             [0xC0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiProgramChange"),
@@ -165,18 +156,10 @@ internal sealed class CprMidiPartEventStreamReader
                 continue;
             }
             var isNote = status is 0x80 or 0x90;
-<<<<<<< main
-            if (!isNote && (!_otherEventRevisions.TryGetValue(status, out var revision) ||
-                    revision?.RevisionAt(bodyFileOffset + position) != 0)) return false;
             if (isNote && notes.Count >= maximumNotes)
-            {
-                result = new(notes.AsReadOnly(), scanned, true);
-                return true;
-            }
-            if (position > data.Length - 17)
-=======
+                return Partial(notes, scanned,
+                    $"Packed MIDI note candidate limit ({maximumNotes:N0}) reached; remaining events were not read.", out result);
             if (!isNote)
->>>>>>> origin/main
             {
                 if (!_eventClassRevisions.TryGetValue(status, out var revision))
                     return Partial(notes, scanned,
@@ -209,40 +192,18 @@ internal sealed class CprMidiPartEventStreamReader
                     if (payloadStart > data.Length - 8)
                         return Partial(notes, scanned,
                             $"Packed SysEx payload length fields at file offset {bodyFileOffset + payloadStart} are outside the scanned bytes.", out result);
-                    var payloadBytes = BinaryPrimitives.ReadUInt32BigEndian(data.Slice(payloadStart, 4));
-                    var duplicateBytes = BinaryPrimitives.ReadUInt32BigEndian(data.Slice(payloadStart + 4, 4));
-                    // The reader uses the first count; its matching writer
-                    // emits it twice. Other pairs remain unsupported here.
-                    if (payloadBytes != duplicateBytes)
+                    // 0x141CF3610 uses only the first signed count for extent.
+                    // The following word stays opaque, even when it differs.
+                    var payloadBytes = BinaryPrimitives.ReadInt32BigEndian(data.Slice(payloadStart, 4));
+                    if (payloadBytes < 0 || payloadBytes > body.Length - payloadStart - 8)
                         return Partial(notes, scanned,
-                            $"Packed SysEx payload length fields differ at file offset {bodyFileOffset + payloadStart}; remaining events were not interpreted.", out result);
+                            $"Packed SysEx payload length at file offset {bodyFileOffset + payloadStart} is outside the containing part; remaining events were not interpreted.", out result);
                     if (payloadBytes > data.Length - payloadStart - 8)
                         return Partial(notes, scanned,
-                            $"Packed SysEx payload at file offset {bodyFileOffset + payloadStart + 8} exceeds the scanned bytes; remaining events were not interpreted.", out result);
-                    eventBytes += 8 + (int)payloadBytes;
+                            $"Packed SysEx payload at file offset {bodyFileOffset + payloadStart + 8} exceeds the byte scan budget; remaining events were not interpreted.", out result);
+                    eventBytes += 8 + payloadBytes;
                 }
                 position += eventBytes;
-                if (status == 0xF0)
-                {
-                    // MMidiSysex delegates to a byte-buffer reader: two i32s,
-                    // then the first value's raw byte count. The second i32 is
-                    // preserved as opaque; no payload inspection or allocation.
-                    if (position > data.Length - 8)
-                    {
-                        if (scanned == body.Length) return false;
-                        result = new(notes.AsReadOnly(), scanned, true);
-                        return true;
-                    }
-                    var payloadBytes = BinaryPrimitives.ReadInt32BigEndian(data.Slice(position, 4));
-                    position += 8;
-                    if (payloadBytes < 0 || payloadBytes > body.Length - position) return false;
-                    if (payloadBytes > data.Length - position)
-                    {
-                        result = new(notes.AsReadOnly(), scanned, true);
-                        return true;
-                    }
-                    position += payloadBytes;
-                }
                 continue;
             }
             if (!CprMidiPartNoteScanner.TryReadFramedModernFields(data.Slice(position, eventBytes),

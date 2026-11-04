@@ -38,6 +38,26 @@ public sealed class CprBinaryFieldCandidateDecoderTests
     }
 
     [Fact]
+    public void TempoBudgetPreservesLeadingRawBitsAndRejectsTruncationBeforeBudgetHandling()
+    {
+        var body = new byte[24];
+        BinaryPrimitives.WriteUInt32BigEndian(body, 0x7FC01234);
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(4), 0x8000000000000000);
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(12), 0xFFF0000000000000);
+        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(20), uint.MaxValue);
+        var full = CprBinaryFieldCandidateDecoder.ReadBounded(Record(), body, 1000);
+        Assert.Equal(new[] { "7FC01234", "8000000000000000", "FFF0000000000000", "FFFFFFFF" },
+            full.Fields.Select(field => field.RawHex));
+        for (var budget = 0; budget <= 4; budget++)
+        {
+            var result = CprBinaryFieldCandidateDecoder.ReadBounded(Record(), body, 1000, maximumFields: budget);
+            Assert.Equal(full.Fields.Take(budget), result.Fields);
+            Assert.Equal(budget < 4, result.Partial);
+        }
+        Assert.Empty(CprBinaryFieldCandidateDecoder.ReadBounded(Record(), body[..^1], 1000, maximumFields: 0).Fields);
+    }
+
+    [Fact]
     public void NumericRenderingUsesInvariantCulture()
     {
         var previous = CultureInfo.CurrentCulture;

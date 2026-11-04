@@ -92,7 +92,7 @@ the prefix; byte/note budgets also retain preceding complete observations.
 | Sends | Selected saved destinations/fields | Levels, tap points, pre/post behavior, enabled state and ownership |
 | EQ | Selected typed band fields | Placement, defaults, complete band semantics and Cubase-visible validation |
 | Physical I/O | Saved named assignments separated from unresolved references; ambiguous device names retained; nonzero explicit bus-reference candidates; zero selections retained only as stored fields | Cross-archive identities, unclassified port strings, hardware presence/state and verified identity |
-| Automation | Separate lane records with candidate parent IDs, source bounds and provenance; declared export parents supported; no standalone automation tracks | Parameter targets, points, interpolation, modes and independent owner validation beyond byte containment |
+| Automation | Separate lane records with candidate parent IDs, source bounds and provenance; declared export parents supported; anonymous bounded MAutomationTrack revision-0/1 counted prefixes and revision-2 words with exact raw bytes; no standalone automation tracks | Parameter targets, points, interpolation, modes, inherited object grammar, genuine legacy bodies and independent owner validation beyond byte containment |
 | Expression / articulations / notation | Some containing objects can be skipped with evidence | Note-expression curves, score, articulation mapping and applied musical state |
 | Global project completeness | Supported observations plus explicit unknown/partial evidence | A full Cubase-equivalent project loader remains open |
 
@@ -149,7 +149,8 @@ The [score boundary research](research/SCORE_EVENT_BOUNDARIES_2026-11-02.md)
 documents the original bounded score subset and further test retirement. The
 [typed-note extension and test audit](research/TYPED_NOTE_ATTRIBUTES_TEST_AUDIT_2026-11-02.md)
 records the latest implementation and validation. Automation/I/O findings are in
-[automation and I/O research](research/AUTOMATION_IO_2026-11-02.md); MIDI framing
+[automation and I/O research](research/AUTOMATION_IO_2026-11-02.md) and
+[the raw automation-prefix follow-up](research/CUBASE15_C_AUTOMATION_PREFIXES.md); MIDI framing
 and note-count deltas are in
 [nested-attribute research](research/CUBASE15_NESTED_ATTRIBUTES.md). Foundational
 evidence: [inherited serializers](research/CUBASE15_BACKWARD_COMPATIBILITY.md),

@@ -60,7 +60,11 @@ public static class CprBinaryFieldCandidateDecoder
             record.ClassVersion is <= 2 && record.BodyBytes >= 20;
         var isMidiNote = string.Equals(record.ClassName, "MMidiNote", StringComparison.Ordinal) &&
             record.ClassVersion is 0 or 1;
-        if ((!isTempoEvent && !isTempoTrack && !isTimeSignature && !isMidiNote) ||
+        var isAutomationTrack = string.Equals(record.ClassName, "MAutomationTrack", StringComparison.Ordinal) &&
+            record.ClassVersion is <= 2;
+        var isMarker = string.Equals(record.ClassName, "MMarkerEvent", StringComparison.Ordinal) &&
+            record.ClassVersion == 0;
+        if ((!isTempoEvent && !isTempoTrack && !isTimeSignature && !isMidiNote && !isAutomationTrack && !isMarker) ||
             record.BodyBytes < 0 || archiveData.Length < record.BodyBytes ||
             archiveFileOffset < 0 || archiveFileOffset > long.MaxValue - archiveData.Length ||
             record.BodyFileOffset < archiveFileOffset)
@@ -68,6 +72,11 @@ public static class CprBinaryFieldCandidateDecoder
         var relative = record.BodyFileOffset - archiveFileOffset;
         if (relative > archiveData.Length - record.BodyBytes) return new([], false);
         var body = archiveData.Slice((int)relative, (int)record.BodyBytes);
+
+        if (isAutomationTrack) return CprAutomationTrackFieldReader.Read(body, record.BodyFileOffset,
+            record.ClassVersion!.Value, maximumFields);
+
+        if (isMarker) return CprMarkerFieldReader.Read(body, record.BodyFileOffset, maximumFields);
 
         if (isMidiNote) return Limit(midiNoteRevision == record.ClassVersion
             ? ReadMidiNote(record, body, midiEventRevision, prefixReader) : [], maximumFields);
@@ -97,20 +106,24 @@ public static class CprBinaryFieldCandidateDecoder
 
         // Keep the original bits, including NaN payloads, infinities and signed
         // zero. A readable numeric rendering alone cannot preserve all evidence.
-        return Limit(Array.AsReadOnly(new[]
+        var tempoRetained = Math.Min(4, maximumFields);
+        if (tempoRetained == 0) return new([], true);
+        var tempoFields = new CprBinaryFieldCandidate[tempoRetained];
+        for (var index = 0; index < tempoRetained; index++)
         {
-            Field("body+0", "f32-be", BitConverter.Int32BitsToSingle(
-                BinaryPrimitives.ReadInt32BigEndian(body[..4])).ToString("R", CultureInfo.InvariantCulture),
-                record.BodyFileOffset, body[..4]),
-            Field("body+4", "f64-be", BitConverter.Int64BitsToDouble(
-                BinaryPrimitives.ReadInt64BigEndian(body.Slice(4, 8))).ToString("R", CultureInfo.InvariantCulture),
-                record.BodyFileOffset + 4, body.Slice(4, 8)),
-            Field("body+12", "f64-be", BitConverter.Int64BitsToDouble(
-                BinaryPrimitives.ReadInt64BigEndian(body.Slice(12, 8))).ToString("R", CultureInfo.InvariantCulture),
-                record.BodyFileOffset + 12, body.Slice(12, 8)),
-            Field("body+20", "u32-be", BinaryPrimitives.ReadUInt32BigEndian(body.Slice(20, 4))
-                .ToString(CultureInfo.InvariantCulture), record.BodyFileOffset + 20, body.Slice(20, 4))
-        }), maximumFields);
+            var offset = index switch { 0 => 0, 1 => 4, 2 => 12, _ => 20 };
+            var raw = body.Slice(offset, index is 1 or 2 ? 8 : 4);
+            var (type, value) = index switch
+            {
+                0 => ("f32-be", BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32BigEndian(raw))
+                    .ToString("R", CultureInfo.InvariantCulture)),
+                3 => ("u32-be", BinaryPrimitives.ReadUInt32BigEndian(raw).ToString(CultureInfo.InvariantCulture)),
+                _ => ("f64-be", BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64BigEndian(raw))
+                    .ToString("R", CultureInfo.InvariantCulture))
+            };
+            tempoFields[index] = Field($"body+{offset}", type, value, record.BodyFileOffset + offset, raw);
+        }
+        return new(Array.AsReadOnly(tempoFields), tempoRetained < 4);
     }
 
     private static CprBinaryFieldReadResult Limit(IReadOnlyList<CprBinaryFieldCandidate> fields, int maximumFields) =>

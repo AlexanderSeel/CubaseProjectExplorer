@@ -10,6 +10,11 @@ Current decompile leads and unresolved reader candidates: [Cubase 15 gap map](do
 
 - [ ] Decode automation parameter targets/modes and independently validate owner
   relationships beyond the implemented candidate byte-containment association.
+  The [automation-prefix follow-up](docs/research/CUBASE15_C_AUTOMATION_PREFIXES.md)
+  retains anonymous `MAutomationTrack` revision-0/1 counted prefixes and revision-2
+  words with bounded raw-field provenance. Genuine legacy fixtures, target codecs,
+  mode meanings and the inherited object grammar remain open; no new owner IDs
+  or normalized parameter values are inferred.
 - [ ] Resolve remaining cross-archive I/O bus identities and unclassified port
   strings; validate actual hardware mappings without inferring IDs from names.
   Foldback-send writer fields are retained raw, while their reader/slot grammar
@@ -36,6 +41,10 @@ Current decompile leads and unresolved reader candidates: [Cubase 15 gap map](do
   visible order, verified parent/folder relationships and stable IDs remain
   open. Detailed gaps and C-export anchors are in the [decompile gap map](docs/research/CUBASE15_DECOMPILE_GAP_MAP_2026-11-03.md).
 - [ ] Complete tempo/signature maps, markers and shared musical time domains.
+  The [marker prefix follow-up](docs/research/CUBASE15_C_MARKER_PREFIX.md)
+  retains bounded string/scalar observations for `MMarkerEvent` revision 0;
+  inherited event data, IDs, positions and ownership remain undecoded. Compare
+  genuine controlled marker changes before promoting any normalized marker state.
   The [signature revision follow-up](docs/research/CUBASE15_C_SIGNATURE_REVISIONS.md)
   retains the shared anonymous 20-byte prefix for explicit class revisions 0–2;
   genuine revision-0/1 fixtures, attribute semantics and musical mapping remain

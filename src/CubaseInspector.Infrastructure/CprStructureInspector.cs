@@ -262,7 +262,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
             Records = records,
             Partial = inventory.Partial || partial,
             LimitReasons = partial ? [.. inventory.LimitReasons,
-                "Raw-field retention budget reached (256 per record / 100,000 per project); supported fixed fields were omitted."]
+                $"Raw-field retention budget reached (256 per record / 100,000 per project / {CprMarkerFieldReader.MaximumRetainedStringBytes} bytes per marker string); supported raw fields were omitted."]
                 : inventory.LimitReasons
         };
     }

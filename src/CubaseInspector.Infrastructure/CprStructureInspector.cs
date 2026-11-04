@@ -809,7 +809,10 @@ public sealed class CprStructureInspector : ICprStructureInspector
         return b.ToString();
     }
 
-    private static string EscapeTable(string value) => value.Replace("|", "\\|")
+    private static string EscapeTable(string value) => value.Replace("\\", "\\\\")
+        .Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;")
+        .Replace("`", "\\`").Replace("[", "\\[").Replace("]", "\\]")
+        .Replace("*", "\\*").Replace("_", "\\_").Replace("|", "\\|")
         .Replace("\r", " ").Replace("\n", " ");
 }
 

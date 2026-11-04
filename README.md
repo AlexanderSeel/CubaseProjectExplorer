@@ -101,6 +101,8 @@ See CLI help for remaining `io`, `routes`, `plugins`, `footprint` and `footprint
 
 Reader and validation results are documented in the [reader feature list](docs/READER_FEATURES.md), [counted MIDI investigation](docs/research/CUBASE15_MIDI_STREAM_COMPATIBILITY.md), [mixed-event follow-up](docs/research/CUBASE15_C_MIXED_MIDI.md), [nested-attribute report](docs/research/CUBASE15_NESTED_ATTRIBUTES.md), [score follow-up](docs/research/SCORE_EVENT_BOUNDARIES_2026-11-02.md), [tempo-table follow-up](docs/research/CUBASE15_C_TEMPO_TABLES.md) and [audio-routing follow-up](docs/research/CUBASE15_C_AUDIO_ROUTING.md). These observations remain candidate-level; bounded traversal does not establish musical semantics or whole-project completeness. Historical validation counts describe their individual checkpoints. The [2026-11-04 integration checkpoint](docs/research/READER_INTEGRATION_2026-11-04.md) records 763 passing Release tests, successful CLI/Uno Windows production publishes and unchanged source hashes for both controlled fixtures.
 
+The latest [marker-prefix and allocation follow-up](docs/research/CUBASE15_C_MARKER_PREFIX.md) records 821 passing Release tests, successful Windows CLI/Uno production publishes, literal Markdown output and bounded read-only corpus checks. Marker IDs, positions and ownership remain unverified.
+
 The [page review](docs/UI_PAGE_MENU_REVIEW_2026-11-02.md) records shared spacing/menu checks. Live visual, keyboard, accessibility, DPI, playback and large-library acceptance remain open in [PLAN.md](PLAN.md). Project binaries and the full disassembly remain untracked.
 
 - `src/CubaseInspector.Core` — normalized models, evidence, filters, comparisons and reports.

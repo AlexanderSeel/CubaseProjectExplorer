@@ -222,4 +222,32 @@ public sealed class CprMarkerFieldReaderTests
         }
         finally { File.Delete(path); }
     }
+
+    [Fact]
+    public async Task MarkdownShowsUntrustedMarkerTextLiterallyWhileRawEvidenceStaysExact()
+    {
+        const string text = "<img src=x> [open](https://example.invalid) `code` *bold* _value_ | A&B \\";
+        var source = Project(false, Body(Encoding.ASCII.GetBytes(text + "\0")));
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cpr");
+        try
+        {
+            await File.WriteAllBytesAsync(path, source);
+            var result = await new CprStructureInspector().InspectAsync(path);
+            Assert.True(result.IsSuccess, result.Error?.Message);
+            var record = Assert.Single(Assert.Single(result.Value!.ArchiveInventories!).Records,
+                item => item.ClassName == "MMarkerEvent");
+            Assert.Equal(text, record.RawFields![1].Value);
+            var markdown = CprStructureInspector.ToMarkdown(result.Value);
+            Assert.DoesNotContain("<img", markdown);
+            Assert.DoesNotContain("[open](", markdown);
+            Assert.Contains("&lt;img src=x&gt;", markdown);
+            Assert.Contains("\\[open\\](", markdown);
+            Assert.Contains("\\`code\\`", markdown);
+            Assert.Contains("\\*bold\\*", markdown);
+            Assert.Contains("\\_value\\_", markdown);
+            Assert.Contains("\\| A&amp;B \\\\", markdown);
+            Assert.Equal(source, await File.ReadAllBytesAsync(path));
+        }
+        finally { File.Delete(path); }
+    }
 }

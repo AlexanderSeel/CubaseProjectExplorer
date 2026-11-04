@@ -43,8 +43,9 @@ Current decompile leads and unresolved reader candidates: [Cubase 15 gap map](do
 - [ ] Complete tempo/signature maps, markers and shared musical time domains.
   The [marker prefix follow-up](docs/research/CUBASE15_C_MARKER_PREFIX.md)
   retains bounded string/scalar observations for `MMarkerEvent` revision 0;
-  inherited event data, IDs, positions and ownership remain undecoded. Compare
-  genuine controlled marker changes before promoting any normalized marker state.
+  inherited event data, IDs, positions and ownership remain undecoded. The existing
+  33-file sample contained no compact marker records; obtain genuine controlled
+  marker changes before promoting any normalized marker state.
   The [signature revision follow-up](docs/research/CUBASE15_C_SIGNATURE_REVISIONS.md)
   retains the shared anonymous 20-byte prefix for explicit class revisions 0–2;
   genuine revision-0/1 fixtures, attribute semantics and musical mapping remain

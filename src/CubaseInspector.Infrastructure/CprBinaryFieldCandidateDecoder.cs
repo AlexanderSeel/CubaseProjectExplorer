@@ -121,7 +121,8 @@ public static class CprBinaryFieldCandidateDecoder
                 _ => ("f64-be", BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64BigEndian(raw))
                     .ToString("R", CultureInfo.InvariantCulture))
             };
-            tempoFields[index] = Field($"body+{offset}", type, value, record.BodyFileOffset + offset, raw);
+            var field = index switch { 0 => "body+0", 1 => "body+4", 2 => "body+12", _ => "body+20" };
+            tempoFields[index] = Field(field, type, value, record.BodyFileOffset + offset, raw);
         }
         return new(Array.AsReadOnly(tempoFields), tempoRetained < 4);
     }

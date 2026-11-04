@@ -80,7 +80,7 @@ the prefix; byte/note budgets also retain preceding complete observations.
 | Names and identifiers | Stored-name/UID/property candidates and class/source offsets | Stable normalized IDs and verified owner relationships |
 | Tempo | Selected candidates and raw callback-backed fields | Full tempo map, ramps, time domains, attribute overrides and BPM verification |
 | Meter | Selected signature candidates; anonymous 20-byte `MTimeSignatureEvent` prefix for explicit revisions 0–2, with raw bits, offsets and bounded retention | Genuine revision-0/1 validation, attribute meaning, signature changes, bar positions and complete musical mapping |
-| Markers / ranges | Recognized classes and raw fields | Verified marker/cycle/range names, IDs, positions and relationships |
+| Markers / ranges | Recognized classes; bounded `MMarkerEvent` revision-0 string/scalar prefix with exact raw bytes, ASCII/BOM-UTF-8 renderings and explicit retention limits | Genuine marker fixture validation, inherited body, verified marker/cycle/range names, IDs, positions and relationships |
 | Session metadata | Selected saved settings such as sample-rate/size or tempo/signature hints when observed | Authoritative complete settings, song metadata and all legacy variants |
 | Audio references | Nested path candidates and possible enclosing track context | Verified media-pool IDs, ownership, clip placement, file identity and availability |
 | Audio events / parts | Structural records and selected metadata only | Offsets, lengths, fades, envelopes, stretching/warp, lanes, takes, comping and edits |
@@ -141,6 +141,8 @@ Confirmation applies to fields declared in the export, not to all Cubase state.
 5. Expand versioned semantic fixtures, malformed-input coverage and large-file
    resource measurements; only then broaden compatibility/completeness claims.
 
+The [marker prefix follow-up](research/CUBASE15_C_MARKER_PREFIX.md) records
+string/scalar evidence, literal report output and measured tempo-field allocations.
 The [signature revision follow-up](research/CUBASE15_C_SIGNATURE_REVISIONS.md)
 records the shared-prefix evidence, retention optimization and validation limits.
 The [integration checkpoint](research/READER_INTEGRATION_2026-11-04.md) records

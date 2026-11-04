@@ -53,7 +53,7 @@ For explicit `MMarkerEvent` revision 0 only, the prefix is:
 The complete prefix must fit the class body and enclosing archive before any
 fields are retained, even when the caller budget is zero. Negative, oversized,
 truncated, unknown-revision and future-revision inputs stay opaque. The native
-signed loop may treat negative string lengths as empty; this reader deliberately
+string reader treats negative string lengths as empty; this reader deliberately
 does not accept them. No guessed scalar boundary or byte resynchronization follows
 an invalid length.
 
@@ -68,6 +68,11 @@ strings, controls and unmarked high bytes remain opaque payload observations,
 with their original bytes intact. Rendering is deliberately narrower than the
 native codec; no current system codepage is guessed. Raw bytes include the BOM
 and terminator even when the displayed text omits them.
+
+Markdown reports escape HTML and Markdown metacharacters in table cells, so
+retained text renders literally. JSON/model values and original raw bytes stay
+unchanged; a marker string cannot introduce an HTML element or Markdown link
+through the report's value cell.
 
 String observation retention is capped at **4096 wire bytes** per marker. Longer
 valid strings up to 50,000 bytes are skipped without copying/decoding, while their
@@ -86,14 +91,48 @@ discarding omitted fields. At a zero budget, a valid bounded record returns an
 empty retention-partial result before creating those objects. Raw NaN payloads,
 signed zero, infinities, offsets and retained-field ordering are unchanged.
 
-No end-to-end memory or speed improvement is asserted from this local change.
+A local Release probe compared the previous published assembly with the updated
+decoder using the same zero-filled 24-byte record. Each budget was warmed for
+2000 calls, then measured for 10,000 calls with
+`GC.GetAllocatedBytesForCurrentThread`. Total measured bytes:
+
+| Retained field budget | Before | After |
+| --- | ---: | ---: |
+| 0 | 6,320,128 | 128 |
+| 1 | 7,360,000 | 1,920,000 |
+| 4 | 6,320,000 | 6,320,000 |
+
+Both zero-budget runs include the same 128-byte measurement/runtime overhead.
+Constant field-name strings preserve the full-read allocation cost; constructing
+those names per call would have added allocations to the common path. This
+isolated probe establishes budget-dependent allocation behavior, not an
+end-to-end application memory or speed improvement. Local harnesses remain in
+ignored `artifacts/marker-reader-2026-11-04/`.
 
 ## Validation
 
-Focused marker tests passed before the final integration run. Regression,
-production builds, native-file byte comparisons and any allocation measurements
-are pending for this batch. Synthetic tests cover encoding boundaries, malformed
-lengths, source offsets, retention limits and RIFF/RIF2 inventory propagation.
+The full suite passed **821 Release tests, with zero failures or skips**, including
+both hash-pinned controlled Cubase 15 fixtures. Marker tests cover ASCII and BOM
+forms, invalid UTF-8, legacy encoding, embedded controls, every shorter prefix,
+invalid counts/revisions, exact offsets/hex, 4096/4097/50,000-byte boundaries,
+field budgets, literal Markdown rendering and RIFF/RIF2 inventory propagation.
+The tempo budget regression checks retained bits, ordering and malformed bounds.
+Windows x64 self-contained CLI and Uno Desktop Release production publishes
+passed without warnings or errors. An initial CLI publish without restore lacked
+the runtime-specific assets; restoring the existing dependencies resolved it.
+The published CLI read both controlled projects (zero and 16 note candidates)
+and a synthetic marker case (three raw fields). JSON retained its original
+text and Markdown rendered it literally; all three source byte arrays were
+unchanged after reading.
+
+A read-only comparison covered all **33 files** in the existing bounded private
+routing sample. Every original SHA-256 remained unchanged after inspection with
+the baseline and updated CLI. After excluding only newly supported marker and
+automation raw-field lists, complete structural JSON was identical; existing
+notes, routing tokens, field values and limits were preserved. **No compact
+`MMarkerEvent` records were present**, so this sample checks regressions rather
+than genuine marker decoding. No source project or complete private report is
+committed. The C-export hash remained unchanged after analysis.
 
 Genuine one-change Cubase marker saves and paired visible-state/export comparisons
 remain necessary. Serializer revision 0 is not a Cubase release number. Inherited

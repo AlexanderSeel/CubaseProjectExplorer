@@ -14,6 +14,7 @@ internal sealed class CprMidiPartEventStreamReader
     private const string Source =
         "Counted MMidiPart event candidate; Cubase15.exe MMidiPart reader 0x141bc6e90, " +
         "event factory 0x141bb14b0, MMidiEvent reader 0x141bb0390 and MMidiNote reader 0x141bb4690; " +
+        "additional mixed-event boundaries: docs/research/CUBASE15_C_MIXED_MIDI.md; " +
         "SHA-256 b4a9c748537ead87981aebe18a01aae3acba8bfc76d1c1150c0054de75515aa0. " +
         "Packet boundaries compared with bounded SX1-3 and later CPR samples. " +
         "Timing units, part placement and ownership remain unverified; " +
@@ -24,7 +25,7 @@ internal sealed class CprMidiPartEventStreamReader
     private readonly CprClassRevisionEvidence? _partRevision;
     private readonly CprClassRevisionEvidence? _eventRevision;
     private readonly CprClassRevisionEvidence? _noteRevision;
-    private readonly Dictionary<byte, CprClassRevisionEvidence?> _scalarEventRevisions;
+    private readonly Dictionary<byte, CprClassRevisionEvidence?> _otherEventRevisions;
     private readonly long _archiveFileOffset;
     private readonly long _scanEnd;
     private readonly bool _wide;
@@ -44,11 +45,14 @@ internal sealed class CprMidiPartEventStreamReader
         _partRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiPart");
         _eventRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiEvent");
         _noteRevision = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiNote");
-        _scalarEventRevisions = new()
+        _otherEventRevisions = new()
         {
+            [0xA0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiPolyPressure"),
             [0xB0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiController"),
+            [0xC0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiProgramChange"),
             [0xD0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiAfterTouch"),
-            [0xE0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiPitchBend")
+            [0xE0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiPitchBend"),
+            [0xF0] = CprClassRevisionEvidence.Find(inventory?.ClassDeclarations, "MMidiSysex")
         };
     }
 
@@ -106,7 +110,7 @@ internal sealed class CprMidiPartEventStreamReader
         for (var index = 0U; index < eventCount; index++)
         {
             if ((index & 255) == 0) ct.ThrowIfCancellationRequested();
-            if (notes.Count >= maximumNotes || position >= data.Length && scanned < body.Length)
+            if (position >= data.Length && scanned < body.Length)
             {
                 result = new(notes.AsReadOnly(), scanned, true);
                 return true;
@@ -128,8 +132,13 @@ internal sealed class CprMidiPartEventStreamReader
                 continue;
             }
             var isNote = status is 0x80 or 0x90;
-            if (!isNote && (!_scalarEventRevisions.TryGetValue(status, out var revision) ||
+            if (!isNote && (!_otherEventRevisions.TryGetValue(status, out var revision) ||
                     revision?.RevisionAt(bodyFileOffset + position) != 0)) return false;
+            if (isNote && notes.Count >= maximumNotes)
+            {
+                result = new(notes.AsReadOnly(), scanned, true);
+                return true;
+            }
             if (position > data.Length - 17)
             {
                 if (scanned == body.Length) return false;
@@ -149,6 +158,27 @@ internal sealed class CprMidiPartEventStreamReader
             {
                 if (!CprMidiNoteLayout.TryReadPrefix(data.Slice(position, eventBytes), 2, out _, out _)) return false;
                 position += eventBytes;
+                if (status == 0xF0)
+                {
+                    // MMidiSysex delegates to a byte-buffer reader: two i32s,
+                    // then the first value's raw byte count. The second i32 is
+                    // preserved as opaque; no payload inspection or allocation.
+                    if (position > data.Length - 8)
+                    {
+                        if (scanned == body.Length) return false;
+                        result = new(notes.AsReadOnly(), scanned, true);
+                        return true;
+                    }
+                    var payloadBytes = BinaryPrimitives.ReadInt32BigEndian(data.Slice(position, 4));
+                    position += 8;
+                    if (payloadBytes < 0 || payloadBytes > body.Length - position) return false;
+                    if (payloadBytes > data.Length - position)
+                    {
+                        result = new(notes.AsReadOnly(), scanned, true);
+                        return true;
+                    }
+                    position += payloadBytes;
+                }
                 continue;
             }
             if (!CprMidiPartNoteScanner.TryReadRecord(data.Slice(position, eventBytes),

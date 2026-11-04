@@ -5,6 +5,8 @@ namespace CubaseInspector.Core;
 /// <summary>A read-only view of CPR named records and explicit bus references. Does not assign records by name.</summary>
 public static class CprSignalFlowPresentation
 {
+    private readonly record struct BusKey(string Stream, long? ArchiveOffset, uint Uid);
+
     public static ProjectSnapshot Create(ProjectSnapshot project)
     {
         ArgumentNullException.ThrowIfNull(project);
@@ -37,33 +39,35 @@ public static class CprSignalFlowPresentation
                 null, null, item.Record.Mute, item.Record.Solo, EvidenceLevel.Candidate,
                 "CPR named record", item.Record.ArchiveOffset, ParentTrackId: parent, Pan: item.Record.Pan);
         }).ToArray();
-        var owners = new Dictionary<(string Stream, uint Uid), HashSet<string>>();
-        var busDefinitions = new Dictionary<(string Stream, uint Uid), List<string>>();
+        var owners = new Dictionary<BusKey, HashSet<string>>();
+        var busDefinitions = new Dictionary<BusKey, HashSet<string>>();
         foreach (var item in records)
-            foreach (var field in item.Record.CandidateFields ?? [])
+            foreach (var field in UnambiguousFields(item.Record.CandidateFields ?? []))
                 if (IsBusUid(field) && TryUid(field, out var definitionUid) &&
                     (item.Record.CandidateFields ?? []).Any(candidate =>
                         candidate.Path.Equals("Bus Type", StringComparison.OrdinalIgnoreCase)))
                 {
-                    var key = (item.Record.SourceStream, definitionUid);
+                    var key = new BusKey(item.Record.SourceStream, item.Record.SourceArchiveOffset, definitionUid);
                     if (!busDefinitions.TryGetValue(key, out var definitions)) busDefinitions[key] = definitions = [];
                     definitions.Add(item.Id);
                 }
                 else if (IsOwnBus(field.Path) && TryUid(field, out var uid))
                 {
-                    var key = (item.Record.SourceStream, uid);
+                    var key = new BusKey(item.Record.SourceStream, item.Record.SourceArchiveOffset, uid);
                     if (!owners.TryGetValue(key, out var ids)) owners[key] = ids = new(StringComparer.Ordinal);
                     ids.Add(item.Id);
                 }
 
         var edges = new List<RoutingEdge>(project.Routing);
         foreach (var item in records)
-            foreach (var field in item.Record.CandidateFields ?? [])
+            foreach (var field in UnambiguousFields(item.Record.CandidateFields ?? []))
             {
                 var output = field.Path.Equals("OutputBus/Value", StringComparison.OrdinalIgnoreCase) ||
                     field.Path.Equals("OutputBus/Bus UID", StringComparison.OrdinalIgnoreCase) ||
-                    field.Path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase);
-                var input = field.Path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase);
+                    field.Path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase) ||
+                    field.Path.Equals("OutputBusValue/Value", StringComparison.OrdinalIgnoreCase);
+                var input = field.Path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase) ||
+                    field.Path.Equals("InputBusValue/Value", StringComparison.OrdinalIgnoreCase);
                 var direct = field.Path.StartsWith("directRoutingFolder/", StringComparison.OrdinalIgnoreCase) &&
                     IsBusDestination(field.Path);
                 var send = field.Path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) &&
@@ -71,10 +75,10 @@ public static class CprSignalFlowPresentation
                 var childBus = IsChildBus(field.Path);
                 var recorder = IsRecorderBus(field.Path);
                 if ((!input && !output && !send && !direct && !childBus && !recorder) || !TryUid(field, out var uid)) continue;
-                var key = (item.Record.SourceStream, uid);
-                var target = ResolveBus(key, busDefinitions, owners) ?? $"Bus UID {uid} [{item.Record.SourceStream}]";
+                var key = new BusKey(item.Record.SourceStream, item.Record.SourceArchiveOffset, uid);
+                var target = ResolveBus(key, busDefinitions, owners) ?? UnresolvedBusId(key);
                 if (childBus && target.StartsWith("Bus UID ", StringComparison.Ordinal))
-                    target = BusNodeId(key.Item1, uid);
+                    target = BusNodeId(key);
                 var namePath = NamePathFor(field.Path);
                 var names = (item.Record.CandidateFields ?? []).Where(value =>
                         value.Path.Equals(namePath, StringComparison.OrdinalIgnoreCase) && value.Type == "string")
@@ -95,28 +99,30 @@ public static class CprSignalFlowPresentation
                     TargetLabel: names.Length == 1 ? names[0] : null));
             }
         foreach (var item in records)
-            foreach (var field in item.Record.CandidateFields ?? [])
+            foreach (var field in UnambiguousFields(item.Record.CandidateFields ?? []))
             {
                 if (!field.Path.Equals("Parent Bus UID", StringComparison.OrdinalIgnoreCase) || !TryUid(field, out var uid)) continue;
-                var key = (item.Record.SourceStream, uid);
-                var target = ResolveBus(key, busDefinitions, owners) ?? $"Bus UID {uid} [{item.Record.SourceStream}]";
+                var key = new BusKey(item.Record.SourceStream, item.Record.SourceArchiveOffset, uid);
+                var target = ResolveBus(key, busDefinitions, owners) ?? UnresolvedBusId(key);
                 edges.Add(new(item.Id, target, "Parent bus", Evidence: EvidenceLevel.Candidate,
                     SourceOffset: field.ArchiveOffset, SourcePath: item.Record.SourceStream + "/" + field.Path));
             }
         return project with { Tracks = [.. project.Tracks, .. tracks], Routing = edges };
     }
 
-    private static string? ResolveBus((string Stream, uint Uid) key,
-        IReadOnlyDictionary<(string Stream, uint Uid), List<string>> definitions,
-        IReadOnlyDictionary<(string Stream, uint Uid), HashSet<string>> owners)
+    private static string? ResolveBus(BusKey key,
+        IReadOnlyDictionary<BusKey, HashSet<string>> definitions,
+        IReadOnlyDictionary<BusKey, HashSet<string>> owners)
     {
         if (definitions.TryGetValue(key, out var declared))
-        {
-            var distinct = declared.Distinct(StringComparer.Ordinal).ToArray();
-            return distinct.Length == 1 ? distinct[0] : null;
-        }
+            return declared.Count == 1 ? declared.Single() : null;
         return owners.TryGetValue(key, out var matches) && matches.Count == 1 ? matches.Single() : null;
     }
+
+    private static IEnumerable<CprNamedRecordValue> UnambiguousFields(IReadOnlyList<CprNamedRecordValue> fields) =>
+        fields.GroupBy(field => field.Path, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.All(field => field.Type == group.First().Type && field.Value == group.First().Value))
+            .Select(group => group.First());
 
     private static bool IsBusUid(CprNamedRecordValue field) =>
         field.Path.Equals("Bus UID", StringComparison.OrdinalIgnoreCase) ||
@@ -132,8 +138,11 @@ public static class CprSignalFlowPresentation
 
     private static bool IsChildBus(string path) =>
         (path.StartsWith("OwnInputBus/Child Bus/", StringComparison.OrdinalIgnoreCase) ||
-         path.StartsWith("RecorderBus/Child Bus/", StringComparison.OrdinalIgnoreCase)) &&
-        path.EndsWith("/Bus UID", StringComparison.OrdinalIgnoreCase);
+         path.StartsWith("OwnInputBus/Child Bus[", StringComparison.OrdinalIgnoreCase) ||
+         path.StartsWith("RecorderBus/Child Bus/", StringComparison.OrdinalIgnoreCase) ||
+         path.StartsWith("RecorderBus/Child Bus[", StringComparison.OrdinalIgnoreCase)) &&
+        (path.EndsWith("/Bus UID", StringComparison.OrdinalIgnoreCase) ||
+         path.EndsWith("/Bus UID/Value", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsBusDestination(string path) =>
         path.EndsWith("/Output/Value", StringComparison.OrdinalIgnoreCase) ||
@@ -150,13 +159,20 @@ public static class CprSignalFlowPresentation
         return separator >= 0 ? path[..separator] + "/Name" : path + "/Name";
     }
 
-    private static string BusNodeId(string stream, uint uid) =>
-        $"cpr-bus:{Uri.EscapeDataString(stream)}:{uid}";
+    private static string BusNodeId(BusKey key) =>
+        $"cpr-bus:{Uri.EscapeDataString(key.Stream)}:{key.Uid}" +
+        (key.ArchiveOffset is long offset ? $":archive-{offset:X}" : "");
+
+    private static string UnresolvedBusId(BusKey key) =>
+        $"Bus UID {key.Uid} [{key.Stream}" +
+        (key.ArchiveOffset is long offset ? $" @0x{offset:X}]" : "]");
 
     private static bool TryUid(CprNamedRecordValue field, out uint uid)
     {
         uid = 0;
         if (field.Type is not ("i64" or "u32" or "string")) return false;
-        return uint.TryParse(field.Value, NumberStyles.None, CultureInfo.InvariantCulture, out uid);
+        // The native connection inventory explicitly excludes zero selections.
+        // Keep their stored fields, without turning unused slots into edges.
+        return uint.TryParse(field.Value, NumberStyles.None, CultureInfo.InvariantCulture, out uid) && uid != 0;
     }
 }

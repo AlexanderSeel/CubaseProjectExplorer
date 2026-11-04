@@ -78,6 +78,70 @@ public sealed class CprSignalFlowPresentationTests
     }
 
     [Fact]
+    public void BusIdsAreScopedToArchiveOffsetsEvenWhenStreamNamesRepeat()
+    {
+        var first = Mixer("First", 110, new CprNamedRecordValue("OutputBusValue/Value", "i64", "42", 120))
+            with { SourceArchiveOffset = 100 };
+        var second = Mixer("Second", 210, new CprNamedRecordValue("OutputBusValue/Value", "i64", "42", 220))
+            with { SourceArchiveOffset = 200 };
+        var target = Mixer("Bus", 250, new CprNamedRecordValue("OwnInputBus/Bus UID", "i64", "42", 260))
+            with { SourceArchiveOffset = 200 };
+        var legacy = Mixer("Legacy", 310, new CprNamedRecordValue("OutputBusValue/Value", "i64", "42", 320));
+        var view = CprSignalFlowPresentation.Create(Project(first, second, target, legacy));
+
+        var firstEdge = Assert.Single(view.Routing, edge => edge.FromChannelId == "cpr-mixer-0-6E");
+        var secondEdge = Assert.Single(view.Routing, edge => edge.FromChannelId == "cpr-mixer-1-D2");
+        var legacyEdge = Assert.Single(view.Routing, edge => edge.FromChannelId == "cpr-mixer-3-136");
+        Assert.StartsWith("Bus UID 42", firstEdge.ToChannelId);
+        Assert.Equal("cpr-mixer-2-FA", secondEdge.ToChannelId);
+        Assert.StartsWith("Bus UID 42", legacyEdge.ToChannelId);
+        Assert.NotEqual(firstEdge.ToChannelId, legacyEdge.ToChannelId);
+    }
+
+    [Fact]
+    public void ZeroSelectionsDoNotBecomeRoutesOrConsumeUnusedSlots()
+    {
+        var observation = Mixer("Disconnected", 100,
+            new CprNamedRecordValue("InputBusValue/Value", "i64", "0", 110),
+            new CprNamedRecordValue("OutputBusValue/Value", "i64", "0", 120),
+            new CprNamedRecordValue("SendFolder/Slot[0]/Output/Value", "i64", "0", 130),
+            new CprNamedRecordValue("directRoutingFolder/Slot[0]/Output/Value", "i64", "0", 140),
+            new CprNamedRecordValue("RecorderBus/Bus UID", "i64", "0", 150),
+            new CprNamedRecordValue("OwnInputBus/Child Bus[0]/Bus UID", "i64", "0", 160),
+            new CprNamedRecordValue("Parent Bus UID", "i64", "0", 170));
+        var view = CprSignalFlowPresentation.Create(Project(observation));
+        Assert.Empty(view.Routing);
+        Assert.Equal(7, Assert.Single(view.NativeMixerObservations!).CandidateFields!.Count);
+    }
+
+    [Theory]
+    [InlineData("42", 1)]
+    [InlineData("91", 0)]
+    [InlineData("-1", 0)]
+    public void DuplicateDestinationPathsRequireOneStoredValue(string secondValue, int routes)
+    {
+        var view = CprSignalFlowPresentation.Create(Project(Mixer("Source", 100,
+            new CprNamedRecordValue("OutputBusValue/Value", "i64", "42", 110),
+            new CprNamedRecordValue("OutputBusValue/Value", "i64", secondValue, 120))));
+        Assert.Equal(routes, view.Routing.Count);
+        Assert.Equal(2, Assert.Single(view.NativeMixerObservations!).CandidateFields!.Count);
+        if (routes == 1) Assert.Equal(110, view.Routing[0].SourceOffset);
+    }
+
+    [Fact]
+    public void ChildBusArraySyntaxRetainsEachMembershipAndItsName()
+    {
+        var view = CprSignalFlowPresentation.Create(Project(Mixer("Bus", 100,
+            new CprNamedRecordValue("OwnInputBus/Child Bus[0]/Bus UID", "i64", "42", 110),
+            new CprNamedRecordValue("OwnInputBus/Child Bus[0]/Name", "string", "Left", 120),
+            new CprNamedRecordValue("RecorderBus/Child Bus[1]/Bus UID/Value", "i64", "43", 130),
+            new CprNamedRecordValue("RecorderBus/Child Bus[1]/Name", "string", "Right", 140))));
+        Assert.Equal(2, view.Routing.Count);
+        Assert.Contains(view.Routing, edge => edge.Kind == "Child bus" && edge.TargetLabel == "Left" && edge.SourceOffset == 110);
+        Assert.Contains(view.Routing, edge => edge.Kind == "Child bus" && edge.TargetLabel == "Right" && edge.SourceOffset == 130);
+    }
+
+    [Fact]
     public void ReadsOutputBusValueAndInputBusValueReferencesAgainstUniqueBusOwners()
     {
         var view = CprSignalFlowPresentation.Create(Project(

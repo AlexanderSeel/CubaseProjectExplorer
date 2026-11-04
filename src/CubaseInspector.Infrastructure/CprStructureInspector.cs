@@ -25,6 +25,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
     private const int MaxInventoryBytes = 128 * 1024 * 1024;
     private const int MaxInventoryRecords = 10_000;
     private const int MaxInventoryRanges = 4096;
+    private const int MaxRawFields = 100_000;
 
     public async Task<Result<CprStructureReport>> InspectAsync(string path, CancellationToken ct = default)
     {
@@ -74,6 +75,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
             var inventoryDetails = 0;
             var inventoryRanges = 0;
             var inventorySymbols = 0;
+            var rawFieldsRetained = 0;
             var omittedInventories = 0;
             long cursor = headerLength;
             var chunkHeaderLength = isRif2 ? 12 : 8;
@@ -180,17 +182,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
                             archiveData, payloadOffset, size, isRif2, ct,
                             MaxInventoryRecords - inventoryDetails, MaxRecords - inventoryRecords,
                             MaxInventoryRanges - inventoryRanges, MaxRecords - inventorySymbols);
-                        var midiEventRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiEvent");
-                        var midiNoteRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiNote");
-                        inventory = inventory with
-                        {
-                            Records = inventory.Records.Select(record => record with
-                            {
-                                RawFields = CprBinaryFieldCandidateDecoder.Read(record, archiveData, payloadOffset,
-                                    midiEventRevision?.RevisionAt(record.BodyFileOffset),
-                                    midiNoteRevision?.RevisionAt(record.BodyFileOffset))
-                            }).ToArray()
-                        };
+                        inventory = AttachBinaryFields(inventory, archiveData, ref rawFieldsRetained, ct);
                         inventories.Add(inventory);
                         archiveInventory = inventory;
                         inventoryBytes += count;
@@ -226,7 +218,7 @@ public sealed class CprStructureInspector : ICprStructureInspector
             if (metadataScanBytes >= MaxMetadataScanBytes)
                 warnings.Add("Metadata candidate scan reached its 128 MiB aggregate budget; later ARCH payloads were not scanned.");
             if (inventories.Any(inventory => inventory.Partial))
-                warnings.Add("Detailed ARCH evidence is partial. Per-archive LimitReasons disclose byte, record, depth and retained-detail limits; uninterpreted bytes are not necessarily corrupt.");
+                warnings.Add("Detailed ARCH evidence is partial. Per-archive LimitReasons disclose byte, record, depth, retained-detail and raw-field limits; uninterpreted bytes are not necessarily corrupt.");
             if (omittedInventories > 0)
                 warnings.Add($"Detailed ARCH evidence omitted {omittedInventories} archive(s) after the {MaxInventoryArchives}-archive limit; their container chunk entries remain available.");
             warnings.Add("Detailed class-header matches and byte containment are candidate evidence, not a verified Cubase object graph or musical field coverage. Unknown class names are retained without assigning semantics.");
@@ -238,6 +230,36 @@ public sealed class CprStructureInspector : ICprStructureInspector
         catch (OperationCanceledException) { return Result<CprStructureReport>.Fail("CANCELLED", "CPR inspection cancelled."); }
         catch (IOException e) { return Result<CprStructureReport>.Fail("IO_ERROR", e.Message); }
         catch (UnauthorizedAccessException e) { return Result<CprStructureReport>.Fail("ACCESS_DENIED", e.Message); }
+    }
+
+    private static CprArchiveRecordInventory AttachBinaryFields(CprArchiveRecordInventory inventory,
+        byte[] archiveData, ref int retainedFields, CancellationToken ct)
+    {
+        var eventRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiEvent");
+        var noteRevision = CprClassRevisionEvidence.Find(inventory.ClassDeclarations, "MMidiNote");
+        var records = new CprClassRecordCandidate[inventory.Records.Count];
+        var partial = false;
+        for (var index = 0; index < records.Length; index++)
+        {
+            if ((index & 127) == 0) ct.ThrowIfCancellationRequested();
+            var record = inventory.Records[index];
+            var read = CprBinaryFieldCandidateDecoder.ReadBounded(record, archiveData, inventory.PayloadFileOffset,
+                eventRevision?.RevisionAt(record.BodyFileOffset), noteRevision?.RevisionAt(record.BodyFileOffset),
+                Math.Min(CprBinaryFieldCandidateDecoder.MaximumFieldsPerRecord, MaxRawFields - retainedFields));
+            retainedFields += read.Fields.Count;
+            partial |= read.Partial;
+            // The inventory scanner initializes an empty immutable field list.
+            // Unsupported records can retain their original record instance.
+            records[index] = read.Fields.Count == 0 ? record : record with { RawFields = read.Fields };
+        }
+        return inventory with
+        {
+            Records = records,
+            Partial = inventory.Partial || partial,
+            LimitReasons = partial ? [.. inventory.LimitReasons,
+                "Raw-field retention budget reached (256 per record / 100,000 per project); supported fixed fields were omitted."]
+                : inventory.LimitReasons
+        };
     }
 
     private static CprArchiveSummary? AttachTrackHeaderDetails(CprArchiveSummary? arrangement,
@@ -495,10 +517,11 @@ public sealed class CprStructureInspector : ICprStructureInspector
             }
             else excluded.Add(range);
         }
-        var eventStreams = new CprMidiPartEventStreamReader(archiveInventory, isRif2);
+        CprMidiPartEventStreamReader? eventStreams = null;
         foreach (var part in packedParts)
         {
             ct.ThrowIfCancellationRequested();
+            eventStreams ??= new CprMidiPartEventStreamReader(archiveInventory, isRif2);
             var maximumBytes = Math.Min(CprMidiPartNoteScanner.MaximumScanBytes, maxPackedMidiBytes - packedMidiScanBytes);
             var partBody = bytes.AsSpan(part.Start, part.End - part.Start);
             if (!eventStreams.TryRead(partBody, archiveFileOffset + part.Start, part.Revision,

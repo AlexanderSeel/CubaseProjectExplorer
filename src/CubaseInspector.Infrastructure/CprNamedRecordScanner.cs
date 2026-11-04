@@ -44,7 +44,7 @@ internal static class CprNamedRecordScanner
                 {
                     // Named channel and bus records can start with either Name/String or a scalar Name.
                     // Stop before the next record rather than merging its fields.
-                    if (parsed > 0 && FindNextAnchor(data, next) == next) break;
+                    if (parsed > 0 && IsAnchorAt(data, next)) break;
                     var recordStart = next;
                     if (!parser.TryRecord(ref next, 0, out var record)) break;
                     parsed++;
@@ -54,7 +54,8 @@ internal static class CprNamedRecordScanner
                 nextAnchorPosition = Math.Max(nextAnchorPosition, next);
                 if (values.Count > 0)
                     results.Add(new CprNamedRecordCandidate(streamName, archiveFileOffset + anchor,
-                        values, "Cubase 12 named-record grammar candidate; field semantics not independently verified"));
+                        values, "Cubase 12 named-record grammar candidate; field semantics not independently verified",
+                        SourceArchiveOffset: archiveFileOffset));
             }
             catch (InvalidDataException)
             {
@@ -74,6 +75,9 @@ internal static class CprNamedRecordScanner
         if (directOffset < 0) return start + channelOffset;
         return start + Math.Min(channelOffset, directOffset);
     }
+
+    private static bool IsAnchorAt(ReadOnlySpan<byte> data, int position) =>
+        data[position..].StartsWith(ChannelNameAnchor) || data[position..].StartsWith(DirectNameAnchor);
 
     private static void AddLeaves(Node node, string path, long archiveFileOffset,
         List<CprNamedRecordValue> output, int limit)
@@ -172,6 +176,7 @@ internal static class CprNamedRecordScanner
                 if (!TryCount(ref position, out var count)) return false;
                 for (var i = 0; i < count; i++)
                 {
+                    var valueOffset = position;
                     string value;
                     if (subtype == 2)
                     {
@@ -179,7 +184,7 @@ internal static class CprNamedRecordScanner
                         value = BinaryPrimitives.ReadInt64BigEndian(data.AsSpan(position, 8)).ToString(CultureInfo.InvariantCulture); position += 8;
                     }
                     else if (!TrySizedString(ref position, out value)) return false;
-                    children.Add(new Node($"[{i}]", subtype == 2 ? "i64" : "string", value, position));
+                    children.Add(new Node($"[{i}]", subtype == 2 ? "i64" : "string", value, valueOffset));
                 }
                 node = new Node(name, subtype == 2 ? "i64-array" : "string-array", null, recordOffset, children); return true;
             }
@@ -202,8 +207,11 @@ internal static class CprNamedRecordScanner
                     if (position > end - 2) return false;
                     var tag = U16(ref position);
                     if (tag == 0) continue;
-                    if (tag != 0x14 || !TryClassInstance(ref position, depth, out var className, children)) return false;
-                    children.Add(new Node($"[{i}]/class", "class", className, position));
+                    var classOffset = position;
+                    var itemChildren = new List<Node>();
+                    if (tag != 0x14 || !TryClassInstance(ref position, depth, out var className, itemChildren)) return false;
+                    itemChildren.Add(new Node("class", "class", className, classOffset));
+                    children.Add(new Node($"[{i}]", "instance:" + className, null, classOffset, itemChildren));
                 }
                 node = new Node(name, "instance-array", null, recordOffset, children); return true;
             }

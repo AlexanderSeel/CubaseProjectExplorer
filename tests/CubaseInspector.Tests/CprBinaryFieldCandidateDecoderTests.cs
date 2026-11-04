@@ -107,14 +107,13 @@ public sealed class CprBinaryFieldCandidateDecoderTests
             field => Check(field, "body+16", "f64-be", "960", 1016, "408E000000000000", "0x1431e2e00"),
             field => Check(field, "body+24", "u16-be", "4660", 1024, "1234", "0x1431e2e00"),
             field => Check(field, "body+26", "f32-be", "3.25", 1026, "40500000", "0x1431e2e00"),
-            field => Check(field, "body+30", "u8", "171", 1030, "AB", "0x1431e2e00"));
-        Assert.Equal(31, fields.Sum(field => field.ByteCount));
+            field => Check(field, "body+30", "u16-be", "44030", 1030, "ABFE", "0x1431e2e00"));
+        Assert.Equal(32, fields.Sum(field => field.ByteCount));
         Assert.All(fields, field => Assert.Contains("attributes remain opaque", field.Source));
     }
 
     [Theory]
     [InlineData(0U)]
-    [InlineData(2U)]
     [InlineData(uint.MaxValue)]
     public void RejectsUnsupportedTempoTrackEntryCountsWithoutAllocatingArrays(uint count)
     {
@@ -130,9 +129,8 @@ public sealed class CprBinaryFieldCandidateDecoderTests
         var record = Record() with { ClassName = "MTempoTrackEvent", ClassVersion = 3, BodyBytes = 54 };
         foreach (var unsupported in new[]
         {
-            record with { ClassVersion = 0 }, record with { ClassVersion = 2 },
             record with { ClassVersion = 4 }, record with { ClassVersion = null },
-            record with { BodyBytes = 53 }, record with { BodyBytes = 55 },
+            record with { BodyBytes = 30 }, record with { BodyBytes = 55 },
             record with { BodyFileOffset = 1001 }
         })
             Assert.Empty(CprBinaryFieldCandidateDecoder.Read(unsupported, TempoTrackBody(), 1000));

@@ -92,7 +92,7 @@ public static class CprArchiveRecordScanner
                 records.Add(new CprClassRecordCandidate(parsed.ClassName, headerOffset,
                     archiveFileOffset + parsed.BodyStart, parsed.BodyEnd - parsed.BodyStart,
                     depth, parent, parsed.Encoding, parsed.Token, parsed.SymbolOffset,
-                    parsed.Version, parsed.PrefixClasses));
+                    parsed.Version, parsed.PrefixClasses, RawFields: []));
             else
                 reasons.Add("Record detail retention limit reached; class totals include additional candidates.");
 

@@ -71,6 +71,14 @@ public sealed class CprCountedMidiStreamTests
 
     private sealed record PartStream(byte[] Bytes, int EventOffset);
 
+    private static byte[] ScalarEvent(byte status, ushort attributeType = 0) =>
+        Event(status, attributeType: attributeType)[..(18 + (attributeType == 0 ? 0 : 14))];
+
+    private static byte[] SysexEvent(byte[] payload, int? declaredBytes = null, uint secondWord = 0,
+        ushort attributeType = 0) =>
+        Join(ScalarEvent(0xF0, attributeType), Number(unchecked((uint)(declaredBytes ?? payload.Length))),
+            Number(secondWord), payload);
+
     private static PartStream Stream(bool wide, byte[][] events, int? count = null,
         byte[]? declarations = null, byte declarationCount = 1, uint timebaseKind = 0)
     {
@@ -285,6 +293,159 @@ public sealed class CprCountedMidiStreamTests
                 Assert.Empty(report.Arrangement!.MidiNoteCandidates!);
                 return Task.CompletedTask;
             });
+    }
+
+    [Theory]
+    [InlineData(false, 0xA0, "MMidiPolyPressure", 0)]
+    [InlineData(true, 0xA0, "MMidiPolyPressure", 1)]
+    [InlineData(false, 0xC0, "MMidiProgramChange", 4)]
+    [InlineData(true, 0xC0, "MMidiProgramChange", 0)]
+    public async Task ReadsNotesBeyondAdditionalScalarEventsWithoutInterpretingTheirValues(
+        bool wide, byte status, string className, ushort attributeType)
+    {
+        var scalar = ScalarEvent(status, attributeType);
+        var project = Project(wide, Stream(wide, [Event(), scalar, Event(pitch: 72)],
+            declarations: Join(Declarations(wide), Record(className, 0, [], wide)), declarationCount: 2));
+        await WithProject(project, (_, report) =>
+        {
+            var notes = report.Arrangement!.MidiNoteCandidates!;
+            Assert.Equal(new long[] { project.FirstEventOffset, project.FirstEventOffset + 43 + scalar.Length },
+                notes.Select(note => note.FileOffset));
+            Assert.Equal(72, notes[1].MidiPitch);
+            Assert.All(notes, note => Assert.EndsWith("MMidiPart/counted-events", note.SourceLayout));
+            Assert.False(report.Arrangement.Partial);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false, 0xA0, "MMidiPolyPressure")]
+    [InlineData(true, 0xA0, "MMidiPolyPressure")]
+    [InlineData(false, 0xC0, "MMidiProgramChange")]
+    [InlineData(true, 0xC0, "MMidiProgramChange")]
+    [InlineData(false, 0xF0, "MMidiSysex")]
+    [InlineData(true, 0xF0, "MMidiSysex")]
+    public async Task AdditionalEventsRequireUnambiguousEarlierRevisionZero(
+        bool wide, byte status, string className)
+    {
+        var other = status == 0xF0 ? SysexEvent([]) : ScalarEvent(status);
+        var events = new[] { other, Event() };
+        var cases = new[]
+        {
+            Project(wide, Stream(wide, events)),
+            Project(wide, Stream(wide, events), after: Record(className, 0, [], wide)),
+            Project(wide, Stream(wide, events), before: Record(className, 1, [], wide)),
+            Project(wide, Stream(wide, events), before: Join(Record(className, 0, [], wide),
+                Record(className, 1, [], wide)))
+        };
+        foreach (var project in cases)
+            await WithProject(project, (_, report) =>
+            {
+                Assert.Empty(report.Arrangement!.MidiNoteCandidates!);
+                return Task.CompletedTask;
+            });
+    }
+
+    [Theory]
+    [InlineData(false, false, 1)]
+    [InlineData(true, false, 4)]
+    [InlineData(false, true, 0)]
+    [InlineData(true, true, 0)]
+    public async Task SkipsSysexPayloadExactlyIncludingEmbeddedNotePatterns(bool wide, bool empty, ushort attributeType)
+    {
+        var payload = empty ? [] : Join(Event(), Event(attributeType: 1));
+        // The second word is not used as a length or required to equal the first.
+        var sysex = SysexEvent(payload, secondWord: uint.MaxValue, attributeType: attributeType);
+        var project = Project(wide, Stream(wide, [Event(), sysex, Event(pitch: 73)],
+            declarations: Join(Declarations(wide), Record("MMidiSysex", 0, [], wide)), declarationCount: 2));
+        await WithProject(project, async (path, report) =>
+        {
+            var notes = report.Arrangement!.MidiNoteCandidates!;
+            Assert.Equal(new long[] { project.FirstEventOffset, project.FirstEventOffset + 43 + sysex.Length },
+                notes.Select(note => note.FileOffset));
+            Assert.Equal(73, notes[1].MidiPitch);
+            Assert.False(report.Arrangement.Partial);
+            var snapshot = await new CprEvidenceReader().ReadAsync(path);
+            Assert.True(snapshot.IsSuccess, snapshot.Error?.Message);
+            Assert.Empty(snapshot.Value!.MidiNotes ?? []);
+            Assert.Equal(2, snapshot.Value.NativeMidiNoteCandidates!.Count);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RejectsMalformedAdditionalEventsWithoutResynchronizing(bool wide)
+    {
+        var cases = new[]
+        {
+            SysexEvent([], -1),
+            SysexEvent([], int.MaxValue),
+            SysexEvent([], 44), // Would consume the next note and exceed the body.
+            ScalarEvent(0xF0), // Both length words missing.
+            Join(ScalarEvent(0xF0), Number(0))[..^1],
+            SysexEvent([])[..^1], // Second word truncated, even for zero payload.
+            ScalarEvent(0xA0, attributeType: 8),
+            ScalarEvent(0xC0, attributeType: 8),
+            Join(ScalarEvent(0xF0, attributeType: 8), Number(0), Number(0)),
+            ScalarEvent(0xA1),
+            ScalarEvent(0xC1),
+            ScalarEvent(0xF1),
+            ScalarEvent(0x40) // Its callback has a suffix; a base-only skip is unsafe.
+        };
+        var table = Join(Declarations(wide), Record("MMidiPolyPressure", 0, [], wide),
+            Record("MMidiProgramChange", 0, [], wide), Record("MMidiSysex", 0, [], wide));
+        foreach (var other in cases)
+        {
+            var project = Project(wide, Stream(wide, [Event(), other, Event()],
+                declarations: table, declarationCount: 4));
+            await WithProject(project, (_, report) =>
+            {
+                Assert.Empty(report.Arrangement!.MidiNoteCandidates!);
+                return Task.CompletedTask;
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SysexCrossingByteBudgetRetainsOnlyEarlierNotesAsPartial(bool wide)
+    {
+        var sysex = SysexEvent(new byte[CprMidiPartNoteScanner.MaximumScanBytes]);
+        var project = Project(wide, Stream(wide, [Event(), sysex, Event()],
+            declarations: Join(Declarations(wide), Record("MMidiSysex", 0, [], wide)), declarationCount: 2));
+        await WithProject(project, (_, report) =>
+        {
+            var note = Assert.Single(report.Arrangement!.MidiNoteCandidates!);
+            Assert.Equal(project.FirstEventOffset, note.FileOffset);
+            Assert.EndsWith("MMidiPart/counted-events", note.SourceLayout);
+            Assert.True(report.Arrangement.Partial);
+            Assert.Contains(report.Arrangement.LimitReasons!, reason => reason.Contains("budget", StringComparison.OrdinalIgnoreCase));
+            return Task.CompletedTask;
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TrailingNonNoteEventsDoNotConsumeTheNoteBudget(bool wide)
+    {
+        var events = Enumerable.Repeat(Event(), 10000).Concat(new[]
+        {
+            ScalarEvent(0xA0), ScalarEvent(0xC0), SysexEvent(Event())
+        }).ToArray();
+        var table = Join(Declarations(wide), Record("MMidiPolyPressure", 0, [], wide),
+            Record("MMidiProgramChange", 0, [], wide), Record("MMidiSysex", 0, [], wide));
+        var project = Project(wide, Stream(wide, events, declarations: table, declarationCount: 4));
+        await WithProject(project, (_, report) =>
+        {
+            Assert.Equal(10000, report.Arrangement!.MidiNoteCandidates!.Count);
+            Assert.False(report.Arrangement.Partial);
+            Assert.All(report.Arrangement.MidiNoteCandidates, note =>
+                Assert.EndsWith("MMidiPart/counted-events", note.SourceLayout));
+            return Task.CompletedTask;
+        });
     }
 
     [Theory]

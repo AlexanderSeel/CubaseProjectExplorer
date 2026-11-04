@@ -230,14 +230,14 @@ public sealed record CprArchiveSummary(string StreamName, long DeclaredBytes, in
     IReadOnlyList<string>? LimitReasons = null);
 public sealed record CprNamedRecordValue(string Path, string Type, string Value, long ArchiveOffset);
 public sealed record CprNamedRecordCandidate(string StreamName, long ArchiveOffset,
-    IReadOnlyList<CprNamedRecordValue> Values, string Status);
+    IReadOnlyList<CprNamedRecordValue> Values, string Status, long? SourceArchiveOffset = null);
 public sealed record CprMetadataCandidate(string Field, string Value, long ArchiveOffset,
     string SourcePattern, string Status);
 /// <summary>Unverified mixer-like values grouped by one bounded CPR named-record observation.</summary>
 public sealed record CprMixerObservation(string Name, double? VolumeDb, double? Pan,
     bool? Mute, bool? Solo, long ArchiveOffset, string SourceStream,
     string Evidence = "Unverified CPR named-record observation",
-    IReadOnlyList<CprNamedRecordValue>? CandidateFields = null);
+    IReadOnlyList<CprNamedRecordValue>? CandidateFields = null, long? SourceArchiveOffset = null);
 /// <summary>Audio path token nested in an audio-event record; track ownership is only structural evidence.</summary>
 public sealed record CprAudioMediaReferenceCandidate(string DeclaredPath, long FileOffset,
     string? CandidateTrackName, long? CandidateTrackOffset, string SourceRecord,

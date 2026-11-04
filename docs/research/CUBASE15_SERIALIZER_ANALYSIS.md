@@ -2,6 +2,12 @@
 
 Date: 2026-10-31. This extends [the initial executable findings](CUBASE15_EXECUTABLE_FINDINGS.md) with a further read-only static pass. Cubase was not executed, debugged, patched or unpacked. No project or executable was changed. Addresses apply to this exact executable only.
 
+2026-11-04 correction: the [counted tempo-table investigation](CUBASE15_C_TEMPO_TABLES.md)
+traces the Boolean primitive to a two-byte wire value. The previously implemented
+single-entry tempo prefix therefore covers 32 bytes, including `u16-be` at
+`body+30`, rather than 31 bytes with a one-byte observation. It also expands
+bounded anonymous fields to counted tables and explicit serializer revisions 0–3.
+
 | Input property | Observed value |
 |---|---|
 | Local input | User-provided `Cubase15.exe` |

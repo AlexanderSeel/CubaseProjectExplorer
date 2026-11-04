@@ -187,10 +187,13 @@ public sealed class CprEvidenceReader : IProjectReader
                 .OrderBy(value => value.Path.StartsWith("OwnInputBus/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("RecorderBus/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("OutputBus/", StringComparison.OrdinalIgnoreCase) ||
-                    value.Path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) ||
-                    value.Path.StartsWith("directRoutingFolder/", StringComparison.OrdinalIgnoreCase) ||
+                    IsFolderDestination(value.Path) ||
                     value.Path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("InputBusValue/", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("OutputBusValue/", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.Equals("outputBusEnable", StringComparison.OrdinalIgnoreCase) ||
+                    value.Path.StartsWith("outputBusEnable/", StringComparison.OrdinalIgnoreCase) ||
                     IsSavedConnectionField(value.Path) ? 0 :
                     value.Path.Equals("postInsertsPreFader", StringComparison.OrdinalIgnoreCase) ||
                     value.Path.StartsWith("InsertFolder/", StringComparison.OrdinalIgnoreCase) ||
@@ -200,7 +203,8 @@ public sealed class CprEvidenceReader : IProjectReader
             // Include named records even when mixer fields are absent so the view can
             // show what the reader found without implying that a channel was omitted.
             result.Add(new CprMixerObservation(names[0], volume, null, mute, solo,
-                record.ArchiveOffset, record.StreamName, CandidateFields: candidateFields));
+                record.ArchiveOffset, record.StreamName, CandidateFields: candidateFields,
+                SourceArchiveOffset: record.SourceArchiveOffset));
 
             double? ReadDouble(string path, double min, double max)
             {
@@ -235,11 +239,24 @@ public sealed class CprEvidenceReader : IProjectReader
             path.StartsWith("RecorderBus/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("OutputBus/", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("foldbackSendFolder/", StringComparison.OrdinalIgnoreCase) ||
             path.Equals("InputBusValue", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("InputBusValue/", StringComparison.OrdinalIgnoreCase) ||
             path.Equals("OutputBusValue", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("OutputBusValue/", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("outputBusEnable", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("outputBusEnable/", StringComparison.OrdinalIgnoreCase) ||
             path.Equals("postInsertsPreFader", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("directRoutingFolder/", StringComparison.OrdinalIgnoreCase) ||
             IsSavedConnectionField(path);
+
+        static bool IsFolderDestination(string path) =>
+            (path.StartsWith("SendFolder/", StringComparison.OrdinalIgnoreCase) ||
+             path.StartsWith("directRoutingFolder/", StringComparison.OrdinalIgnoreCase) ||
+             path.StartsWith("foldbackSendFolder/", StringComparison.OrdinalIgnoreCase)) &&
+            (path.EndsWith("/Output/Value", StringComparison.OrdinalIgnoreCase) ||
+             path.EndsWith("/Output/Bus UID", StringComparison.OrdinalIgnoreCase) ||
+             path.EndsWith("/OutputBus/Value", StringComparison.OrdinalIgnoreCase));
 
         static bool IsSavedConnectionField(string path) =>
             path.Equals("Bus UID", StringComparison.OrdinalIgnoreCase) ||

@@ -31,6 +31,8 @@ TARGETS = {
     "attribute-id-reader": "sub_1439DF650",
     "uint64-reader": "sub_1439DF880",
     "float64-reader": "sub_1439DFFF0",
+    "boolean-u16-reader": "sub_1439E0260",
+    "boolean-u16-writer": "sub_1439E0210",
     "archive-constructor": "sub_1445E9500",
     "archive-current-version": "sub_1445E78A0",
     "archive-named-version": "sub_1445E9E20",

@@ -282,7 +282,7 @@ public sealed class CprArchiveInventoryIntegrationTests
             Assert.Equal(7, rawFields.Count);
             Assert.Equal(new long[] { 0, 4, 8, 16, 24, 26, 30 },
                 rawFields.Select(field => field.FileOffset - tempo.BodyFileOffset));
-            Assert.Equal(new[] { 4, 4, 8, 8, 2, 4, 1 }, rawFields.Select(field => field.ByteCount));
+            Assert.Equal(new[] { 4, 4, 8, 8, 2, 4, 2 }, rawFields.Select(field => field.ByteCount));
             Assert.Equal(new[] { "1", "0.5", "0", "0", "0", "120", "0" },
                 rawFields.Select(field => field.Value));
             Assert.All(rawFields, field =>
@@ -291,7 +291,7 @@ public sealed class CprArchiveInventoryIntegrationTests
                 Assert.Equal(Convert.ToHexString(sourceBytes.AsSpan(checked((int)field.FileOffset), field.ByteCount)), field.RawHex);
                 Assert.Contains("semantics unverified", field.Source);
             });
-            Assert.Equal(23, tempo.BodyBytes - rawFields.Sum(field => field.ByteCount));
+            Assert.Equal(22, tempo.BodyBytes - rawFields.Sum(field => field.ByteCount));
             var snapshot = await new CprEvidenceReader().ReadAsync(path);
             Assert.True(snapshot.IsSuccess, snapshot.Error?.Message);
             Assert.Null(snapshot.Value!.Bpm);

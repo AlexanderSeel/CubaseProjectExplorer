@@ -39,7 +39,8 @@ as a complete semantic reader. Structural success never means a full Cubase load
 | ScAr object attributes | ID `0x53634172`, flags `0x0022`, framed `CmAttribCollection` rev0; supported null/back references | Collection contents, score/text/articulation meaning and attribute overrides remain opaque |
 | bOuc object attributes | ID `0x624F7563`, flags `0x0002`, framed `MParamEventCurveRationalBezier` rev0 with named base rev0; supported base prefix | Curve points, interpolation and target meaning remain opaque |
 | String attributes | Printable four-byte ID, exact flags `0x0008`, framed `CmString` rev0 or supported null/earlier reference; body stays opaque | String contents, other flags/revisions and applied meaning |
-| Other object/container attributes | First unsupported item reported with ID, flags and exact source offset | General object codecs, container branches, other IDs/flags/classes/revisions |
+| Container attributes | Exact flags `0x0100`, printable ID, hexadecimal type token and primitive property table; at most 256 properties / 64 KiB, contents remain opaque | Object/array/recursive entries, other flags, runtime type support and genuine controlled fixtures |
+| Other object/container attributes | First unsupported item reported with ID, flags and exact source offset | General object codecs, remaining container branches, other IDs/flags/classes/revisions |
 | Typed MMidiNote records | Modern scalar and supported opaque ScAr/bOuc/CmString attributes share counted-stream framing; exact suffix and named-revision gates; nested note-like values stay out of arrangement candidates | Other objects/strings/containers, attribute overrides and independent genuine typed-object comparisons |
 | Legacy base/note layouts | MMidiEvent rev0–2 / MMidiNote rev0–1 callback shapes and anonymous raw fields | Genuine older-revision fixtures and musical interpretation; no guessed v0 fallback |
 | Bounded packed-pattern fallback | Existing separate candidate scanner for supported scalar patterns; opaque ranges excluded | Heuristic evidence is weaker than counted framing and cannot establish a complete stream |
@@ -64,7 +65,7 @@ a normalized controller, chord, expression or score event.
 | `0x70` | MChordEvent rev0 | Note-like suffix plus one byte; opaque | Chord identity, voicing and musical state |
 | `0x40` | MNoteChangeEvent rev0 | Shared base plus u16/u32/f64 suffix; opaque | Target identity and change semantics |
 | `0x30` | MScoreEvent rev1 | Distinct flags/scalars/null or exact MDataNode object/reference boundary with earlier named MEvent v0/v1; node body stays opaque; v1 uses the shared supported scalar/object/string attribute boundaries; suffix stays opaque | Other node classes/revisions, unsupported attributes, notation/articulation semantics and other score revisions |
-| `0x00` | Escaped object/reference | Supported class/body or reference extent; separate typed-note pass avoids duplicate extraction | General object loading and unsupported nested typed notes |
+| `0x00` | Escaped object/reference | Supported class/body or reference extent; typed notes inside recognized counted parts require an exact factory-escape boundary, excluding note-shaped value bytes | General object loading and unsupported nested typed notes |
 | Other values / revisions | Unknown | Explicit partial stop | Verify factory/callback/revision before adding support |
 
 No counted-stream failure permits resynchronization through an opaque payload.

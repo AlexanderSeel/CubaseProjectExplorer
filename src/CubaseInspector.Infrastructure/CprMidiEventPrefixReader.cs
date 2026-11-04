@@ -94,6 +94,17 @@ internal sealed class CprMidiEventPrefixReader
                 prefixBytes += 8;
                 continue;
             }
+            if (flags == 0x100 && item[..4].IndexOfAnyExceptInRange((byte)32, (byte)126) < 0)
+            {
+                if (CprAttributeContainerBoundaryReader.TrySkip(data, ref prefixBytes, out var containerFailure))
+                {
+                    skippedObject = true;
+                    continue;
+                }
+                failure = $"Attribute ID 0x{id:X8}, flags 0x{flags:X4}, at file offset {fileOffset + itemOffset}: " +
+                    containerFailure + " No later attribute boundary was inferred.";
+                return false;
+            }
             // Only the ASM-backed class/flag combinations below are supported.
             // Their framed contents remain opaque; no attribute is applied.
             var expectedClass = (id, flags) switch

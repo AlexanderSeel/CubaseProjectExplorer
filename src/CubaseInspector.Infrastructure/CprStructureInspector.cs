@@ -580,12 +580,26 @@ public sealed class CprStructureInspector : ICprStructureInspector
             eventStreams ??= new CprMidiPartEventStreamReader(archiveInventory, isRif2);
             var maximumBytes = Math.Min(CprMidiPartNoteScanner.MaximumScanBytes, maxPackedMidiBytes - packedMidiScanBytes);
             var partBody = bytes.AsSpan(part.Start, part.End - part.Start);
+            // Raw inventory traversal can find typed-note-shaped bytes inside
+            // opaque container strings. A recognized counted grammar owns its
+            // part body; retain only typed notes reached by explicit escapes.
+            var partStart = archiveFileOffset + part.Start;
+            var partEnd = archiveFileOffset + part.End;
+            var framedPartNotes = midiNotes.Where(note => note.FileOffset >= partStart && note.FileOffset < partEnd).ToArray();
+            midiNotes.RemoveAll(note => note.FileOffset >= partStart && note.FileOffset < partEnd);
             if (!eventStreams.TryRead(partBody, archiveFileOffset + part.Start, part.Revision,
                     10000 - midiNotes.Count, maximumBytes, ct, out var scan))
+            {
+                midiNotes.AddRange(framedPartNotes);
                 scan = CprMidiPartNoteScanner.Scan(partBody, archiveFileOffset + part.Start,
                     10000 - midiNotes.Count, maximumBytes, ct, isRif2, excluded);
+            }
+            else
+                midiNotes.AddRange(framedPartNotes.Where(note => eventStreams.EscapedNoteBodyOffsets.Contains(note.FileOffset)));
             packedMidiScanBytes += scan.BytesScanned;
-            foreach (var note in scan.Notes)
+            var remaining = 10000 - midiNotes.Count;
+            if (scan.Notes.Count > remaining) limits.Add("10,000 MIDI note candidate limit");
+            foreach (var note in scan.Notes.Take(remaining))
                 midiNotes.Add(note with
                 {
                     CandidateTrackName = part.Track is int owner ? hints[owner].Name : null,

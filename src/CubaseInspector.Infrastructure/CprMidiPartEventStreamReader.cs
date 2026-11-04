@@ -34,6 +34,10 @@ internal sealed class CprMidiPartEventStreamReader
     private readonly long _scanEnd;
     private readonly bool _wide;
 
+    // Only exact factory-escape boundaries can establish typed notes inside
+    // a recognized counted part. Byte inventory hits inside values cannot.
+    public HashSet<long> EscapedNoteBodyOffsets { get; } = [];
+
     public CprMidiPartEventStreamReader(CprArchiveRecordInventory? inventory, bool wide)
     {
         _wide = wide;
@@ -69,6 +73,7 @@ internal sealed class CprMidiPartEventStreamReader
         int maximumNotes, int maximumBytes, CancellationToken ct, out CprMidiPartNoteScan result)
     {
         result = default!;
+        EscapedNoteBodyOffsets.Clear();
         ct.ThrowIfCancellationRequested();
         var scanned = Math.Min(body.Length, maximumBytes);
         var data = body[..scanned];
@@ -139,6 +144,7 @@ internal sealed class CprMidiPartEventStreamReader
                     var end = header.BodyFileOffset + header.BodyBytes - bodyFileOffset;
                     if (end < position || end > data.Length)
                         return Partial([], scanned, "Escaped MIDI object is outside the scanned part; its candidate prefix was rejected.", out result);
+                    if (header.ClassName == "MMidiNote") EscapedNoteBodyOffsets.Add(header.BodyFileOffset);
                     position = (int)end;
                 }
                 else if (!TryReference(data, bodyFileOffset, ref position))
